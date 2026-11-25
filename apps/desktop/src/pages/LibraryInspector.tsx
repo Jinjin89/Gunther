@@ -7,7 +7,7 @@ import { useSlideOverOutside } from "./useSlideOverOutside";
 export type InspectorTab = "evidence" | "studio";
 
 export function LibraryInspector({ workspace, screenWidth, collapsed, onCollapse, tab, onTab, evidenceCount,
-  running, detailOpen, onBack, originalPdf, evidence, studio }: {
+  briefUpdating, running, detailOpen, onBack, originalPdf, evidence, studio }: {
   workspace: RefObject<HTMLDivElement | null>;
   screenWidth: number;
   collapsed: boolean;
@@ -15,6 +15,7 @@ export function LibraryInspector({ workspace, screenWidth, collapsed, onCollapse
   tab: InspectorTab;
   onTab: (tab: InspectorTab) => void;
   evidenceCount: number;
+  briefUpdating: boolean;
   running: boolean;
   detailOpen: boolean;
   onBack: () => void;
@@ -48,9 +49,14 @@ export function LibraryInspector({ workspace, screenWidth, collapsed, onCollapse
     <div className="inspector-panel" id={panelId} hidden={collapsed}>
       <header className="inspector-heading">
         <div className="inspector-tabs" role="tablist" aria-label="Inspector">
-          <button type="button" role="tab" aria-selected={tab === "evidence"} onClick={() => onTab("evidence")}>Evidence ({evidenceCount})</button>
+          <button type="button" role="tab" aria-selected={tab === "evidence"} aria-label={`Evidence (${evidenceCount})`}
+            aria-describedby={briefUpdating ? `${panelId}-brief-update` : undefined} onClick={() => onTab("evidence")}>
+            Evidence <span className="inspector-tab-count">{evidenceCount}</span>
+            {briefUpdating && <span className="inspector-brief-updating" title="Brief updating" aria-hidden="true" />}
+          </button>
           <button type="button" role="tab" aria-selected={tab === "studio"} onClick={() => onTab("studio")}>Studio{running && <i className="inspector-running" title="Build running" />}</button>
         </div>
+        {briefUpdating && <span className="gx-sr-only" id={`${panelId}-brief-update`}>Brief updating</span>}
         <button type="button" className="gx-icon-button" aria-label="Collapse Inspector" aria-expanded={true} aria-controls={panelId} title="Collapse Inspector" onClick={onCollapse}><X size={16} /></button>
       </header>
       <div className="inspector-content" role="tabpanel" aria-label="Evidence" hidden={tab !== "evidence"}>{evidence}</div>

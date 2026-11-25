@@ -1,16 +1,16 @@
-import type { Artifact, ConversationCitation } from "@gunther/contracts";
+import type { Artifact, ContentsSource, ConversationCitation } from "@gunther/contracts";
 import { useMemo, useState } from "react";
-import { hostOf } from "../components/evidence/EvidenceDetail";
 import { isWebCitation } from "../components/evidence/citationKind";
 import { WebFindActions } from "../components/evidence/WebFindActions";
 import { scopeLabel } from "../outputs/artifactConversations";
 import { splitDesign, splitDocument } from "../outputs/sections";
-import { verificationNotice } from "./AnswerBody";
+import { citationMeta, CoverageMeter, EvidenceDisclosure, SourceKindMark } from "./EvidencePrimitives";
 import { CitedHeader, SearchEvidence } from "./EvidenceSearch";
 import { webFindOf, type WebFindImports } from "./useImportWebFind";
 
-export function OutputEvidence({ artifact, partInView, imports, onOpen }: {
+export function OutputEvidence({ artifact, sources, partInView, imports, onOpen }: {
   artifact: Artifact;
+  sources: readonly ContentsSource[];
   partInView: number | null;
   imports?: WebFindImports | undefined;
   onOpen: (citations: ConversationCitation[], index: number) => void;
@@ -33,44 +33,57 @@ export function OutputEvidence({ artifact, partInView, imports, onOpen }: {
     if (group) group.indices.push(index);
     else groups.set(key, { citation, indices: [index] });
   });
-  const checked = artifact.sections.length > 0 && artifact.sections.every((section) => section.checked);
-  const status = artifact.sections.map((section) => verificationNotice(section.coverage)).find(Boolean)
-    ?? (checked ? "Sources checked" : artifact.sections.some((section) => section.checked) ? "Source check incomplete" : "Not checked");
+  const total = artifact.sections.length;
+  const checked = artifact.sections.filter((section) => section.checked).length;
+  const clean = artifact.sections.filter((section) => section.checked && section.issues.length === 0).length;
+  const issues = artifact.sections.reduce((count, section) => count + section.issues.filter((issue) => issue.verdict !== "unchecked").length, 0);
+  const checkedLabel = checked < total ? `${checked} of ${total}` : total > 1 ? `All ${total}` : "1";
+  const coverage = total ? `${checkedLabel} ${total === 1 ? "section" : "sections"} checked` : "Not checked";
   const approach = artifact.provenance.approach;
   const memo = approach?.memo?.answer?.trim();
   const gaps = [...new Set([...(approach?.gaps ?? []), ...(approach?.studyMap?.limitations ?? [])].filter((item) => item.trim()))];
-  return <div className="evidence-overview" aria-label="Evidence overview">
-    {(memo || gaps.length > 0) && <details className="evidence-disclosure evidence-research-notes">
-      <summary>Research notes</summary>
-      {memo && <p>{memo}</p>}
-      {gaps.length > 0 && <ul>{gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul>}
-    </details>}
-    <section className="evidence-method" aria-label="Output details">
-      <h3>Output details</h3>
-      <p>Scope: {artifact.scope ? scopeLabel(artifact.scope) : "not recorded"} · {status} · Version {artifact.versionNumber}</p>
+  const partLabel = artifact.kind === "slides" ? "slide" : "section";
+  const researchSummary = [memo && "memo", gaps.length > 0 && `${gaps.length} ${gaps.length === 1 ? "gap" : "gaps"}`].filter(Boolean).join(" · ");
+  return <div className="evidence-overview evidence-bands" aria-label="Evidence overview">
+    <section className="evidence-context" aria-label="Output details">
+      <header><h3>Output</h3><span className="evidence-pill">Version {artifact.versionNumber}</span></header>
+      <p>Scope: {artifact.scope ? scopeLabel(artifact.scope) : "not recorded"}</p>
+      <CoverageMeter summary={issues ? `${coverage} · ${issues} ${issues === 1 ? "issue" : "issues"}` : coverage} segments={[
+        { tone: "verified", count: clean },
+        { tone: "warning", count: checked - clean },
+        { tone: "warning", count: total - checked },
+      ]} />
     </section>
     <section className="evidence-cited" aria-label="Cited sources">
       <CitedHeader citations={artifact.citations} imports={imports} />
       {canFilter && <div className="evidence-filter" role="group" aria-label="Citation scope">
         <button type="button" aria-pressed={!onlyPart} onClick={() => setOnlyPart(false)}>All</button>
-        <button type="button" aria-pressed={onlyPart} onClick={() => setOnlyPart(true)}>This section</button>
+        <button type="button" aria-pressed={onlyPart} onClick={() => setOnlyPart(true)}>This {partLabel}</button>
       </div>}
-      {groups.size === 0 && <p>{artifact.citations.length ? "Nothing cited in this section" : "Nothing cited"}</p>}
+      {groups.size === 0 && <p>{artifact.citations.length ? `Nothing cited in this ${partLabel}` : "Nothing cited"}</p>}
       {[...groups].map(([key, { citation, indices }]) => {
         const shown = expanded.has(key) ? indices : indices.slice(0, 4);
-        return <article className="evidence-card evidence-source-group" key={key}>
-          <strong>{citation.sourceTitle}</strong>
-          {citation.url && isWebCitation(citation) && <small>{hostOf(citation.url)}</small>}
-          <div className="evidence-chips">{shown.map((index) => <button type="button" key={index}
-            aria-label={`Inspect citation ${index + 1}`} title={artifact.citations[index]?.locator}
-            onClick={() => onOpen(artifact.citations, index)}>[{index + 1}]</button>)}
-            {shown.length < indices.length && <button type="button" onClick={() => setExpanded((current) => new Set(current).add(key))}>+{indices.length - shown.length} more</button>}
+        const meta = citationMeta(citation, sources);
+        return <article className="evidence-card evidence-source-group evidence-output-source" key={key}>
+          <SourceKindMark {...meta} />
+          <div>
+            <strong>{citation.sourceTitle}</strong>
+            <span className="evidence-meta">{[meta.kindLabel, meta.locator].filter(Boolean).join(" · ")}</span>
+            <div className="evidence-chips">{shown.map((index) => <button type="button" key={index}
+              aria-label={`Inspect citation ${index + 1}`} title={citationMeta(artifact.citations[index]!, sources).locator || undefined}
+              onClick={() => onOpen(artifact.citations, index)}>[{index + 1}]</button>)}
+              {shown.length < indices.length && <button type="button" onClick={() => setExpanded((current) => new Set(current).add(key))}>+{indices.length - shown.length} more</button>}
+            </div>
+            {(citation.quote || citation.supportText) && <span className="evidence-card-quote">{citation.quote || citation.supportText}</span>}
+            {isWebCitation(citation) && <WebFindActions find={webFindOf(citation)} imports={imports} />}
           </div>
-          {(citation.quote || citation.supportText) && <span className="evidence-card-quote">{citation.quote || citation.supportText}</span>}
-          {isWebCitation(citation) && <WebFindActions find={webFindOf(citation)} imports={imports} />}
         </article>;
       })}
     </section>
+    {researchSummary && <EvidenceDisclosure title="Research notes" subtitle={researchSummary} className="evidence-research-notes">
+      {memo && <p>{memo}</p>}
+      {gaps.length > 0 && <ul>{gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul>}
+    </EvidenceDisclosure>}
     <SearchEvidence searched={artifact.provenance.searched} keyResultsUsed={artifact.provenance.keyResultsUsed}
       citations={artifact.citations} imports={imports} onOpen={onOpen} />
   </div>;

@@ -58,7 +58,7 @@ export function CitationButton({ number, index, onCite, title, note, className, 
   const quote = citation?.quote.trim();
   return <>
     <button ref={button} type="button" className={className} title={citation ? undefined : note ?? title}
-      aria-label={`Inspect citation ${number}`} aria-describedby={open ? id : undefined} data-opens-evidence
+      aria-label={`Inspect citation ${number}`} aria-describedby={open ? id : undefined} data-opens-evidence data-citation-index={index}
       onPointerEnter={() => { setHovered(true); setDismissed(false); }}
       onPointerLeave={() => setHovered(false)}
       onFocus={() => { setFocused(true); setDismissed(false); }}

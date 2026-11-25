@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { knowledgeApi } from "../../api";
-import { EvidenceDetail, hostOf } from "./EvidenceDetail";
+import { EvidenceDetail } from "./EvidenceDetail";
 import { EvidencePanel } from "./EvidencePanel";
 import { highlightRenderer } from "./highlight";
 
@@ -34,7 +34,8 @@ describe("EvidencePanel", () => {
 
   it("opens a saved web passage without an explicit kind as a web citation", () => {
     const { kind: _kind, ...older } = web;
-    render(<EvidenceDetail citation={older} />);
+    render(<EvidenceDetail citation={{ ...older, locator: "public web" }} />);
+    expect(screen.getByText("Web · example.org")).toBeVisible();
     expect(screen.getByText("Outside your library")).toBeVisible();
     expect(screen.getByRole("link", { name: /Open example\.org/ })).toHaveAttribute("href", "https://www.example.org/post");
   });
@@ -107,12 +108,40 @@ it("shares the citation viewer with inline navigation", async () => {
   const onBack = vi.fn();
   const onNext = vi.fn();
   render(<EvidenceDetail citation={web} index={0} onBack={onBack} position={0} total={2} onNext={onNext} />);
-  expect(screen.getByText("[1 / 2]")).toBeVisible();
+  expect(screen.getByText("1 / 2")).toBeVisible();
   expect(screen.getByRole("button", { name: "Previous source" })).toBeDisabled();
   await userEvent.click(screen.getByRole("button", { name: "Next source" }));
   await userEvent.click(screen.getByRole("button", { name: "All 2 sources" }));
   expect(onNext).toHaveBeenCalledOnce();
   expect(onBack).toHaveBeenCalledOnce();
+});
+
+it("shows the source kind and replaces a placeholder passage heading", async () => {
+  vi.mocked(knowledgeApi.source).mockResolvedValue({ ...source(null), kind: "note" });
+  render(<EvidenceDetail citation={{ ...library, locator: "Source text" }} index={1} />);
+  const kind = await screen.findByText("Note", { selector: ".gx-evidence-title small" });
+  expect(kind.closest("header")?.querySelector(".gx-kind-icon.kind-note")).toBeVisible();
+  expect(screen.getByText("[2]")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Passage" })).toBeVisible();
+  expect(screen.queryByText("Source text")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Show in answer" })).toBeNull();
+});
+
+it("uses chips through five passages and keeps the selection in the six-passage picker", async () => {
+  const passages = Array.from({ length: 6 }, (_, index) => ({ ...web, id: `passage-${index}`, quote: `Quote ${index + 1}`, anchor: { page: index + 2 } }));
+  const first = passages[0]!;
+  const onClose = vi.fn();
+  const { rerender } = render(<EvidencePanel citation={first} passages={passages.slice(0, 5)} onClose={onClose} />);
+  const chip = screen.getByRole("button", { name: "Passage 5 · p. 6" });
+  await userEvent.click(chip);
+  expect(chip).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByText("Quote 5")).toBeVisible();
+  expect(screen.queryByRole("combobox")).toBeNull();
+  rerender(<EvidencePanel citation={first} passages={passages} onClose={onClose} />);
+  const picker = screen.getByRole("combobox", { name: "Passage" });
+  expect(picker).toHaveValue("passage-4");
+  await userEvent.selectOptions(picker, "passage-5");
+  expect(screen.getByText("Quote 6")).toBeVisible();
 });
 
 it("offers the library action beside the original page when a library handler is supplied", async () => {
@@ -139,11 +168,6 @@ it("reports when an inline original PDF is visible", async () => {
 });
 
 describe("helpers", () => {
-  it("names a page by its host", () => {
-    expect(hostOf("https://www.example.org/a?b=1")).toBe("example.org");
-    expect(hostOf("nonsense")).toBe("");
-  });
-
   it("marks the text runs that belong to the cited passage and escapes the rest", () => {
     const mark = highlightRenderer("The CD3D gene marks T cells.");
     expect(mark({ str: "CD3D gene" })).toBe("<mark>CD3D gene</mark>");

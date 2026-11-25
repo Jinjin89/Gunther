@@ -14,6 +14,8 @@ Activity shows concurrent work, progress, failed jobs and the source or conversa
 
 Choose Web page and paste a public PDF URL to save the original and queue a reading. Web capture accepts PDFs up to 64 MB. A page that declares a PDF through `citation_pdf_url` or an alternate PDF link also imports the original when Gunther can fetch it. The capture records the URL you entered and the final PDF URL.
 
+From the Library Inspector, choose **+ Add to library** on a cited web page or a web result under **Also searched**. **Add all cited** captures the missing cited pages in order. [Library guide](LIBRARY.md#library-chat-and-studio)
+
 Capture checks transfer framing and rejects partial PDF responses. If the linked PDF is unavailable or its transfer fails, capture saves the web page and records a notice on the receipt. If the page itself is unavailable, the capture returns an error. Ask requests text formats when it reads a public page.
 
 Saving either recorded URL in the same library reuses the existing source. An exact retry with the same request ID returns the source and any fallback notice, even after restart. Changing the request while reusing that ID returns a conflict. Moving the source to Trash lets you capture it again with a fresh request.

@@ -27,9 +27,15 @@ Choose tokens from the CSS when adding surfaces. Use `--gx-hover` and `--gx-acti
 
 The Library workspace uses `--gx-sidebar` for Library, `--gx-canvas` for the middle, and `--gx-surface-2` with `--gx-surface` cards for Inspector. Their 44 px headers share a hairline; Chat uses neutral ink and focus treatments.
 
+The Inspector uses underlined tabs and tabular Evidence counts. Evidence opens with context and status, followed by cited sources, key results, or a passage. Supporting provenance uses foldable rows. The Brief uses serif for the goal, selectable text for reading, and inline fields in edit mode. [Conversation Brief](ASK.md#conversation-brief)
+
+Source cards and citation details share the same compact kind mark. Coverage bars and conclusion accents use the existing status colours. The citation header puts the number, source kind, title and locator together. Use passage chips for two to five passages and a select menu for larger lists.
+
 Lucide icons use a neutral stroke and the shared icon sizing. Use a library glyph with its colour and initial to label a library in lists, scope choices and results. Use the brand mark to indicate search or answer activity.
 
 Motion signals a change or work in progress. The fast, regular and slow tokens are 120, 180 and 280 ms. Use the common keyframes for entrances, menu popups, loading and the brand mark. Respect reduced motion.
+
+**Show in answer** scrolls within Chat and fades a 2 px ink outline over 1.2 seconds. With reduced motion, the outline holds for the same duration and clears without animation.
 
 ## Panels and reading
 

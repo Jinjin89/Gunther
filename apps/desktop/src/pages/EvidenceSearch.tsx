@@ -1,6 +1,7 @@
 import type { ConversationCitation, SearchedHit, UsedKeyResult } from "@gunther/contracts";
 import { isWebCitation } from "../components/evidence/citationKind";
 import { WebFindActions } from "../components/evidence/WebFindActions";
+import { EvidenceDisclosure, evidenceLocator } from "./EvidencePrimitives";
 import { webFindKey, webFindOf, type WebFind, type WebFindImports } from "./useImportWebFind";
 
 type OpenPassage = (citations: ConversationCitation[], index: number) => void;
@@ -14,10 +15,25 @@ export function CitedHeader({ citations, imports }: { citations: ConversationCit
     if (key && imports.status(find).status !== "imported" && !pending.has(key)) pending.set(key, find);
   }
   return <header className="evidence-cited-header">
-    <h3>Cited ({citations.length})</h3>
+    <h3>Cited <span className="evidence-count">({citations.length})</span></h3>
     {imports && pending.size > 0 && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm"
       disabled={imports.busy} onClick={() => void imports.importAll([...pending.values()])}>Add all cited ({pending.size})</button>}
   </header>;
+}
+
+function SearchedPassage({ hit }: { hit: SearchedHit }) {
+  const locator = evidenceLocator(hit.locator, hit.kind === "web" ? hit.url : null);
+  const query = hit.query?.trim();
+  const filtered = hit.kept === false;
+  return <>
+    <strong>{hit.title}</strong>
+    {locator && <small>{locator}</small>}
+    {hit.snippet && <span className="evidence-card-quote">{hit.snippet}</span>}
+    {(query || filtered) && <span className="evidence-search-detail">
+      {query && <small>Query: {query}</small>}
+      {filtered && <span className="evidence-pill">Filtered</span>}
+    </span>}
+  </>;
 }
 
 export function SearchEvidence({ searched = [], keyResultsUsed = [], citations, imports, onOpen }: {
@@ -28,32 +44,28 @@ export function SearchEvidence({ searched = [], keyResultsUsed = [], citations, 
   onOpen: OpenPassage;
 }) {
   const web = searched.filter((hit) => hit.kind === "web");
+  const libraryHits = searched.filter((hit) => hit.kind === "library");
   // Saved hits carry a source and a passage excerpt. Their order identifies each hit in this run.
-  const library: ConversationCitation[] = searched.filter((hit) => hit.kind === "library").map((hit, index) => ({
+  const library: ConversationCitation[] = libraryHits.map((hit, index) => ({
     id: `searched:${index}`, sourceId: hit.sourceId ?? "", kind: "library", sourceTitle: hit.title,
     locator: hit.locator, quote: hit.snippet, assertionId: null, status: "provisional", confidence: 0,
   }));
   return <>
-    {keyResultsUsed.length > 0 && <details className="evidence-disclosure">
-      <summary>Key results used ({keyResultsUsed.length})</summary>
+    {keyResultsUsed.length > 0 && <EvidenceDisclosure title="Key results used" count={keyResultsUsed.length}>
       <ul>{keyResultsUsed.map((result) => <li key={result.id}>
         <p>{result.text}</p>
         <div className="evidence-chips">{result.refs.filter((ref) => citations[ref - 1]).map((ref) => <button type="button"
           key={ref} aria-label={`Open citation ${ref} for this key result`} onClick={() => onOpen(citations, ref - 1)}>[{ref}]</button>)}</div>
       </li>)}</ul>
-    </details>}
-    {searched.length > 0 && <details className="evidence-disclosure">
-      <summary>Also searched, not cited ({searched.length}) <small>{searched.length} more ({web.length} online)</small></summary>
+    </EvidenceDisclosure>}
+    {searched.length > 0 && <EvidenceDisclosure title="Also searched" count={searched.length} subtitle={`${web.length} web · ${library.length} library`}>
       {web.map((hit, index) => <article className="evidence-card evidence-source-group" key={`searched:web:${index}`}>
-        <strong>{hit.title}</strong>{hit.locator && <small>{hit.locator}</small>}
-        {hit.snippet && <span className="evidence-card-quote">{hit.snippet}</span>}
+        <SearchedPassage hit={hit} />
         <WebFindActions find={hit} imports={imports} />
       </article>)}
-      {library.map((hit, index) => <button type="button" className="evidence-card" key={hit.id} disabled={!hit.sourceId}
-        onClick={() => onOpen(library, index)}>
-        <strong>{hit.sourceTitle}</strong>{hit.locator && <small>{hit.locator}</small>}
-        {hit.quote && <span className="evidence-card-quote">{hit.quote}</span>}
+      {libraryHits.map((hit, index) => <button type="button" className="evidence-card" key={index} disabled={!hit.sourceId}
+        onClick={() => onOpen(library, index)}><SearchedPassage hit={hit} />
       </button>)}
-    </details>}
+    </EvidenceDisclosure>}
   </>;
 }

@@ -9,6 +9,7 @@ import { withoutMarks } from "../components/evidence/citationMarks";
 import type { LiveStep } from "./liveAnswer";
 import { BrandMark } from "../design/BrandMark";
 import type { LiveAnswerState } from "./liveAnswer";
+import { stepResult } from "./stepResult";
 
 const CITATION = /\[(\d+)\]/g;
 const CITE_LINK = /^#cite-(\d+)$/;
@@ -121,9 +122,6 @@ export function usedSkill(skill: NonNullable<ConversationContext["skill"]>): str
   return `Used: ${skill.title}${skill.auto ? " (picked by Ask)" : ""}`;
 }
 
-/** Steps that are not searches: they have no results to count. */
-const METHOD_STEPS = ["check", "revise", "frame"];
-
 /** What the agent did to answer: each search, with what it found. */
 export function AgentSteps({ steps }: { steps: Array<AgentStep | LiveStep> }) {
   if (!steps.length) return null;
@@ -131,10 +129,13 @@ export function AgentSteps({ steps }: { steps: Array<AgentStep | LiveStep> }) {
     {steps.map((step, index) => {
       const Icon = step.tool === "search_web" ? Globe2 : step.tool === "read_source" ? BookOpen : step.tool === "check" ? ClipboardCheck : step.tool === "revise" ? PenLine : step.tool === "frame" ? ListChecks : Library;
       const running = "running" in step && step.running;
+      const result = running ? null : stepResult(step);
+      const detail = result === 0 ? "nothing found" : typeof result === "number"
+        ? `${result} ${result === 1 ? "result" : "results"}` : result;
       return <li key={index} className={step.error ? "is-error" : ""}>
         {running ? <LoaderCircle size={12} className="spin" /> : step.error ? <CircleAlert size={12} /> : <Icon size={12} />}
         <span>{running ? step.label.replace(/^Searched/, "Searching").replace(/^Read /, "Reading ").replace(/^Revised /, "Revising ") : step.label}</span>
-        {!running && (step.error || !METHOD_STEPS.includes(step.tool)) && <small>{step.error ?? (step.found ? `${step.found} ${step.found === 1 ? "result" : "results"}` : "nothing found")}</small>}
+        {detail !== null && <small>{detail}</small>}
       </li>;
     })}
   </ol>;
@@ -155,13 +156,17 @@ function LiveResearch({ research }: { research: NonNullable<LiveAnswerState["res
   </section>;
 }
 
+export function savedResearchPlan(context: ConversationContext) {
+  const research = context.research;
+  return research && research.state !== "asking" && (research.coreQuestion || context.work?.subQuestions?.length)
+    ? research : null;
+}
+
 /** A saved research answer's plan, folded away: its core question, sub-questions and what each found. */
 export function ResearchPlan({ context }: { context: ConversationContext }) {
-  const research = context.research;
-  // Questions back to the user have no plan yet.
-  if (!research || research.state === "asking") return null;
+  const research = savedResearchPlan(context);
+  if (!research) return null;
   const subQuestions = context.work?.subQuestions ?? [];
-  if (!research.coreQuestion && !subQuestions.length) return null;
   const found = (id: string) => (context.work?.findings ?? []).filter((item) => item.serves === id).length;
   return <details className="research-plan" onClick={(event) => event.stopPropagation()}>
     <summary><ChevronRight size={12} />Research plan</summary>

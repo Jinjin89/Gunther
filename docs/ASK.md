@@ -1,10 +1,20 @@
 # Ask
 
-Start on Home to search across libraries or ask with selected scope. Chat opens in the middle of a library alongside Library and the Inspector. Library chats share the source ticks in the Library column. File a Home conversation in a library, branch at an answer, or archive it. Open Brief in the Inspector's Evidence tab to see or edit the context carried across turns. Brief shows when it is updating and offers Retry if its update failed.
+Start on Home to search across libraries or ask with selected scope. Chat opens in the middle of a library alongside Library and the Inspector. Library chats share the source ticks in the Library column. File a Home conversation in a library, branch at an answer, or archive it.
 
 Library chats live in the **Chats** section at the top of the Library column. Search there by title or summary, pin or unpin a chat, and open the archived list. The Chat actions menu starts a new chat, renames the current chat, exports it as Markdown with citations, or archives it. An archived chat stays readable. Restore it to send more questions.
 
 Empty Chat shows the library overview and up to three suggested questions when available. Choose one to send it with the current Sources ticks. While the overview is unavailable, Chat shows the library's guiding question, description and source count. Follow the Models link to set up Analysis, or use Retry if the overview failed.
+
+Before an answer is selected, Evidence shows the current **Scope**, including the count by source kind and whether Web is on. Choose **Change** to open and focus Sources in the Library column.
+
+## Conversation Brief
+
+The **Brief** card in the Inspector's Evidence tab keeps the goal, constraints, settled conclusions and open questions across turns. It opens expanded and remembers when you collapse it. A long Settled list starts with its newest three conclusions. Choose **Show all** to see the rest. Source numbers open the saved passages, including citations from earlier answers. The card quotes your agreement when Gunther recorded it and offers **Retry** if a Brief update failed.
+
+For the latest answer included in the Brief, **After the last answer** summarizes the changes, even when the card is collapsed. **New** marks added lines and an updated goal. Open includes a **Closed** list for questions that answer closed. Select an earlier answer to see its conclusions marked **from this answer** and kept visible alongside the newest three.
+
+Choose **Edit**, then select a line or use the add button in its stage. Enter or leaving the field saves your text, and Shift+Enter adds a line break while drafting. Escape cancels the active edit. Press Escape again or choose **Done** to return to reading. Use the check beside an open question to move it to Settled and phrase the conclusion. In read mode, **Ask →** puts an open question in the composer for you to review and send.
 
 ## Ask a question
 
@@ -19,11 +29,17 @@ Ask needs a configured model. The composer links to Settings when a model or key
 3. The answer stores the source revision, block or region and supporting text with its citations. Hover over or tab to a citation number for its source title, location and a short quote, then activate it to open the passage in the Library Inspector. The source count below an answer opens its Evidence list, where you can choose a citation and step between passages. Selecting an answer updates that list without switching away from Studio; choosing Evidence, a source count or a citation opens Evidence explicitly. Home Ask keeps its standalone Evidence panel. The answer may read a pinned revision through the verified reader. Search and new reads respect current library membership and Trash.
 4. A saved answer with a library citation queues key results for Analysis. When the answer's Checker coverage is complete, Analysis receives only its supported claims and their original passages. Filing a Home chat queues its eligible answers in the destination library. Research clarification turns, reworks and answers that cite only live web search results are skipped.
 
+For the selected library answer, **Answer check** summarizes the saved claim verdicts. Expand the summary when there are flagged claims to read what the Checker found. Open **Process** for the search and reading steps and the saved research plan, when available. **Cited** shows each source's kind, location and excerpt beside its number in the answer. A citation card marks partial support or a dispute when the Checker linked that verdict to its source.
+
+An open citation shows the source kind and location when available. Press `[` or `]` outside a text field to step through citations, or `Esc` to return to the overview. When several passages are grouped, choose a chip for two to five passages or use the menu for six or more. Choose **Original** to view an available PDF at the cited page.
+
+In a citation opened from the selected library answer, **Show in answer** scrolls to the first matching number and briefly outlines it. In a narrow workspace it also closes the Inspector slide-over and focuses the citation.
+
 The answer actions show **Checking key results…** while Analysis works and a kept count when it finds supported results. Undo removes that answer's contribution. A failed job offers Retry, and a job waiting for Analysis links to Models settings. Open the library's Key results group to inspect the original passages. [Key results](LIBRARY.md#key-results)
 
 Each saved answer keeps up to 20 uncited search hits, starting with up to 12 web hits and filling the remaining slots with library hits. It records the query, a short excerpt and whether the result was kept during gathering. It also records the checked key results that pointed to passages the answer cites, using the citation numbers in the answer. The saved search list stays out of later model prompts.
 
-In Evidence, expand **Key results used** to see the checked sentences and open their numbered passages. **Also searched, not cited** shows uncited web hits first, followed by library excerpts that open as passages. Each section appears when the answer has entries for it.
+In Evidence, expand **Key results used** to see the checked sentences and open their numbered passages. **Also searched** counts uncited web and library hits, with web hits first. The cards show the saved query and mark hits excluded during gathering as **Filtered**. Library excerpts open as passages. **Earlier in this conversation** shows citations from previous answers. Each section appears when it has entries.
 
 On a web card or in its passage view, **+ Add to library** captures the page or its PDF through the library's web capture flow. Use **Add all cited** to import missing cited web sources in order. A blocked page shows the server error with **Retry** and a link to open the page in your browser. When the page is saved in place of a linked PDF, the app shows the capture notice. [Capture guide](CAPTURE.md)
 
@@ -35,4 +51,4 @@ Ask uses `POST /api/sessions/{id}/messages/stream`. Attach to existing work at `
 
 Turn handling is in [ask_turns.py](../apps/backend/gunther/ask_turns.py) and [ask_api.py](../apps/backend/gunther/ask_api.py). The [agent](../apps/backend/gunther/agent.py) uses [evidence readers](../apps/backend/gunther/evidence_reader.py), [citations](../apps/backend/gunther/citations.py) and [claim checks](../apps/backend/gunther/claim_checks.py). The [Ask exam](../apps/backend/evals/README.md) runs its fixture turns through the same streaming path.
 
-Enable Keep how answers are made in Developer settings and click Trace below a library answer, or View trace in its Evidence overview. Trace opens in the Inspector with the plan, searches, results, grading, writing and checks, with recorded model requests, replies and timing. Back to evidence or Escape returns to the Evidence overview. Saved answers with local provenance remain readable as stored. [Developer settings](SETTINGS.md#developer)
+Enable Keep how answers are made in Developer settings and choose **Trace** below a library answer or in its **Answer check** card. Trace opens in the Inspector with the plan, searches, results, grading, writing and checks, with recorded model requests, replies and timing. Back to evidence or Escape returns to the Evidence overview. Saved answers with local provenance remain readable as stored. [Developer settings](SETTINGS.md#developer)

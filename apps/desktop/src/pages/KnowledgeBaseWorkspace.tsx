@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { KnowledgeBase } from "../atlas";
 import type { Notify } from "../App";
 import { BulkImport } from "../components/BulkImport";
+import { AnswerCitationNavigation } from "../components/evidence/EvidenceDetail";
 import { PopMenu } from "../contents/SectionMenu";
 import { SourceSummary } from "../contents/SourceSummary";
 import { SourceTree } from "../contents/SourceTree";
@@ -206,6 +207,15 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   useEffect(() => { persistentStorage.removeItem(`gunther:open-source:${base.id}`); }, [base.id]);
   const chatVisible = middle.kind === "chat";
   useEffect(() => { onChatVisible?.(chatVisible); }, [chatVisible, onChatVisible]);
+  const detailCitation = evidenceDetail?.citations[evidenceDetail.index];
+  const answerCitations = chatVisible ? selectedMessage?.citations : undefined;
+  const detailIndex = evidenceDetail && !evidenceDetail.passageSelector && evidenceDetail.contextKey === contextKey && detailCitation && answerCitations
+    ? (evidenceDetail.citations === answerCitations ? evidenceDetail.index : answerCitations.findIndex((item) => item.id === detailCitation.id)) : -1;
+  const showInAnswer = (index: number) => {
+    const closeAfterLocating = screenWidth < 1_080;
+    if (!chatActions.current?.locateCitation(index, closeAfterLocating)) onNotify("No matching citation in the selected answer.");
+    else if (closeAfterLocating) closeInspector();
+  };
 
   const source = middle.kind === "source" ? sources.find((item) => item.id === middle.id) : undefined;
   return <div className="library-workspace" ref={workspace}>
@@ -255,21 +265,25 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     <LibraryInspector workspace={workspace} screenWidth={screenWidth} collapsed={inspectorColumn.collapsed} onCollapse={closeInspector}
       tab={inspector.tab} onTab={selectTab} evidenceCount={middle.kind === "chat" ? selectedMessage?.citations.length ?? 0
         : middle.kind === "source" ? (source && sourceCount?.id === source.id ? sourceCount.count : 0) : artifact?.citations.length ?? 0}
+      briefUpdating={chatVisible && chats.activeId !== null && chats.briefBusy === chats.activeId}
       running={studio.jobs.size > 0 || studio.activities.some((item) => item.state === "running" || item.state === "waiting")}
       detailOpen={Boolean(inspector.detail)} onBack={clearDetail} originalPdf={originalPdf}
-      evidence={<EvidencePane session={chats.activeSession} selected={middle.kind === "chat" ? selectedMessage : null} chatVisible={chatVisible}
-        sources={sources} selectedCount={sourceIds.length} allSelected={selection.mode === "all"} webEnabled={web.enabled}
-        output={artifact} partInView={partInView} baseId={base.id} workspaceId={workspaceId} sourceId={source?.id ?? null} onSourceCount={onSourceCount}
-        brief={chats.activeSession && chats.activeSession.id === chats.activeId ? {
-          updating: chats.briefBusy === chats.activeSession.id, readOnly: !chatOnline || chats.activeSession.archived,
-          save: (input) => void chats.saveBrief(chats.activeSession!.id, input), retry: () => void chats.refreshBrief(chats.activeSession!.id),
-        } : undefined}
-        traceEnabled={traces.on} onOpenTrace={selectedMessage ? () => openTrace(selectedMessage) : undefined} onNotify={onNotify}
-        detail={inspector.detail} onOpen={(citations, index, passageSelector) => openEvidence(citations, index, contextKey, passageSelector)}
-        onStep={stepEvidence}
-        onBack={clearDetail} onOpenSource={(id) => { clearDetail(); openFullSource(id); }}
-        onOpenLibrarySource={(id) => { if (choose({ kind: "source", id }) && screenWidth < 1_080) closeInspector(); }}
-        onOriginalPdfChange={setOriginalPdf} />}
+      evidence={<AnswerCitationNavigation.Provider value={answerCitations ? { detailIndex: detailIndex >= 0 ? detailIndex : undefined, showInAnswer } : null}>
+        <EvidencePane session={chats.activeSession} selected={middle.kind === "chat" ? selectedMessage : null} chatVisible={chatVisible}
+          sources={sources} selectedSourceIds={sourceIds} allSelected={selection.mode === "all"} webEnabled={web.enabled} onFocusSources={focusSources}
+          output={artifact} partInView={partInView} baseId={base.id} workspaceId={workspaceId} sourceId={source?.id ?? null} onSourceCount={onSourceCount}
+          brief={chats.activeSession && chats.activeSession.id === chats.activeId ? {
+            updating: chats.briefBusy === chats.activeSession.id, readOnly: !chatOnline || chats.activeSession.archived,
+            save: (input) => chats.saveBrief(chats.activeSession!.id, input), retry: () => void chats.refreshBrief(chats.activeSession!.id),
+            ask: chats.activeSession.archived ? undefined : (text) => chatActions.current?.ask(text, false),
+          } : undefined}
+          traceEnabled={traces.on} onOpenTrace={selectedMessage ? () => openTrace(selectedMessage) : undefined} onNotify={onNotify}
+          detail={inspector.detail} onOpen={(citations, index, passageSelector) => openEvidence(citations, index, contextKey, passageSelector)}
+          onStep={stepEvidence}
+          onBack={clearDetail} onOpenSource={(id) => { clearDetail(); openFullSource(id); }}
+          onOpenLibrarySource={(id) => { if (choose({ kind: "source", id }) && screenWidth < 1_080) closeInspector(); }}
+          onOriginalPdfChange={setOriginalPdf} />
+      </AnswerCitationNavigation.Provider>}
       studio={<StudioColumn studio={studio} scope={scope} scopeEmpty={scopeEmpty} webAvailable={web.available} sourceCount={contents?.sources.length ?? null}
         sourceLoadFailed={sourceLoadFailed} selectedSourceCount={sourceIds.length} disabled={!workspaceId}
         onOpen={openOutput} onTrash={(item) => void trashOutput(item)} />} />

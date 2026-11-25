@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactMenu } from "../outputs/ArtifactMenu";
 import { LibraryInspector, type InspectorTab } from "./LibraryInspector";
 
-function Harness({ width, collapsedAtStart = false, onMenuChoice = () => {} }: { width: number; collapsedAtStart?: boolean; onMenuChoice?: () => void }) {
+function Harness({ width, collapsedAtStart = false, onMenuChoice = () => {}, briefUpdating = false }: {
+  width: number; collapsedAtStart?: boolean; onMenuChoice?: () => void; briefUpdating?: boolean;
+}) {
   const workspace = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState(collapsedAtStart);
   const [tab, setTab] = useState<InspectorTab>("studio");
@@ -14,7 +16,7 @@ function Harness({ width, collapsedAtStart = false, onMenuChoice = () => {} }: {
   return <div ref={workspace}>
     <button type="button">Outside</button>
     <LibraryInspector workspace={workspace} screenWidth={width} collapsed={collapsed} onCollapse={() => setCollapsed(true)}
-      tab={tab} onTab={(next) => { setTab(next); setCollapsed(false); }} evidenceCount={2} running detailOpen={detail}
+      tab={tab} onTab={(next) => { setTab(next); setCollapsed(false); }} evidenceCount={2} briefUpdating={briefUpdating} running detailOpen={detail}
       onBack={() => setDetail(false)} originalPdf={originalPdf}
       evidence={<><button type="button" onClick={() => setDetail(true)}>Open detail</button><button type="button" onClick={() => setOriginalPdf(true)}>Original PDF</button>{detail && <p>Passage detail</p>}</>}
       studio={<><p>Studio content</p><ArtifactMenu label="Artifact actions" items={[{ label: "Choose action", onSelect: onMenuChoice }]} /></>} />
@@ -34,9 +36,11 @@ describe("LibraryInspector", () => {
   it("starts on Studio, resizes within its limits, and widens for an original PDF", async () => {
     vi.stubGlobal("innerWidth", 1280);
     const user = userEvent.setup();
-    render(<Harness width={1280} />);
+    render(<Harness width={1280} briefUpdating />);
     expect(screen.getByRole("tab", { name: "Studio" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Evidence (2)" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "Evidence (2)" })).toHaveAccessibleDescription("Brief updating");
+    expect(screen.getByTitle("Brief updating")).toBeVisible();
     const resize = screen.getByRole("separator", { name: "Resize Inspector" });
     expect(resize).toHaveAttribute("aria-valuenow", "336");
     expect(resize).toHaveAttribute("aria-valuemin", "280");

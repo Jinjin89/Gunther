@@ -51,8 +51,11 @@ import { LibraryWelcome } from "./LibraryWelcome";
 import type { UseLibraryChats } from "./useLibraryChats";
 import "../session.css";
 
+const CITATION_PULSE_MS = 1_200;
+
 export interface LibraryChatActions {
   ask: (text: string, submit: boolean) => void;
+  locateCitation: (index: number, focus: boolean) => boolean;
 }
 
 interface SessionWorkspaceProps {
@@ -290,6 +293,15 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const scrollPane = useRef<HTMLDivElement>(null);
+  const locatedCitation = useRef<{ marker: HTMLButtonElement; timeout: number } | null>(null);
+  const clearLocatedCitation = useCallback(() => {
+    const located = locatedCitation.current;
+    if (!located) return;
+    window.clearTimeout(located.timeout);
+    located.marker.classList.remove("is-located");
+    locatedCitation.current = null;
+  }, []);
+  useEffect(() => clearLocatedCitation, [activeId, selectedMessageId, visible, clearLocatedCitation]);
   /** Whether the reader is at the bottom; only then does new text pull the view along. */
   const followTail = useRef(true);
   const scrollOffset = useRef(0);
@@ -439,6 +451,23 @@ export function SessionWorkspace({ base, chats, sourceIds = [], sourceScopeEmpty
         setDraft(text);
         window.requestAnimationFrame(() => scrollPane.current?.parentElement?.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus());
       }
+    },
+    locateCitation(index, focus) {
+      const pane = scrollPane.current;
+      if (!visible || !pane) return false;
+      const marker = pane.querySelector<HTMLButtonElement>(`.conversation-message.role-assistant.is-selected [data-citation-index="${index}"]`);
+      if (!marker) return false;
+
+      clearLocatedCitation();
+      const bounds = marker.getBoundingClientRect();
+      const top = bounds.top - pane.getBoundingClientRect().top;
+      if (top < 0 || top + bounds.height > pane.clientHeight) {
+        pane.scrollTop += top - (pane.clientHeight - bounds.height) / 2;
+      }
+      marker.classList.add("is-located");
+      locatedCitation.current = { marker, timeout: window.setTimeout(clearLocatedCitation, CITATION_PULSE_MS) };
+      if (focus) marker.focus({ preventScroll: true });
+      return true;
     },
   }));
 

@@ -1,7 +1,8 @@
 import type { ConversationCitation, ContentBlock, SourceDetail } from "@gunther/contracts";
-import { ArrowLeft, ArrowUpRight, ChevronLeft, ChevronRight, FileText, Globe2 } from "lucide-react";
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowLeft, ArrowUpLeft, ArrowUpRight, ChevronLeft, ChevronRight, Globe2 } from "lucide-react";
+import { createContext, lazy, Suspense, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { knowledgeApi, sourceAssetUrl } from "../../api";
+import { evidenceLocator, sourceKindMeta, SourceKindMark } from "../../pages/EvidencePrimitives";
 import { webFindOf, type WebFindImports } from "../../pages/useImportWebFind";
 import { isWebCitation } from "./citationKind";
 import { WebFindActions } from "./WebFindActions";
@@ -11,6 +12,21 @@ const PdfViewer = lazy(() => import("./PdfViewer"));
 const CONTEXT_BEFORE = 3;
 const CONTEXT_AFTER = 4;
 const CONTEXT_STEP = 6;
+const PASSAGE_CHIP_LIMIT = 5;
+
+export const AnswerCitationNavigation = createContext<{
+  detailIndex: number | undefined;
+  showInAnswer: (index: number) => void;
+} | null>(null);
+
+export function ShowInAnswerButton({ index }: { index?: number }) {
+  const navigation = useContext(AnswerCitationNavigation);
+  const target = index ?? navigation?.detailIndex;
+  if (!navigation || target === undefined) return null;
+  return <button type="button" className="gx-link gx-show-in-answer" onClick={() => navigation.showInAnswer(target)}>
+    <ArrowUpLeft size={14} aria-hidden />Show in answer
+  </button>;
+}
 
 /** The quote marked inside the block that holds it, when it is a piece of it. */
 function Marked({ text, quote }: { text: string; quote: string }) {
@@ -20,19 +36,12 @@ function Marked({ text, quote }: { text: string; quote: string }) {
   return <>{text.slice(0, at)}<mark>{needle}</mark>{text.slice(at + needle.length)}</>;
 }
 
-export const hostOf = (url: string | null | undefined): string => {
-  try {
-    return new URL(url ?? "").hostname.replace(/^www\./, "");
-  } catch {
-    return "";
-  }
-};
+const locatorOf = (citation: ConversationCitation) => evidenceLocator(citation.locator, isWebCitation(citation) ? citation.url : null);
 
 const isPdf = (source: SourceDetail) => source.asset?.mediaType === "application/pdf" || /\.pdf$/i.test(source.asset?.originalName ?? "");
 const isImage = (source: SourceDetail) => Boolean(source.asset?.mediaType.startsWith("image/"));
 
-function WebEvidence({ citation, imports }: { citation: ConversationCitation; imports: WebFindImports | undefined }) {
-  const host = citation.locator || hostOf(citation.url);
+function WebEvidence({ citation, locator, imports }: { citation: ConversationCitation; locator: string; imports: WebFindImports | undefined }) {
   return <>
     <div className="gx-evidence-body">
       <section aria-label="Passage from the page">
@@ -42,20 +51,21 @@ function WebEvidence({ citation, imports }: { citation: ConversationCitation; im
       </section>
     </div>
     <footer className="gx-evidence-foot">
-      <WebFindActions find={webFindOf(citation)} imports={imports} outsideLabel={`Open ${host || "the page"}`} />
+      <WebFindActions find={webFindOf(citation)} imports={imports} outsideLabel={`Open ${locator || "the page"}`} />
       {!imports && <small><Globe2 size={11} />Outside your library</small>}
     </footer>
   </>;
 }
 
-function LibraryEvidence({ citation, onOpenSource, onOriginalPdfChange }: {
+function LibraryEvidence({ citation, locator, source, failed, onOpenSource, onOriginalPdfChange }: {
   citation: ConversationCitation;
+  locator: string;
+  source: SourceDetail | null;
+  failed: boolean;
   onOpenSource?: ((sourceId: string) => void) | undefined;
   onOriginalPdfChange?: ((original: boolean) => void) | undefined;
 }) {
-  const [source, setSource] = useState<SourceDetail | null>(null);
   const [blocks, setBlocks] = useState<ContentBlock[]>([]);
-  const [failed, setFailed] = useState(false);
   const [tab, setTab] = useState<"passage" | "original">("passage");
   const [before, setBefore] = useState(CONTEXT_BEFORE);
   const [after, setAfter] = useState(CONTEXT_AFTER);
@@ -64,11 +74,8 @@ function LibraryEvidence({ citation, onOpenSource, onOriginalPdfChange }: {
     let active = true;
     setBefore(CONTEXT_BEFORE);
     setAfter(CONTEXT_AFTER);
-    setSource(null);
     setBlocks([]);
-    setFailed(false);
     setTab(citation.quote ? "passage" : "original");
-    void knowledgeApi.source(citation.sourceId).then((value) => { if (active) setSource(value); }).catch(() => { if (active) setFailed(true); });
     if (citation.blockId) {
       void knowledgeApi.sourceStructure(citation.sourceId, 0, citation.sourceRevisionId, null, 500)
         .then((structure) => { if (active) setBlocks(structure.blocks); })
@@ -105,7 +112,7 @@ function LibraryEvidence({ citation, onOpenSource, onOriginalPdfChange }: {
           ? <Suspense fallback={<div className="gx-pdf-loading" />}><PdfViewer url={assetUrl} page={page} quote={citation.quote} title={citation.sourceTitle} /></Suspense>
           : <div className="gx-evidence-image"><img src={assetUrl} alt={citation.sourceTitle} /></div>
         : <section aria-label="Passage from the source">
-          <h3>{[citation.locator || "Passage", trail].filter(Boolean).join(" · ")}</h3>
+          <h3>{[locator || "Passage", trail].filter(Boolean).join(" · ")}</h3>
           {citation.supportText
             ? <blockquote className="gx-evidence-quote">{citation.supportText}</blockquote>
             : context.length > 1
@@ -122,9 +129,32 @@ function LibraryEvidence({ citation, onOpenSource, onOriginalPdfChange }: {
     </div>
     <footer className="gx-evidence-foot">
       {onOpenSource && <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" onClick={() => onOpenSource(citation.sourceId)}>Open source<ArrowUpRight size={13} /></button>}
-      <small>{source ? [source.kind, citation.status === "verified" ? "Trusted" : null].filter(Boolean).join(" · ") : ""}</small>
+      {source && citation.status === "verified" && <small>Trusted</small>}
     </footer>
   </>;
+}
+
+function PassagePicker({ passages, selectedId, onPassage }: {
+  passages: readonly ConversationCitation[];
+  selectedId: string;
+  onPassage: (index: number) => void;
+}) {
+  if (passages.length <= PASSAGE_CHIP_LIMIT) return <div className="gx-evidence-passages gx-evidence-passage-chips" role="group" aria-label="Passages">
+    {passages.map((passage, index) => {
+      const page = passage.anchor?.page;
+      const locator = page != null ? `p. ${page}` : locatorOf(passage);
+      const label = locator ? `${index + 1} · ${locator}` : String(index + 1);
+      return <button key={passage.id} type="button" aria-label={`Passage ${label}`} aria-pressed={passage.id === selectedId}
+        title={[passage.sourceTitle, locator].filter(Boolean).join(" · ")} onClick={() => onPassage(index)}>{label}</button>;
+    })}
+  </div>;
+  return <label className="gx-evidence-passages">Passage
+    <select value={selectedId} onChange={(event) => onPassage(passages.findIndex((passage) => passage.id === event.currentTarget.value))}>
+      {passages.map((passage, index) => <option key={passage.id} value={passage.id}>
+        {index + 1}. {[passage.sourceTitle, locatorOf(passage)].filter(Boolean).join(" · ")}
+      </option>)}
+    </select>
+  </label>;
 }
 
 /** A citation's shared passage or original viewer, optionally within a source list. */
@@ -145,29 +175,46 @@ export function EvidenceDetail({ citation, index, passages, onPassage, onOpenSou
   webImports?: WebFindImports | undefined;
 }) {
   const web = isWebCitation(citation);
+  const sourceId = web ? null : citation.sourceId;
+  const [read, setRead] = useState<{ id: string; source: SourceDetail | null }>();
+  useEffect(() => {
+    if (sourceId === null) return;
+    let active = true;
+    void knowledgeApi.source(sourceId).then(
+      (source) => { if (active) setRead({ id: sourceId, source }); },
+      () => { if (active) setRead({ id: sourceId, source: null }); },
+    );
+    return () => { active = false; };
+  }, [sourceId]);
+  const loaded = read?.id === sourceId ? read : undefined;
+  const source = loaded?.source ?? null;
+  const mark = sourceKindMeta(web ? "web" : source?.kind);
+  const locator = locatorOf(citation);
+  const kind = citation.sourceOrigin === "web_supplement" ? "Web supplement" : mark.kindLabel;
+  const scope = citation.sourceOrigin === "selected" ? "Selected material"
+    : citation.sourceOrigin === "library_supplement" ? "Library supplement" : null;
+  const metadata = [kind, locator, scope].filter(Boolean).join(" · ");
   return <div className="gx-evidence-detail">
     {onBack && <nav className="gx-evidence-navigation" aria-label="Evidence navigation">
       <button type="button" onClick={onBack}><ArrowLeft size={14} />All {total ?? 0} {total === 1 ? "source" : "sources"}</button>
-      {position !== undefined && total !== undefined && <span>[{position + 1} / {total}]</span>}
+      {position !== undefined && total !== undefined && <span>{position + 1} / {total}</span>}
       <button type="button" aria-label="Previous source" disabled={!onPrevious} onClick={onPrevious}><ChevronLeft size={15} /></button>
       <button type="button" aria-label="Next source" disabled={!onNext} onClick={onNext}><ChevronRight size={15} /></button>
     </nav>}
     <header>
-      {index !== undefined && <i>{index + 1}</i>}
-      <span>
-        <small>{web ? <><Globe2 size={11} />{citation.sourceOrigin === "web_supplement" ? "Web supplement" : "Web"}</> : <><FileText size={11} />{citation.sourceOrigin === "library_supplement" ? "Library supplement" : citation.sourceOrigin === "selected" ? "Selected material" : "Your library"}</>}</small>
+      {index !== undefined && <span className="gx-evidence-number">[{index + 1}]</span>}
+      <SourceKindMark {...mark} />
+      <span className="gx-evidence-title">
         <strong title={citation.sourceTitle}>{citation.sourceTitle}</strong>
+        <small title={metadata}>{metadata}</small>
       </span>
+      <ShowInAnswerButton />
       {headerAction}
     </header>
-    {passages && passages.length > 1 && onPassage && <label className="gx-evidence-passages">Passage
-      <select value={citation.id} onChange={(event) => onPassage(passages.findIndex((item) => item.id === event.target.value))}>
-        {passages.map((passage, at) => <option key={passage.id} value={passage.id}>
-          {at + 1}. {passage.sourceTitle}{passage.locator ? ` · ${passage.locator}` : ""}
-        </option>)}
-      </select>
-    </label>}
-    {web ? <WebEvidence citation={citation} imports={webImports} /> : <LibraryEvidence citation={citation} onOpenSource={onOpenSource} onOriginalPdfChange={onOriginalPdfChange} />}
+    {passages && passages.length > 1 && onPassage && <PassagePicker passages={passages} selectedId={citation.id} onPassage={onPassage} />}
+    {web ? <WebEvidence citation={citation} locator={locator} imports={webImports} />
+      : <LibraryEvidence citation={citation} locator={locator} source={source} failed={loaded?.source === null}
+        onOpenSource={onOpenSource} onOriginalPdfChange={onOriginalPdfChange} />}
   </div>;
 }
 

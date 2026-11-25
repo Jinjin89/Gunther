@@ -297,27 +297,6 @@
 .trace-results p { margin: 2px 0 0; color: var(--gx-muted); }
 .trace-empty { display: grid; justify-items: center; gap: 8px; padding: 32px 18px; color: var(--gx-muted); text-align: center; font-size: var(--gx-text-xs); }
 
-/* The conversation brief at the top of the context panel: plain lines, edited in place. */
-.brief-section { display: grid; gap: 8px; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--gx-line); }
-.brief-section header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.brief-section header small { color: var(--gx-faint); font-size: var(--gx-text-xs); }
-.brief-part { display: grid; gap: 2px; }
-.brief-part > small { color: var(--gx-faint); font-size: var(--gx-text-xs); }
-.brief-part ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-.brief-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: var(--gx-text-sm); color: var(--gx-ink); }
-.brief-text { flex: 0 1 auto; min-width: 0; padding: 1px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: text; }
-.brief-text:disabled { cursor: default; }
-.brief-ref { padding: 0; border: 0; background: transparent; color: var(--gx-muted); font: inherit; font-size: var(--gx-text-xs); }
-button.brief-ref { cursor: pointer; text-decoration: underline; }
-.brief-remove { margin-left: auto; padding: 2px; border: 0; background: transparent; color: var(--gx-faint); opacity: 0; cursor: pointer; }
-.brief-line:hover .brief-remove, .brief-remove:focus-visible { opacity: 1; }
-.brief-input, .brief-add input, .brief-add select { min-width: 0; padding: 4px 6px; border: 1px solid var(--gx-line-2); border-radius: var(--gx-radius-xs); background: var(--gx-surface); color: var(--gx-ink); font: inherit; font-size: var(--gx-text-sm); }
-.brief-input:focus-visible, .brief-add input:focus-visible { outline: 0; border-color: color-mix(in srgb, var(--gx-ink) 32%, transparent); }
-.brief-add { display: flex; gap: 6px; }
-.brief-add input { flex: 1; }
-.brief-error { margin: 0; font-size: var(--gx-text-sm); color: var(--gx-danger); }
-.brief-error button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
-
 /* Deep research: the plan above the steps while it runs, and folded under a saved answer. */
 .research-plan { margin: 8px 0 0 30px; color: var(--gx-muted); font-size: var(--gx-text-xs); }
 .research-plan summary { width: fit-content; display: inline-flex; align-items: center; gap: 5px; color: var(--gx-faint); cursor: pointer; list-style: none; }

@@ -848,7 +848,7 @@ it("shares all sources, blocks an empty selection, and uses section ticks for ea
   expect(JSON.parse(window.localStorage.getItem(`gunther:library-sources:${base.id}`)!)).toEqual({ mode: "selected", sourceIds: ["s1", "s2"] });
 });
 
-it("edits and retries the Brief and opens Trace inside Evidence", async () => {
+it("edits and retries the Brief, drafts a question, and opens Trace inside Evidence", async () => {
   const user = userEvent.setup();
   const answer: SessionMessage = {
     id: "answer-with-evidence", role: "assistant", sessionId: originalSession.id, content: "The field records support that finding.", createdAt: at,
@@ -860,11 +860,12 @@ it("edits and retries the Brief and opens Trace inside Evidence", async () => {
   };
   vi.mocked(knowledgeApi.session).mockResolvedValue({
     ...originalSession, messages: [answer], messageCount: 1,
-    brief: { goal: "Summarize the field records", constraints: [], settled: [], open: [], edited: [], error: "Update failed" },
+    brief: { goal: "Summarize the field records", constraints: [], settled: [], open: ["Which records are missing?"], edited: [], error: "Update failed" },
   });
   let finishRefresh!: (value: NonNullable<KnowledgeSession["brief"]>) => void;
   const refresh = vi.spyOn(knowledgeApi, "refreshBrief").mockImplementation(() => new Promise((resolve) => { finishRefresh = resolve; }));
   const edit = vi.spyOn(knowledgeApi, "editBrief").mockImplementation(async (_id, input) => ({ ...input, edited: [], error: null }));
+  const send = vi.spyOn(knowledgeApi, "sendMessageStream");
   vi.spyOn(knowledgeApi, "developerSettings").mockResolvedValue({ traces: true });
   const readTrace = vi.spyOn(knowledgeApi, "messageTrace").mockResolvedValue({ version: 1, totalMs: 12, steps: [] });
   setup();
@@ -873,19 +874,46 @@ it("edits and retries the Brief and opens Trace inside Evidence", async () => {
   expect(document.querySelector(".conversation-header details")).toBeNull();
   await user.click(screen.getByRole("tab", { name: "Evidence (1)" }));
   const evidence = screen.getByRole("tabpanel", { name: "Evidence" });
-  const brief = within(evidence).getByText("Brief", { selector: "summary" });
-  await user.click(brief);
+  const brief = within(within(evidence).getByRole("region", { name: "Brief" }));
   expect(screen.getByText("Summarize the field records")).toBeVisible();
   await user.click(within(evidence).getByRole("button", { name: "Retry" }));
   expect(refresh).toHaveBeenCalledWith(originalSession.id);
   expect(within(evidence).getByText("Updating…")).toBeVisible();
-  await act(async () => finishRefresh({ goal: "Summarize the field records", constraints: [], settled: [], open: [], edited: [], error: null }));
-  await user.click(within(evidence).getByRole("button", { name: "Summarize the field records" }));
-  const goal = within(evidence).getByRole("textbox", { name: "Edit goal" });
+  await act(async () => finishRefresh({ goal: "Summarize the field records", constraints: [], settled: [], open: ["Which records are missing?"], edited: [], error: null }));
+  await user.click(brief.getByRole("button", { name: "Edit" }));
+  await user.click(brief.getByRole("button", { name: "Summarize the field records" }));
+  const goal = brief.getByRole("textbox", { name: "Edit goal" });
   await user.clear(goal);
   await user.type(goal, "Compare records{Enter}");
   await waitFor(() => expect(edit).toHaveBeenCalledWith(originalSession.id, expect.objectContaining({ goal: "Compare records" })));
-  expect(await within(evidence).findByRole("button", { name: "Compare records" })).toBeVisible();
+  await user.click(brief.getByRole("button", { name: "Done" }));
+  expect(await brief.findByText("Compare records")).toBeVisible();
+  await user.click(brief.getByRole("button", { name: "Ask: Which records are missing?" }));
+  const composer = screen.getByRole("textbox", { name: "Message Gunther" });
+  expect(composer).toHaveValue("Which records are missing?");
+  await waitFor(() => expect(composer).toHaveFocus());
+  expect(send).not.toHaveBeenCalled();
+
+  let finishSettle!: () => void;
+  edit.mockImplementationOnce((_id, input) => new Promise((resolve) => {
+    finishSettle = () => resolve({ ...input, edited: [], error: null });
+  }));
+  await user.click(brief.getByRole("button", { name: "Edit" }));
+  await user.click(brief.getByRole("button", { name: "Which records are missing?" }));
+  await user.type(brief.getByRole("textbox", { name: "Edit open question" }), " Draft");
+  await user.click(brief.getByRole("button", { name: "Settle open question: Which records are missing?" }));
+  const conclusion = brief.getByRole("textbox", { name: "Edit conclusion" });
+  expect(conclusion).toHaveFocus();
+  expect(conclusion).toHaveValue("Which records are missing? Draft");
+  expect(brief.getByText("Added by you")).toBeVisible();
+  await user.clear(conclusion);
+  await user.type(conclusion, "All records accounted for{Enter}");
+  expect(edit).toHaveBeenCalledTimes(2);
+  await act(async () => finishSettle());
+  await waitFor(() => expect(edit).toHaveBeenLastCalledWith(originalSession.id, expect.objectContaining({
+    goal: "Compare records", open: [], settled: [{ text: "All records accounted for", refs: [], by: "you", because: "" }],
+  })));
+  await user.click(brief.getByRole("button", { name: "Done" }));
   await user.click(screen.getByRole("button", { name: "1 source · 1 web" }));
   await user.click(within(evidence).getByRole("button", { name: /Field log/ }));
   expect(evidence).toHaveTextContent("A recorded observation.");
@@ -907,9 +935,15 @@ it("keeps the empty chat Evidence scope and Web status in sync with the composer
   setup();
   await user.click(await screen.findByRole("tab", { name: "Evidence (0)" }));
   expect(await screen.findByText("All 3 sources")).toBeVisible();
+  expect(screen.getByText("3 notes")).toBeVisible();
   expect(screen.getByText("Web off")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Sources" }));
+  expect(screen.queryByRole("textbox", { name: "Filter contents" })).toBeNull();
+  await user.click(within(screen.getByRole("region", { name: "Scope" })).getByRole("button", { name: "Change" }));
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Filter contents" })).toHaveFocus());
   await user.click(screen.getByRole("checkbox", { name: "Select Field notes" }));
   expect(screen.getByText("2 of 3 selected")).toBeVisible();
+  expect(screen.getByText("2 notes")).toBeVisible();
   const web = screen.getByRole("button", { name: "Web" });
   await waitFor(() => expect(web).toBeEnabled());
   await user.click(web);
@@ -940,7 +974,7 @@ it("keeps Studio selected when an answer finishes, then opens and steps through 
   expect(evidence.getByRole("heading", { name: "Cited (2)" })).toBeVisible();
   await user.click(evidence.getByRole("button", { name: /Web source 1/ }));
   expect(evidence.getByText("Passage 1")).toBeVisible();
-  expect(evidence.getByText("[1 / 2]")).toBeVisible();
+  expect(evidence.getByText("1 / 2")).toBeVisible();
   await user.click(evidence.getByRole("button", { name: "Next source" }));
   expect(evidence.getByText("Passage 2")).toBeVisible();
   await user.click(evidence.getByRole("button", { name: "All 2 sources" }));
@@ -949,6 +983,46 @@ it("keeps Studio selected when an answer finishes, then opens and steps through 
   await user.click(screen.getByRole("button", { name: "Inspect citation 1" }));
   expect(screen.getByRole("tab", { name: "Evidence (2)" })).toHaveAttribute("aria-selected", "true");
   expect(within(screen.getByRole("tabpanel", { name: "Evidence" })).getByText("Passage 1")).toBeVisible();
+});
+
+it.each([1280, 1024])("shows the stepped citation in the selected answer at %d px", async (width) => {
+  vi.stubGlobal("innerWidth", width);
+  const user = userEvent.setup();
+  const loaded = chatWithEvidence([webCitation("first-passage", "First passage"), webCitation("second-passage", "Second passage")]);
+  const current = { ...loaded.messages[0]!, content: "One [1] and two [2]." };
+  const earlier = { ...current, id: "earlier-answer", content: "Earlier [1] and earlier [2].",
+    citations: [webCitation("earlier-first", "First older passage"), webCitation("earlier-second", "Second older passage")] };
+  vi.mocked(knowledgeApi.session).mockResolvedValue({ ...loaded, messages: [earlier, current], messageCount: 2 });
+  setup();
+  const [earlierMarker, marker] = await screen.findAllByRole("button", { name: "Inspect citation 2" });
+  const first = screen.getAllByRole("button", { name: "Inspect citation 1" })[1]!;
+  expect(marker).toHaveAttribute("data-citation-index", "1");
+  await user.click(first);
+  await user.keyboard("]");
+  const evidence = within(screen.getByRole("tabpanel", { name: "Evidence" }));
+  expect(evidence.getByText("2 / 2")).toBeVisible();
+  const show = evidence.getByRole("button", { name: "Show in answer" });
+  const pane = marker!.closest<HTMLElement>(".conversation-scroll")!;
+  Object.defineProperty(pane, "clientHeight", { value: 300 });
+  pane.scrollTop = 120;
+  vi.spyOn(pane, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
+  vi.spyOn(marker!, "getBoundingClientRect").mockReturnValue({ top: 550, height: 20 } as DOMRect);
+
+  vi.useFakeTimers();
+  try {
+    fireEvent.click(show);
+    expect(pane.scrollTop).toBe(430);
+    expect(marker).toHaveClass("is-located");
+    expect(earlierMarker).not.toHaveClass("is-located");
+    if (width < 1080) {
+      expect(marker).toHaveFocus();
+      expect(screen.getByRole("button", { name: "Expand Evidence" })).toBeVisible();
+    } else expect(show).toBeVisible();
+    act(() => vi.advanceTimersByTime(1200));
+    expect(marker).not.toHaveClass("is-located");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("shares an imported URL across cards, opens its summary, and clears it on Trash", async () => {
@@ -968,8 +1042,8 @@ it("shares an imported URL across cards, opens its summary, and clears it on Tra
   await user.click(await screen.findByRole("checkbox", { name: "Select Field notes" }));
   await user.click(await screen.findByRole("tab", { name: "Evidence (1)" }));
   const pane = within(screen.getByRole("tabpanel", { name: "Evidence" }));
-  await user.click(pane.getByText("Also searched, not cited (1)", { exact: false }));
-  expect(pane.getByText("1 more (1 online)")).toBeVisible();
+  await user.click(pane.getByText("Also searched"));
+  expect(pane.getByText("1 web · 0 library")).toBeVisible();
   window.addEventListener("gunther:sources-updated", refreshed, { once: true });
   await user.click(pane.getAllByRole("button", { name: "+ Add to library" })[0]!);
   expect(capture).toHaveBeenCalledExactlyOnceWith({ url: citation.url, title: citation.sourceTitle,
@@ -1064,20 +1138,20 @@ it("handles workspace shortcuts and pauses them in the shortcut sheet", async ()
   expect(screen.getByRole("tab", { name: "Studio" })).toHaveAttribute("aria-selected", "true");
   await user.click(screen.getByRole("button", { name: "Inspect citation 1" }));
   const evidence = within(screen.getByRole("tabpanel", { name: "Evidence" }));
-  expect(evidence.getByText("[1 / 3]")).toBeVisible();
+  expect(evidence.getByText("1 / 3")).toBeVisible();
   fireEvent.keyDown(document.body, { key: "]" });
-  expect(evidence.getByText("[2 / 3]")).toBeVisible();
+  expect(evidence.getByText("2 / 3")).toBeVisible();
   fireEvent.keyDown(document.body, { key: "[" });
-  expect(evidence.getByText("[1 / 3]")).toBeVisible();
+  expect(evidence.getByText("1 / 3")).toBeVisible();
   const composer = screen.getByRole("textbox", { name: "Message Gunther" });
   await user.type(composer, "]");
   expect(composer).toHaveValue("]");
-  expect(evidence.getByText("[1 / 3]")).toBeVisible();
+  expect(evidence.getByText("1 / 3")).toBeVisible();
   const editable = document.createElement("div");
   editable.setAttribute("contenteditable", "plaintext-only");
   screen.getByRole("region", { name: "Library workspace" }).append(editable);
   fireEvent.keyDown(editable, { key: "]" });
-  expect(evidence.getByText("[1 / 3]")).toBeVisible();
+  expect(evidence.getByText("1 / 3")).toBeVisible();
 
   fireEvent.keyDown(document.body, { key: "]" });
   render(<ShortcutSheet open onClose={vi.fn()} />);
@@ -1085,7 +1159,7 @@ it("handles workspace shortcuts and pauses them in the shortcut sheet", async ()
   expect(close).toHaveFocus();
   for (const key of ["[", "]"]) {
     expect(fireEvent.keyDown(close, { key })).toBe(true);
-    expect(evidence.getByText("[2 / 3]")).toBeVisible();
+    expect(evidence.getByText("2 / 3")).toBeVisible();
   }
   expect(fireEvent.keyDown(close, { key: "\\", ctrlKey: true })).toBe(true);
   expect(screen.getByRole("button", { name: "Collapse Library" })).toBeVisible();
@@ -1173,7 +1247,7 @@ it("refreshes read-time library links in an open output and its citation detail 
   expect(await pane.findByRole("button", { name: "+ Add to library" })).toBeVisible();
   expect(knowledgeApi.artifact).toHaveBeenLastCalledWith(base.id, saved.id, ws);
   await user.click(pane.getByRole("button", { name: "All 1 source" }));
-  await user.click(pane.getByText("Also searched, not cited (1)", { exact: false }));
+  await user.click(pane.getByText("Also searched"));
   expect(pane.getAllByRole("button", { name: "+ Add to library" })).toHaveLength(2);
 });
 
@@ -1197,7 +1271,10 @@ it("groups output citations, follows the visible section and steps through the s
   expect(screen.getByRole("tab", { name: "Studio" })).toHaveAttribute("aria-selected", "true");
   await user.click(screen.getByRole("tab", { name: "Evidence (14)" }));
   const pane = within(screen.getByRole("tabpanel", { name: "Evidence" }));
-  expect(pane.getByText(/Scope: 1 source · Not checked · Version 2/)).toBeVisible();
+  const details = within(pane.getByRole("region", { name: "Output details" }));
+  expect(details.getByText("Scope: 1 source")).toBeVisible();
+  expect(details.getByText("Not checked")).toBeVisible();
+  expect(details.getByText("Version 2")).toBeVisible();
   const groups = pane.getByRole("region", { name: "Cited sources" }).querySelectorAll(".evidence-source-group");
   expect(groups[0]).toHaveTextContent("Lab notes");
   expect(groups[0]).toHaveTextContent("Passage 1");
@@ -1205,9 +1282,10 @@ it("groups output citations, follows the visible section and steps through the s
   expect(within(groups[1] as HTMLElement).getAllByRole("button", { name: /Inspect citation/ })).toHaveLength(2);
   await user.click(within(groups[0] as HTMLElement).getByRole("button", { name: "+1 more" }));
   await user.click(pane.getByRole("button", { name: "Inspect citation 5" }));
-  expect(pane.getByText("[5 / 14]")).toBeVisible();
+  expect(pane.getByText("5 / 14")).toBeVisible();
+  expect(pane.queryByRole("button", { name: "Show in answer" })).toBeNull();
   await user.click(pane.getByRole("button", { name: "Next source" }));
-  expect(pane.getByText("[6 / 14]")).toBeVisible();
+  expect(pane.getByText("6 / 14")).toBeVisible();
   await user.click(pane.getByRole("button", { name: "All 14 sources" }));
 
   const scroller = reader.closest<HTMLElement>(".library-middle-page")!;
@@ -1220,15 +1298,15 @@ it("groups output citations, follows the visible section and steps through the s
   expect(pane.queryByRole("button", { name: "Inspect citation 1" })).toBeNull();
   expect(pane.getByRole("button", { name: "Inspect citation 6" })).toBeVisible();
   await user.click(within(reader).getByRole("button", { name: "Inspect citation 8" }));
-  expect(pane.getByText("[8 / 14]")).toBeVisible();
+  expect(pane.getByText("8 / 14")).toBeVisible();
   await user.click(pane.getByRole("button", { name: "Next source" }));
-  expect(pane.getByText("[9 / 14]")).toBeVisible();
+  expect(pane.getByText("9 / 14")).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: "Output actions" }));
   await user.click(screen.getByRole("menuitem", { name: "Versions" }));
   await user.click(screen.getByRole("button", { name: "Version 1" }));
   await waitFor(() => expect(screen.getByRole("tab", { name: "Evidence (1)" })).toHaveAttribute("aria-selected", "true"));
-  expect(pane.queryByText("[9 / 14]")).toBeNull();
+  expect(pane.queryByText("9 / 14")).toBeNull();
   expect(pane.getByText(/Version 1/)).toBeVisible();
 });
 
@@ -1246,10 +1324,17 @@ it("shows the source's eligible key results and opens their original passages", 
   expect(evidenceTab).toHaveAttribute("aria-selected", "false");
   await user.click(evidenceTab);
   const pane = within(screen.getByRole("tabpanel", { name: "Evidence" }));
-  await user.click(await pane.findByRole("button", { name: finding.text }));
+  const sourceDetails = within(pane.getByRole("region", { name: "Source details" }));
+  expect(sourceDetails.getByRole("heading", { name: "Lab notes" })).toBeVisible();
+  expect(sourceDetails.getByText("Note")).toBeVisible();
+  expect(sourceDetails.getByText("1 key result backed by this source")).toBeVisible();
+  const result = await pane.findByRole("button", { name: /Field conditions changed after midday/ });
+  expect(result).toHaveTextContent("From output · Field findings");
+  expect(result).toHaveTextContent("2 passages");
+  await user.click(result);
   expect(read).toHaveBeenCalledWith(base.id, expect.any(AbortSignal), ["s1"]);
   expect(pane.getByText("The air warmed after noon.")).toBeVisible();
-  expect(pane.getByRole("combobox", { name: "Passage" })).toBeVisible();
+  expect(pane.getByRole("group", { name: "Passages" })).toBeVisible();
 });
 
 it("clears a source Evidence count while reloading and after a load error", async () => {
@@ -1285,7 +1370,7 @@ it("follows the open slide when filtering output Evidence", async () => {
   await user.click(await screen.findByRole("button", { name: /Field deck Slides Version 1/ }));
   await user.click(await screen.findByRole("tab", { name: "Evidence (13)" }));
   const pane = within(screen.getByRole("tabpanel", { name: "Evidence" }));
-  await user.click(pane.getByRole("button", { name: "This section" }));
+  await user.click(pane.getByRole("button", { name: "This slide" }));
   expect(pane.getByRole("button", { name: "Inspect citation 1" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Show second slide" }));
   expect(pane.queryByRole("button", { name: "Inspect citation 1" })).toBeNull();
@@ -1361,13 +1446,13 @@ it("shows a digest beside paper metadata, opens its cited revision, and brings i
   await user.click(summary.getByRole("button", { name: "Inspect citation 4" }));
   const evidence = within(screen.getByRole("tabpanel", { name: "Evidence" }));
   expect(evidence.getByText(quote)).toBeVisible();
-  expect(evidence.getByText("[2 / 2]")).toBeVisible();
-  expect(evidence.getByText("4", { selector: "i" })).toBeVisible();
+  expect(evidence.getByText("2 / 2")).toBeVisible();
+  expect(evidence.getByText("[4]", { selector: ".gx-evidence-number" })).toBeVisible();
   expect(structure).toHaveBeenCalledWith(lab.id, 0, digest.revisionId, null, 500);
   await user.click(evidence.getByRole("button", { name: "Previous source" }));
   expect(evidence.getByText(previous.quote)).toBeVisible();
-  expect(evidence.getByText("[1 / 2]")).toBeVisible();
-  expect(evidence.getByText("2", { selector: "i" })).toBeVisible();
+  expect(evidence.getByText("1 / 2")).toBeVisible();
+  expect(evidence.getByText("[2]", { selector: ".gx-evidence-number" })).toBeVisible();
   await user.click(evidence.getByRole("button", { name: "Next source" }));
   expect(evidence.getByText(quote)).toBeVisible();
   await user.click(evidence.getByRole("button", { name: "All 2 sources" }));
@@ -1590,10 +1675,11 @@ it("opens every original passage in Evidence and offers Undo after removing a re
   const evidence = within(screen.getByRole("tabpanel", { name: "Evidence" }));
   expect(evidence.getByText("The air warmed after noon.")).toBeVisible();
   expect(evidence.getByRole("heading", { name: "Page 3" })).toBeVisible();
-  await user.selectOptions(evidence.getByRole("combobox", { name: "Passage" }), "passage-2");
+  const passage = evidence.getByRole("button", { name: /^Passage 2/ });
+  await user.click(passage);
   expect(evidence.getByText("Humidity fell during the afternoon.")).toBeVisible();
   expect(evidence.getByRole("heading", { name: "Page 5" })).toBeVisible();
-  expect(evidence.getByRole("option", { name: /Field notes · Page 5/ })).toBeInTheDocument();
+  expect(passage).toHaveAttribute("aria-pressed", "true");
   expect(structure).toHaveBeenLastCalledWith("s2", 0, "revision-2", null, 500);
   await user.click(evidence.getByRole("button", { name: "All 2 sources" }));
   await user.click(group.getByRole("button", { name: "Remove" }));
