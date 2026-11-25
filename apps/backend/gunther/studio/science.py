@@ -12,7 +12,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from gunther.citations import citation_numbers, strip_citations
 from gunther.evidence import Evidence
+from gunther.markup import markdown_lines
 from gunther.skill_checks import figures_of
 from gunther.studio import format as fmt
 
@@ -644,10 +646,12 @@ def value_problems(deck: str, items: list[Evidence], readings: list[FigureReadin
     """
     by_ref = {e.ref: e for e in items}
     problems = []
-    for line in fmt.without_design(deck).splitlines():
+    for line, protected in markdown_lines(fmt.without_design(deck)):
+        if protected:
+            continue
         if "\ufffd" in line:
             problems.append("An uncertain source glyph is stated in the deck; omit the value.")
-        refs = {int(r) for r in re.findall(r"\[(\d+)\]", line)}
+        refs = citation_numbers(line, bare_only=True)
         warned = [
             by_ref[r]
             for r in refs
@@ -656,7 +660,7 @@ def value_problems(deck: str, items: list[Evidence], readings: list[FigureReadin
         if not warned:
             continue
         plain = re.sub(r"^[ \t]*(?:\d+[.)]|[-*])\s+", "", line)
-        values = fmt.numbers_in(re.sub(r"\[\d+\]|gunther-asset:[A-Za-z0-9_-]+", "", plain))
+        values = fmt.numbers_in(re.sub(r"gunther-asset:[A-Za-z0-9_-]+", "", strip_citations(plain)))
         sources = {e.source_key for e in warned}
         assets = {f["assetId"] for e in warned for f in figures_of(e)}
         allowed = set().union(

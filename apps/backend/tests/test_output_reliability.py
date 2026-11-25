@@ -39,7 +39,7 @@ from gunther.database import session_scope
 from gunther.evidence import Evidence, Tool
 from gunther.llm import ModelError
 from gunther.models import Artifact, ArtifactAsset, ArtifactCheck, Asset, SourceIndexHead
-from gunther.output_checks import check_saved_part
+from gunther.output_checks import check_saved_part, output_claim_inventory
 from gunther.output_document import assemble_output
 from gunther.outputs import Draft, OutputLimits, Planned, Pool, Spec, section_hash, split_document
 from gunther.schemas import ArtifactOut, ConversationCitationOut
@@ -155,6 +155,20 @@ def test_retry_keeps_studios_cover_claims_and_leaves_audience_metadata_out(metad
     assert re.findall(r"^\(\d+\) (.*)$", prompt, re.M) == [subtitle]
     coverage = coverage_of(checked, digest)
     assert coverage["status"] == "complete" and coverage["considered"] == 2
+
+
+def test_the_cover_check_keeps_multiline_code_and_excludes_metadata():
+    subtitle = "The notation `arr[7]\nends here` supports the result [1]."
+    cover = f"<!-- layout: title -->\n# Main result\n\n{subtitle}\n\nReview team · 2025"
+    evidence = {
+        1: Evidence("library", "Result", "The result is recorded."),
+        2: Evidence("library", "Dates", "The survey was conducted in 2025."),
+    }
+    projected, claims = output_claim_inventory(
+        "slides", cover, evidence, rest="The survey was conducted in 2025 [2].",
+    )
+    assert subtitle in projected and "Review team" not in projected
+    assert {ref for claim in claims.values() for ref in claim["refs"]} == {1}
 
 
 def test_retry_and_sync_replace_historical_partial_claims_and_their_unchecked_issue(tmp_path):

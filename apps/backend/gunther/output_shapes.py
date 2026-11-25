@@ -1,32 +1,18 @@
 """Structural formats and capabilities shared by Studio builds and saved outputs."""
 
-import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
 from typing import Literal
 
 from gunther import outputs_audio, outputs_cards, outputs_map
+from gunther.citations import citation_numbers, strip_citations
+from gunther.markup import Markup, markdown_lines, parse_markup, prose_lines
 from gunther.studio import format as fmt
 
 ShapeId = Literal["report", "slides", "cards", "map", "audio"]
 OutputPipeline = Literal["planned", "direct"]
 OutputExport = Literal["markdown", "pdf", "docx", "pptx", "wav"]
-FENCE = re.compile(r"^\s*(```|~~~)")
-
-
-def markdown_lines(content: str, *, keepends: bool = False) -> list[tuple[str, bool]]:
-    """Each line of a document, and whether it is inside a code fence."""
-    fenced, out = False, []
-    lines = re.split(r"(?<=\n)|(?<=\r)(?!\n)", content)
-    for raw in lines:
-        line = raw if keepends else raw.rstrip("\r\n")
-        if FENCE.match(line):
-            out.append((line, True))
-            fenced = not fenced
-        else:
-            out.append((line, fenced))
-    return out
 
 
 def markdown_spans(
@@ -87,20 +73,43 @@ def join_slides(_preamble: str, units: Sequence[str]) -> str:
     return "\n\n---\n\n".join(units)
 
 
-def lend_refs(line: str, rest: str, most: int = 6) -> str:
+def prose_numbers(text: str | Markup) -> set[str]:
+    """Numbers stated in prose, excluding source markers and inline markup."""
+    markup = parse_markup(text)
+    return {
+        number
+        for start, end in markup.prose_ranges()
+        for number in fmt.numbers_in(strip_citations(markup.prose_slice(start, end)))
+    }
+
+
+def cited_value_lines(text: str) -> Iterator[tuple[str, set[str], list[int]]]:
+    for line, source in prose_lines(text):
+        if source is not None and (refs := citation_numbers(source, bare_only=True)) and (
+            numbers := prose_numbers(source)
+        ):
+            yield line.strip(), numbers, refs
+
+
+def lend_refs(text: str, rest: str, most: int = 6) -> str:
     """Add the citations that other slides use for the same figures, for checking only."""
-    plain = re.sub(r"\s*\[\d+\]", "", line)
-    wanted = fmt.numbers_in(plain)
-    if not wanted:
-        return line
-    lent: list[str] = []
-    for other in rest.split("\n"):
-        cited = re.findall(r"\[(\d+)\]", other)
-        if cited and wanted & fmt.numbers_in(re.sub(r"\s*\[\d+\]", "", other)):
-            lent += cited
-    own = re.findall(r"\[(\d+)\]", line)
-    extra = [n for n in dict.fromkeys(lent) if n not in own][:most]
-    return line.rstrip() + "".join(f" [{n}]" for n in extra) if extra else line
+    cited = list(cited_value_lines(rest))
+    out = []
+    for raw, source in prose_lines(text):
+        line = raw.rstrip("\r\n")
+        if source is None or any(start <= len(line) < end for start, end in source.inline):
+            out.append(raw)
+            continue
+        wanted = prose_numbers(source)
+        own = set(citation_numbers(source, bare_only=True))
+        extra = list(dict.fromkeys(
+            n for _, numbers, refs in cited if wanted & numbers for n in refs if n not in own
+        ))[:most]
+        if extra:
+            out.append(line.rstrip() + "".join(f" [{n}]" for n in extra) + raw[len(line):])
+        else:
+            out.append(raw)
+    return "".join(out)
 
 
 def prose_check_text(
@@ -111,13 +120,19 @@ def prose_check_text(
 
     marked = _marked(unit)
     body = marked.body
-    lines = body.split("\n")
-    if rest is not None and marked.layout == "title":
-        # The cover's meta line (audience · date) states no claim.
-        content = [n for n, line in enumerate(lines) if line.strip()]
-        if len(content) >= 3:
-            lines[content[2]] = ""
-        lines = [lend_refs(line, rest) for line in lines]
+    is_cover = rest is not None and marked.layout == "title"
+    projected = lend_refs(body, rest) if is_cover else body
+    lines = [line for line, _ in markdown_lines(projected)]
+    if is_cover:
+        # Cover metadata follows the title and subtitle. Identify it before lending citations.
+        content = [
+            (n, source) for n, (line, source) in enumerate(prose_lines(body))
+            if source is not None and line.strip()
+        ]
+        for n, source in content[2:]:
+            if not source.inline and fmt.cover_meta_line(source.text):
+                lines[n] = ""
+                break
     return [check_heading_refs(body, lines, refs)]
 
 
@@ -149,6 +164,7 @@ class ShapeSpec:
     node: Callable[[str], tuple[int, str] | None] | None = None
     batch_checks: bool = False
     speech: Callable[[str], tuple[str, str]] | None = None
+    markup: Callable[[str], Markup] = parse_markup
 
     def split(self, content: str) -> tuple[str, list[OutputUnit]]:
         preamble, texts = split_spans(content, self.spans)
@@ -228,7 +244,7 @@ SHAPES = {
             "map", "mind_map", "mind map", "a mind map", "node", 60, "direct",
             outputs_map.node_spans, join_lines, outputs_map.check_map,
             outputs_map.check_text, ("markdown", "pdf"), header=outputs_map.HEADER,
-            node=outputs_map.node_of,
+            node=outputs_map.node_of, markup=outputs_map.node_markup,
         ),
         ShapeSpec(
             "audio", "audio_overview", "audio overview", "an audio overview", "line", 120, "direct",

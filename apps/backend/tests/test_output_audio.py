@@ -4,13 +4,16 @@ from contextlib import closing
 from dataclasses import replace
 
 import pytest
-from fake_models import FakeProvider, is_sentence_checking, studio_task
+from fake_models import FakeProvider, gateway, is_sentence_checking, studio_task
 from test_artifact_agent import done, turn
 from test_output_cards import EVIDENCE, checks_in, conversation, document
 from test_outputs import app_for, read_events, route, workspace
 from test_tts import wav
 
+from gunther.agent import AskAgent
+from gunther.evidence import Evidence
 from gunther.models import ArtifactAsset, SpeechClip
+from gunther.output_checks import check_projected_parts
 from gunther.output_types import SHAPES
 from gunther.tts_providers import PROVIDERS, QWEN_VOICES, TtsError, wav_seconds
 
@@ -130,6 +133,24 @@ def test_unconfigured_tts_still_saves_the_checked_script(tmp_path):
     assert reopened["content"] == SCRIPT and all(s["checked"] for s in reopened["sections"])
     assert reopened["audio"]["status"] == "needs_tts"
     assert reopened["audio"]["audioAssetId"] is None
+
+
+def test_audio_batch_keeps_unverified_marks_from_each_line():
+    fake = FakeProvider(
+        '{"sentences":[{"n":1,"verdict":"supported"},{"n":2,"verdict":"supported"}]}'
+    )
+    models = gateway(fake)
+    lines = ["A: A result `as written [1] [?].", "B: A comparison` [1]."]
+    first, second = check_projected_parts(
+        AskAgent(models), models.models[0], "audio", lines,
+        {1: Evidence("library", "Trial", "The comparison was measured.")}, limit=10,
+    )
+    [marked] = first.values()
+    [supported] = second.values()
+    assert marked["label"] == "unsourced"
+    assert supported["verdict"] == "supported"
+    assert all(row["start"] == 0 and "has_unsourced" not in row for row in (marked, supported))
+    assert len(fake.requests) == 1
 
 
 def test_failed_tts_can_be_retried_and_revoiced_without_a_new_script_version(tmp_path, monkeypatch):

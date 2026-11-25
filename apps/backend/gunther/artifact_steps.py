@@ -24,7 +24,6 @@ from gunther.artifact_workspace import (
     Line,
     PartRec,
     Work,
-    _cited,
     _fold,
     approach_refs,
     digest_approach_inputs,
@@ -35,17 +34,16 @@ from gunther.artifact_workspace import (
     spec_of,
     work_units,
 )
-from gunther.citations import check_citations
+from gunther.citations import check_citations, citation_numbers, strip_citations
 from gunther.evidence import Evidence, Tool
 from gunther.library_lookup import SearchHit, track_search
 from gunther.llm import ModelInfo
+from gunther.markup import markdown_lines
 from gunther.model_profiles import Effort
 from gunther.output_document import assemble_output, project_outline
 from gunther.output_types import DECK_USES, SHAPES, output_type_for
 from gunther.outputs import (
     ACCENTS,
-    CITATION_GROUP,
-    UNSOURCED,
     BuiltOutput,
     Draft,
     Events,
@@ -100,11 +98,11 @@ def _bare_headings(text: str) -> str:
     """Text whose heading lines carry no source numbers or marks: a heading names a part, and
     the claims under it are what cite."""
 
-    return "\n".join(
-        " ".join(CITATION_GROUP.sub("", line).replace(UNSOURCED, "").split())
-        if HEADING_LINE.match(line)
+    return "".join(
+        strip_citations(line, trim_space=True)
+        if not protected and HEADING_LINE.match(line)
         else line
-        for line in text.split("\n")
+        for line, protected in markdown_lines(text, keepends=True)
     )
 
 
@@ -556,7 +554,8 @@ class WorkSteps:
             item = work.outline[index]
             part = work.parts.get(item.id)
             pool = self._part_pool()
-            refs = list(dict.fromkeys([*item.refs, *(_cited(part.text) if part else [])]))
+            part_refs = citation_numbers(shape.markup(part.text)) if part else []
+            refs = list(dict.fromkeys([*item.refs, *part_refs]))
             refs = [ref for ref in refs if ref in pool.by_ref()]
             if len(refs) < 2 and not (self._deck and index == 0):
                 query = " ".join(filter(None, (item.heading, item.goal, instruction)))
@@ -590,7 +589,7 @@ class WorkSteps:
                 approach=work.approach,
             )
             if shape.node:
-                text, _ = check_citations(text, set(pool.by_ref()))
+                text, _ = check_citations(shape.markup(text), set(pool.by_ref()))
                 wrote.extend(self._replace_subtree(
                     spec, index, text, whole=True, keep_inputs=review,
                 ))
@@ -620,7 +619,7 @@ class WorkSteps:
                 self.brief, work, item,
             )
             self._keep_part(item, draft, inputs)
-            item.refs = list(dict.fromkeys(_cited(draft.text)))
+            item.refs = citation_numbers(draft.text)
             wrote.append(item.id)
             self.emit({"type": "section", "index": index, "state": "done"})
         return wrote
@@ -658,7 +657,7 @@ class WorkSteps:
                     outline.append(item)
                     parts[item.id] = prior
                     continue
-                heading, refs = heading_of(unit), _cited(unit.text)
+                heading, refs = heading_of(unit), citation_numbers(shape.markup(unit.text))
                 if item is None:
                     identity, next_item = self._fresh("p", next_item, taken)
                     item = ItemRec(id=identity, heading=heading, refs=refs)
@@ -729,7 +728,7 @@ class WorkSteps:
             f"Instruction: {instruction.strip()}",
             *_notes_block(self.notes),
             "",
-            *self.agents._pool_lines(pool, [*_cited(body), *item.refs]),
+            *self.agents._pool_lines(pool, [*citation_numbers(body), *item.refs]),
         ]
         self.emit({"type": "section", "index": at, "state": "writing"})
         reply, _ = self.agents.gateway.complete_json(
@@ -766,7 +765,7 @@ class WorkSteps:
         _single_part(shaped, spec.kind, at)
         self.emit({"type": "section", "index": at, "state": "checking"})
         with self._noting():
-            draft = self._check_changed(part, shaped, self._part_pool(_cited(body)), at)
+            draft = self._check_changed(part, shaped, self._part_pool(citation_numbers(body)), at)
             draft = self._designed(at, draft, part.text)
         self._keep_edit(item, part, draft, at)
         return True
@@ -781,7 +780,7 @@ class WorkSteps:
                 work.title = heading
         if self._deck:
             item.layout = _marked(draft.text).layout or item.layout
-        item.refs = _cited(draft.text)
+        item.refs = citation_numbers(draft.text)
         inputs = digest_part_inputs(self.brief, work, item) if was_current else part.inputs
         self._keep_part(item, draft, inputs)
         self.emit({"type": "section", "index": at, "state": "done"})
@@ -945,6 +944,7 @@ class WorkSteps:
                 raise ValueError(f"{self._unit} {at + 1} is not written yet.")
         self._tool()
         self._load()
+        shape = SHAPES[work.spec.kind]
         done: list[str] = []
         units = work_units(work)
         for at in positions:
@@ -954,7 +954,7 @@ class WorkSteps:
             unit = units[item.id]
             digest = section_hash(unit)
             prior = part.verdicts if part.checked == digest else None
-            by_ref = self._part_pool(_cited(part.text)).by_ref()
+            by_ref = self._part_pool(citation_numbers(shape.markup(part.text))).by_ref()
             part.verdicts = self.agents.check_unbuilt(
                 self.model, unit if unit.ancestors else unit.text, by_ref, prior,
             )

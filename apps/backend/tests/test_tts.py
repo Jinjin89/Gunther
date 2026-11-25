@@ -442,9 +442,10 @@ def test_only_answers_of_this_session_can_be_read(tmp_path: Path, spoken) -> Non
 def test_markdown_becomes_plain_speech() -> None:
     text = tts_narration.clean_text(
         "# Title\n- first [1]\n- second, see [the docs](https://x.org/a) and https://y.org\n"
-        "> quoted *text*\n---\nUse `pip` with $x^2$ [?]"
+        "> quoted *text*\n---\nUse `pip` with $$x^2$$ [?]"
     )
     assert text == "Title.\nfirst.\nsecond, see the docs and.\nquoted text.\nUse pip with x^2."
+    assert tts_narration.clean_text("It costs $5 and $10") == "It costs $5 and $10."
 
 
 def test_parts_that_cannot_be_read_as_written_are_found() -> None:
@@ -455,6 +456,33 @@ def test_parts_that_cannot_be_read_as_written_are_found() -> None:
     assert kinds == ["text", "code", "text", "image", "text", "math", "text"]
     image = next(p for p in parts if isinstance(p, tts_narration.Part) and p.kind == "image")
     assert image.image and image.image.media_type == "image/png" and image.text == "Fig 1"
+
+
+def test_diagram_and_math_fences_use_the_shared_parser() -> None:
+    parts = tts_narration.split_answer(
+        "- A diagram\n\n  ~~~~mermaid label\n  graph TD\n  A --> B\n  ~~~~\n\n"
+        "```svg\n<svg/>\n```\n\n```math\nx^2\n```"
+    )
+    assert [p for p in parts if isinstance(p, tts_narration.Part)] == [
+        tts_narration.Part("diagram", "graph TD\nA --> B"),
+        tts_narration.Part("diagram", "<svg/>"),
+        tts_narration.Part("math", "x^2"),
+    ]
+
+
+def test_a_diagram_is_described_even_for_a_voice_that_reads_structure() -> None:
+    import asyncio
+
+    fake = FakeProvider("The flow moves from the input to the result.")
+    script = asyncio.run(tts_narration.narrate(
+        "Before.\n\n```mermaid\nflowchart TD\ninput --> result\n```\n\nAfter.",
+        gateway(fake),
+        understands_structure=True,
+    ))
+    assert script.described
+    assert script.text == "Before.\n\nThe flow moves from the input to the result.\n\nAfter."
+    [request] = fake.requests
+    assert "Do not read the code." in str(request["messages"][0]["content"])
 
 
 def test_a_supplier_that_reads_structure_needs_no_narrator() -> None:

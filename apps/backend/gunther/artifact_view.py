@@ -13,13 +13,14 @@ from gunther.artifact_workspace import (
     Work,
     Workspace,
     WorkSpec,
-    _cited,
     active_work,
     approach_state,
     locate,
     outline_state,
     status,
 )
+from gunther.citations import citation_numbers, renumber_citations
+from gunther.markup import Markup
 from gunther.output_types import DECK_USES, OUTPUT_TYPES, SHAPES
 from gunther.outputs import Notes, Pool, layout_of
 from gunther.studio import format as studio_format
@@ -35,11 +36,6 @@ class AgentLimits:
     history: int = 4  # exchanges shown word for word
     log: int = 12  # change-log lines shown
     pool: int = 160  # sources one conversation may hold
-
-
-# Numbers -----------------------------------------------------------------------------------------
-
-_GROUP = re.compile(r"\[(?:(i|p|d):(\d+)|(\d+(?:\s*[,，、]\s*\d+)*))\]")
 
 
 class Numbering:
@@ -58,19 +54,10 @@ class Numbering:
     def pool(self, view_number: int) -> int | None:
         return self.order[view_number - 1] if 1 <= view_number <= len(self.order) else None
 
-    def text(self, text: str) -> str:
+    def text(self, text: str | Markup) -> str:
         """Text citing pool numbers, as it reads with the numbers the user sees."""
 
-        def shown(number: str) -> str:
-            return str(self.view(int(number)) or number)
-
-        def swap(match: re.Match[str]) -> str:
-            if match.group(1):
-                return f"[{match.group(1)}:{shown(match.group(2))}]"
-            parts = re.split(r"[,，、]", match.group(3))
-            return "".join(f"[{shown(part.strip())}]" for part in parts)
-
-        return _GROUP.sub(swap, text)
+        return renumber_citations(text, self._place)
 
 
 def ranges(numbers: Sequence[int]) -> str:
@@ -175,6 +162,7 @@ def part_lines(work: Work, brief: ConversationBrief, numbering: Numbering) -> li
     """The map: each part with where it stands and what it says."""
 
     deck = work.spec.kind == "slides"
+    shape = SHAPES[work.spec.kind]
     lines: list[str] = []
     for part in status(work, brief):
         item = next(i for i in work.outline if i.id == part.item_id)
@@ -187,7 +175,7 @@ def part_lines(work: Work, brief: ConversationBrief, numbering: Numbering) -> li
         }[part.state]
         head = f"  {part.position} " + (f"[{item.layout or 'text'}] " if deck else "")
         extras = ""
-        refs = _cited(written.text) if written else item.refs
+        refs = citation_numbers(shape.markup(written.text)) if written else item.refs
         view = [numbering.view(ref) or ref for ref in refs]
         if view and (not deck or part.state != "ok"):
             extras += f" · sources {ranges(view)}"
@@ -261,7 +249,8 @@ def build_view(v: View) -> str:
     numbering = Numbering(work.version_map if work else [], [i.ref for i in v.pool.items if i.ref])
     pointed = ""
     if work:
-        name = SHAPES[work.spec.kind].name
+        shape = SHAPES[work.spec.kind]
+        name = shape.name
         spec = work.spec
         out.append(
             f'The active {name} "{work.title or "untitled"}": '
@@ -314,11 +303,11 @@ def build_view(v: View) -> str:
                 line += f"part {position}, in full"
                 written = work.parts.get(work.outline[position - 1].id)
                 if written is not None:
-                    shown_text = numbering.text(
+                    shown_text = numbering.text(shape.markup(
                         "\n".join(_deck_text(written.text, None))
                         if name == "deck"
                         else written.text
-                    )
+                    ))
                     pointed = "\n".join(
                         f"      {row}" if row.strip() else "" for row in shown_text.splitlines()
                     )

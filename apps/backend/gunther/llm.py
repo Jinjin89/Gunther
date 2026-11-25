@@ -208,17 +208,20 @@ class ModelGateway:
         json_mode: bool = False,
         max_tokens: int | None = None,
         on_text: Callable[[str], None] | None = None,
+        preserve_markdown: bool = False,
     ) -> Completion:
         """Ask once. ``on_text`` hears the answer's text as it is written."""
 
         turns = [Turn("user", messages)] if isinstance(messages, str) else list(messages)
         if trace.current() is None:
             return self._complete(
-                model, system, turns, images, effort, json_mode, max_tokens, on_text
+                model, system, turns, images, effort, json_mode, max_tokens, on_text,
+                preserve_markdown=preserve_markdown,
             )
         with ExitStack() as trace_steps:
             return self._complete(
                 model, system, turns, images, effort, json_mode, max_tokens, on_text, trace_steps,
+                preserve_markdown=preserve_markdown,
             )
 
     def _complete(
@@ -232,6 +235,8 @@ class ModelGateway:
         max_tokens: int | None,
         on_text: Callable[[str], None] | None,
         trace_steps: ExitStack | None = None,
+        *,
+        preserve_markdown: bool = False,
     ) -> Completion:
         call: dict[str, Any] | None = None
         image_count = len(images)
@@ -366,7 +371,7 @@ class ModelGateway:
                 else f"{model.display} returned an empty answer."
             )
         completion = Completion(
-            text=text.strip(),
+            text=_strip_blank_lines(text) if preserve_markdown else text.strip(),
             model=model,
             reasoning=reasoning or None,
             effort=effort,
@@ -540,6 +545,16 @@ _CODE_FENCE = re.compile(
     r"(?P<body>.*?)(?:\r?\n)?^[ \t]*```[ \t]*(?=\r?$)",
     re.MULTILINE | re.DOTALL,
 )
+
+
+def _strip_blank_lines(text: str) -> str:
+    lines = text.splitlines(keepends=True)
+    start, end = 0, len(lines)
+    while start < end and not lines[start].strip():
+        start += 1
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    return "".join(lines[start:end]).rstrip("\r\n")
 
 
 def unfence(text: str) -> str:

@@ -11,12 +11,19 @@ from dataclasses import replace
 from typing import Any
 
 from gunther.checks import Verdicts, finding, verdicts_of
-from gunther.citations import CITATION_GROUP, MARKDOWN_TABLE, check_citations, collapse_citations
+from gunther.citations import (
+    check_citations,
+    citation_numbers,
+    collapse_citations,
+    markdown_tables,
+    strip_citations,
+)
 from gunther.evidence import Evidence
 from gunther.llm import ModelError
 from gunther.llm import unfence as _unfence
+from gunther.markup import markdown_lines
 from gunther.output_checks import check_part, check_projected_parts, output_claim_inventory
-from gunther.output_shapes import OutputUnit, lend_refs
+from gunther.output_shapes import OutputUnit, cited_value_lines, lend_refs, prose_numbers
 from gunther.output_types import SHAPES
 from gunther.outputs import Draft, Events, Issue, Pool, _marked, split_document
 from gunther.skill_checks import CHARTS
@@ -83,10 +90,12 @@ def _chart_rows_supported(
     for row_index, (label, *cells) in data:
         if (index, row_index) not in supported:
             return False
-        if len(cells) != len(head) - 1 or not fmt.CITE.sub("", label).strip(" *_`"):
+        if len(cells) != len(head) - 1 or not strip_citations(label, bare_only=True).strip(" *_`"):
             return False
         if not all(
-            fmt.number_cell(cell) and CITATION_GROUP.search(cell + " " + label) for cell in cells
+            fmt.number_cell(cell)
+            and (citation_numbers(cell, bare_only=True) or citation_numbers(label, bare_only=True))
+            for cell in cells
         ):
             return False
 
@@ -133,8 +142,9 @@ class StudioVerification:
         units = unit if len(parts) == 1 else f"{unit}s"
         self._stage(emit, "verify", label, "running", f"{len(parts)} {units}")
         by_ref = pool.by_ref()
+        valid = set(by_ref)
         if shape.batch_checks:
-            texts = [check_citations(text, set(by_ref))[0] for text in parts]
+            texts = [check_citations(shape.markup(text), valid)[0] for text in parts]
             checked = check_projected_parts(
                 self._checker(by_ref, material), model, shape.id, shape.units(texts), by_ref,
                 limit=self.limits.sentences,
@@ -149,7 +159,7 @@ class StudioVerification:
             text = unit.text
             if run.spec.kind == "report":
                 text = fmt.cite_exhibit_rows(fmt.cite_captions(fmt.table_separators(text)))
-            text, _ = check_citations(text, set(by_ref))
+            text, _ = check_citations(shape.markup(text), valid)
             claim = replace(unit, text=text) if unit.ancestors else text
             return Draft(text, self._claims(
                 model, claim, by_ref, rest, material=material, kind=shape.id,
@@ -241,7 +251,7 @@ class StudioVerification:
         )
         for claim in checked.values():
             label = claim.get("label", claim["verdict"])
-            plain = re.sub(r"\s*\[(?:\?|\d+)\]", "", claim["text"]).strip()
+            plain = strip_citations(claim["text"], bare_only=True, trim_space=True).strip()
             # An image reference is provenance, so its id and crop coordinates are not facts.
             said = re.sub(r"!\[([^\]]*)\]\(gunther-asset:[^)]*\)", r"\1", plain)
             if label in {"not", "partly"}:
@@ -252,9 +262,10 @@ class StudioVerification:
         # Syntax findings come from the current section independently of its model verdicts.
         held = {row["issue"]["claim"][:80] for row in checked.values() if "issue" in row}
         findings = []
-        lines = (projected if direct else body).split("\n")
-        for line in fmt.uncited_lines([ln for ln in lines if not ln.startswith(":::")]):
-            plain = re.sub(r"\s*\[(?:\?|\d+)\]", "", line).strip()
+        lines = [line for line, protected in markdown_lines(projected if direct else body)
+                 if not protected and not line.startswith(":::")]
+        for line in fmt.uncited_lines(lines):
+            plain = strip_citations(line, bare_only=True, trim_space=True).strip()
             if plain[:80] not in held and not re.match(r"^(Source|Sources|来源)\s*[:：]", plain):
                 issue = Issue(plain[:300], "unsourced", "A number with no citation.")
                 findings.append(finding(issue.out()))
@@ -288,11 +299,9 @@ class StudioVerification:
         titles = [fmt.parse_slide(d.text).title for d in drafts[1:]]
         titles = [t for t in titles if t]
         rest = "\n".join(d.text for d in drafts[1:])
+        title_numbers = {number for title in titles for number in prose_numbers(title)}
         cited = [
-            line.strip()
-            for line in rest.split("\n")
-            if re.search(r"\[\d+\]", line)
-            and fmt.numbers_in(re.sub(r"\s*\[\d+\]", "", line)) & fmt.numbers_in(" ".join(titles))
+            line for line, numbers, _ in cited_value_lines(rest) if numbers & title_numbers
         ][:30]
         system = P.COVER.format(
             title=cover.title,
@@ -365,7 +374,7 @@ class StudioVerification:
         layout = fmt.parse_slide(draft.text).layout
         is_chart = layout in ("chart", *CHARTS)
         source = D.visible_content(draft.text) if is_chart else draft.text
-        tables = list(enumerate(MARKDOWN_TABLE.finditer(source)))
+        tables = list(enumerate(markdown_tables(source)))
 
         def exhibit(match: re.Match[str]) -> str:
             attrs = match["attrs"]
@@ -412,8 +421,8 @@ class StudioVerification:
                 f"Part {number}:\n{draft.text}\n\nUnsupported in part {number}:\n"
                 + "\n".join(f'- "{i.claim}" ({i.note})' for i in flagged)
             )
-            lent = "\n".join(lend_refs(line, rest) for line in draft.text.split("\n"))
-            refs |= {int(n) for n in re.findall(r"\[(\d+)\]", lent if rest else draft.text)}
+            cited = lend_refs(draft.text, rest) if rest else draft.text
+            refs.update(citation_numbers(cited, bare_only=True))
             refs |= _stating(flagged, by_ref)
         passages = "\n\n".join(self._passage(by_ref[r], 3000) for r in sorted(refs) if r in by_ref)
         system = P.FIX_CLAIMS.format(parts="\n\n=====\n\n".join(parts), passages=passages)

@@ -18,14 +18,16 @@ from dataclasses import dataclass
 from typing import Literal
 
 from gunther import usage
+from gunther.citations import strip_citations
 from gunther.llm import Image, ModelError, ModelGateway, ModelInfo
+from gunther.markup import parse_markup
 from gunther.tts_providers import TtsError
 
 # Bump when the rules below change what a message is read as, so old clips are remade.
-NARRATION_VERSION = 2
+NARRATION_VERSION = 3
 MAX_DESCRIBED_PARTS = 12
 
-PartKind = Literal["table", "image", "code", "math"]
+PartKind = Literal["table", "image", "code", "math", "diagram"]
 
 
 @dataclass(frozen=True)
@@ -44,7 +46,6 @@ class Script:
     model: str | None = None
 
 
-_CITATION = re.compile(r"\s*\[(?:\^?\d+(?:\s*[,，]\s*\d+)*|\?)\]")
 _IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 _TABLE_SEPARATOR = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$")
 
@@ -65,6 +66,10 @@ _INSTRUCTIONS = {
     "math": (
         "Say this formula in words, the way a teacher would read it aloud, then say in a short "
         "phrase what it means."
+    ),
+    "diagram": (
+        "Say in one or two plain sentences what this diagram shows, for a listener who cannot "
+        "see it. Do not read the code."
     ),
 }
 _SYSTEM = (
@@ -100,7 +105,27 @@ def _image_of(source: str, alt: str) -> Part:
 def split_answer(markdown: str) -> list[str | Part]:
     """The answer as running text and the parts that need describing, in order."""
 
-    lines = markdown.replace("\r\n", "\n").split("\n")
+    out: list[str | Part] = []
+    start = 0
+    for block in parse_markup(markdown).blocks:
+        out.extend(_split_prose(markdown[start:block.start]))
+        lang = block.language.lower()
+        kind: PartKind = "code"
+        if block.kind == "math_block" or lang == "math":
+            kind = "math"
+        elif block.kind == "svg" or lang in {"svg", "mermaid"}:
+            kind = "diagram"
+        body = block.body.strip() if kind == "math" else block.body.removesuffix("\n")
+        out.append(Part(kind, body))
+        start = block.end
+    out.extend(_split_prose(markdown[start:]))
+    return out
+
+
+def _split_prose(markdown: str) -> list[str | Part]:
+    if not markdown:
+        return []
+    lines = markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     out: list[str | Part] = []
     text: list[str] = []
 
@@ -112,24 +137,7 @@ def split_answer(markdown: str) -> list[str | Part]:
     index = 0
     while index < len(lines):
         line = lines[index]
-        fence = re.match(r"^\s*(```|~~~)", line)
-        if fence:
-            end = index + 1
-            while end < len(lines) and not lines[end].lstrip().startswith(fence.group(1)):
-                end += 1
-            flush()
-            out.append(Part("code", "\n".join(lines[index + 1 : end])))
-            index = end + 1
-        elif line.strip().startswith("$$"):
-            end = index
-            if line.strip().count("$$") < 2:
-                end = index + 1
-                while end < len(lines) - 1 and "$$" not in lines[end]:
-                    end += 1
-            flush()
-            out.append(Part("math", "\n".join(lines[index : end + 1]).strip().strip("$").strip()))
-            index = end + 1
-        elif _is_table_start(lines, index):
+        if _is_table_start(lines, index):
             end = index
             while end < len(lines) and "|" in lines[end]:
                 end += 1
@@ -159,9 +167,12 @@ def split_answer(markdown: str) -> list[str | Part]:
 def clean_text(markdown: str) -> str:
     """Markdown without its marks; every line ends in a stop so the voice pauses."""
 
+    markdown = strip_citations(markdown, trim_space=True)
+    for start, end in reversed(parse_markup(markdown).inline):
+        if markdown.startswith("$$", start):
+            markdown = markdown[:start] + markdown[start + 2:end - 2] + markdown[end:]
     lines = []
-    for raw in markdown.split("\n"):
-        line = _CITATION.sub("", raw)
+    for line in markdown.split("\n"):
         line = re.sub(r"<[^>\n]+>", "", line)
         line = re.sub(r"^\s*(#{1,6})\s+", "", line)
         line = re.sub(r"^\s*>+\s?", "", line)
@@ -172,7 +183,6 @@ def clean_text(markdown: str) -> str:
         line = re.sub(r"https?://\S+", "", line)
         line = re.sub(r"(\*\*|__|\*|~~|`)", "", line)
         line = re.sub(r"(?<![\w$])_([^_]+)_(?!\w)", r"\1", line)
-        line = re.sub(r"\$([^$]+)\$", r"\1", line)
         line = re.sub(r"[ \t]+", " ", line).strip()
         if not line:
             lines.append("")
@@ -236,10 +246,10 @@ async def narrate(
     """
 
     pieces = split_answer(markdown)
-    parts = [piece for piece in pieces if isinstance(piece, Part)]
     if understands_structure:
-        pieces = [piece.text if isinstance(piece, Part) else piece for piece in pieces]
-        parts = []
+        pieces = [piece.text if isinstance(piece, Part) and piece.kind != "diagram" else piece
+                  for piece in pieces]
+    parts = [piece for piece in pieces if isinstance(piece, Part)]
     context = clean_text("\n".join(piece for piece in pieces if isinstance(piece, str)))
     described: dict[int, str] = {}
     model = None

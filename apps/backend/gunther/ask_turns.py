@@ -18,6 +18,7 @@ from gunther import key_result_origins, key_results, trace, usage
 from gunther.agent import DEFAULT_STYLE, STYLES, AskAgent
 from gunther.artifact_workspace import evidence_from_citation
 from gunther.ask_research import Notes as Work
+from gunther.citations import has_checker_marks, rewrite_citations
 from gunther.database import session_scope
 from gunther.evidence import Evidence, Toolbox
 from gunther.library_lookup import annotate_library_sources
@@ -127,21 +128,18 @@ def _in_pool_numbers(message: SessionMessage) -> str:
 
     refs = [item.get("ref") for item in json.loads(message.citations_json or "[]")]
 
-    def replace(match: re.Match[str]) -> str:
-        found = []
-        for part in re.split(r"[,，、]", match.group(3)):
-            at = int(part) - 1
-            if 0 <= at < len(refs) and refs[at] is not None:
-                found.append(f"[{refs[at]}]")
+    def replace(label: str, numbers: list[str], lead: str) -> str:
+        found = [f"[{refs[at]}]" for number in numbers
+                 if 0 <= (at := int(number) - 1) < len(refs) and refs[at] is not None]
         if not found:
             return ""
-        if match.group(2) == "d":
-            return f"{match.group(1) or ' '}(disputed by {''.join(found)})"
-        return f"{match.group(1)}{''.join(found)}"
+        if label == "d":
+            return f"{lead or ' '}(disputed by {''.join(found)})"
+        return f"{lead}{''.join(found)}"
 
     # [i:2] (an inference) and [p:2] (partly supported) are read as plain pool numbers;
     # [d:2] says the claim was disputed by that source.
-    return re.sub(r"(\s?)\[(?:(i|p|d):)?(\d+(?:\s*[,，、]\s*\d+)*)\]", replace, message.content)
+    return rewrite_citations(message.content, replace, trim_space=True)
 
 
 def _work_out(work: Work | None, cited: list[Evidence]) -> dict[str, object] | None:
@@ -386,8 +384,8 @@ class AskTurns:
                 ):
                     continue
                 for claim in coverage.get("claims", []):
-                    if claim.get("verdict") == "supported" and not re.search(
-                        r"\[(?:[ipd]:|\?)", claim.get("text", "")
+                    if claim.get("verdict") == "supported" and not has_checker_marks(
+                        claim.get("text", "")
                     ):
                         supported.append(claim["text"])
                         verified_refs.update(claim.get("refs", []))

@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from gunther.citations import SENTENCE_END, UNSOURCED
+from gunther.citations import UNSOURCED, marker_spans, sentence_spans
 from gunther.llm import ModelError, ModelGateway, ModelInfo
 
 CASES_FILE = Path(__file__).parent / "questions.toml"
@@ -145,7 +145,7 @@ def cited_titles(outcome: Outcome) -> list[str]:
 
 
 def unverified(answer: str) -> int:
-    return answer.count(UNSOURCED)
+    return sum(answer[start:end] == UNSOURCED for start, end in marker_spans(answer))
 
 
 def checks(case: Case, outcome: Outcome) -> dict[str, bool]:
@@ -200,17 +200,7 @@ class Judgement(BaseModel):
 def sentences(text: str) -> list[str]:
     """The answer's sentences; source numbers after the full stop belong to the one before."""
 
-    found, start = [], 0
-    for match in SENTENCE_END.finditer(text):
-        end = match.end()
-        tail = re.match(r"(?:\s*\[[^\]]*\])+", text[end:])
-        if tail:
-            end += tail.end()
-        if end > start:
-            found.append(text[start:end].strip())
-            start = end
-    found.append(text[start:].strip())
-    return [s for s in found if s]
+    return [text[start:end].strip() for start, end in sentence_spans(text)]
 
 
 def judge_prompt(case: Case, outcome: Outcome, library: dict[str, str]) -> str:

@@ -25,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from gunther import usage, vector_index
+from gunther.citations import citation_numbers
 from gunther.content import search_tokens
 from gunther.database import session_scope
 from gunther.llm import AnalysisNeedsModel, ModelError, ModelGateway, ModelInfo
@@ -297,7 +298,7 @@ class ModelTopicWriter:
             messages=f"Topic: {title}\n{description}\n\nAbstracts:\n\n{sources}",
             effort=self.effort,
         ).text
-        cited = [int(value) for value in re.findall(r"\[(\d+)\]", text)]
+        cited = citation_numbers(text, bare_only=True)
         if not text or not cited or any(not 1 <= value <= len(papers) for value in cited):
             raise ModelError("The overview did not cite the supplied abstracts correctly.")
         return text

@@ -3,7 +3,7 @@
 import re
 
 from gunther.checks import claim_text
-from gunther.citations import ANY_CITATION, UNSOURCED, collapse_citations
+from gunther.citations import citation_numbers
 
 HEADER = "<!-- audio: {type_id}; design: v1 -->"
 _HEADER = re.compile(r"<!-- audio: [a-z][a-z0-9_]*; design: v1 -->")
@@ -17,7 +17,7 @@ def dialogue(line: str) -> tuple[str, str]:
 
 def speech(line: str) -> tuple[str, str]:
     speaker, text = dialogue(line)
-    return speaker, claim_text(text.replace(UNSOURCED, ""))
+    return speaker, claim_text(text, include_unsourced=True)
 
 
 def line_problem(line: str) -> str | None:
@@ -51,4 +51,4 @@ def check_audio(content: str, *, header: str | None = None) -> list[str]:
 
 def check_text(line: str, **_options) -> list[str]:
     _, text = dialogue(line)
-    return [text] if ANY_CITATION.search(collapse_citations(text)) else []
+    return [text] if citation_numbers(text) else []

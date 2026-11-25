@@ -30,6 +30,7 @@ from sqlalchemy import event, func, select, text
 from evals.sse import ask_turn, read_events
 from gunther.artifact_versions import commit_version
 from gunther.checks import coverage_of, verdict, verdicts_of
+from gunther.citations import _marked_unsourced
 from gunther.claim_checks import checker_inventory
 from gunther.config import Settings
 from gunther.evidence import Evidence
@@ -52,7 +53,6 @@ from gunther.outputs import (
     section_hash,
     split_document,
     title_of,
-    unsource,
     with_layout,
 )
 from gunther.schemas import BuildOutputInput, OutputScope
@@ -465,7 +465,7 @@ def test_the_sentences_that_cite_passages_are_found_with_their_numbers() -> None
     # A number after the full stop belongs to the sentence before it.
     [(_, _, chunk, numbers)] = cited_sentences("A fact. [5]")
     assert (chunk, numbers) == ("A fact. [5]", [5])
-    assert unsource("CD3D marks T cells [1][2].\n") == "CD3D marks T cells [?].\n"
+    assert _marked_unsourced("CD3D marks T cells [1][2].\n") == "CD3D marks T cells [?].\n"
 
 
 def test_a_slides_marker_is_no_sentence_and_the_positions_stay_those_of_the_slide() -> None:
@@ -476,6 +476,13 @@ def test_a_slides_marker_is_no_sentence_and_the_positions_stay_those_of_the_slid
         (" Two facts [2][3].", [2, 3]),
     ]
     assert [chunk for _, _, chunk, _ in found] == [slide[begin:end] for begin, end, _, _ in found]
+
+
+def test_a_continuation_line_citation_stays_with_its_sentence() -> None:
+    for source in ("One fact.\n[1]", "One fact\r\n[1]"):
+        assert cited_sentences(source) == [(0, len(source), source, [1])]
+    assert cited_sentences("One fact.\n\n[1]") == []
+    assert cited_sentences("One fact.\n```\nx[7]\n```\n[1]") == []
 
 
 def test_the_checker_reads_a_slide_under_its_marker_and_gives_the_marker_back() -> None:

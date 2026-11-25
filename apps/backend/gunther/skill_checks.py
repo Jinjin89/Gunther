@@ -7,7 +7,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-CITE = re.compile(r"\[(?:[ipd]:)?(?:\d+(?:\s*[,，、]\s*\d+)*|\?)\]")
+from gunther.citations import citation_numbers, has_markers, strip_citations
+from gunther.markup import markdown_lines
+
 CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯]")
 WORD = re.compile(r"[A-Za-z0-9][\w'’.%-]*")
 # About 1.7 units a Latin word, so that 14 English words come to about 24 Chinese characters.
@@ -26,7 +28,7 @@ def figures_of(item: Any) -> list[dict[str, Any]]:
 def units(text: str) -> float:
     """How long a piece of text reads: a CJK character is 1, a Latin word 1.7."""
 
-    plain = CITE.sub("", text).replace("**", "").replace("__", "")
+    plain = strip_citations(text).replace("**", "").replace("__", "")
     return len(CJK.findall(plain)) + WORD_UNITS * len(WORD.findall(CJK.sub(" ", plain)))
 
 
@@ -46,7 +48,7 @@ class Page:
     def body(self) -> list[str]:
         """The lines under the heading, up to the speaker notes."""
 
-        lines = self.text.splitlines()[1:]
+        lines = [line for line, protected in markdown_lines(self.text)[1:] if not protected]
         cut = next((at for at, line in enumerate(lines) if line.startswith("Note:")), len(lines))
         return [line for line in lines[:cut] if line.strip()]
 
@@ -79,12 +81,9 @@ def diagram_edge_rows(text: str) -> list[list[str]]:
     return table[1] if table else []
 
 
-DIAGRAM_CITES = re.compile(r"\[(?:[ipd]:)?(\d+(?:\s*[,，、]\s*\d+)*)\]")
-
-
 def _diagram_width(text: str) -> float:
     plain = re.sub(
-        r"\\(.)", r"\1", CITE.sub("", text).replace("**", "").replace("__", "").replace("`", "")
+        r"\\(.)", r"\1", strip_citations(text).replace("**", "").replace("__", "").replace("`", "")
     )
     return sum(
         1.0 if CJK.fullmatch(char) else 0.28 if char.isspace() else 0.58 if char.isalnum() else 0.4
@@ -104,7 +103,7 @@ def diagram_problem(text: str) -> str | None:
         plain = re.sub(
             r"\\(.)",
             r"\1",
-            CITE.sub("", value).replace("**", "").replace("__", "").replace("`", ""),
+            strip_citations(value).replace("**", "").replace("__", "").replace("`", ""),
         )
         return re.sub(r"\s+", " ", plain.strip()).casefold()
 
@@ -126,7 +125,7 @@ def diagram_problem(text: str) -> str | None:
     edge_rows: list[tuple[str, str, str]] = []
     for row in rows:
         source, relation, target = row
-        if CITE.search(source) or CITE.search(target):
+        if has_markers(source) or has_markers(target):
             return (
                 "Diagram node labels cannot carry citations; cite each relationship cell instead."
             )
@@ -146,11 +145,7 @@ def diagram_problem(text: str) -> str | None:
                 "A diagram label is too long to fit safely; use the original table or split "
                 "the graph."
             )
-        refs = [
-            int(number)
-            for group in DIAGRAM_CITES.findall(relation)
-            for number in re.findall(r"\d+", group)
-        ]
+        refs = citation_numbers(relation)
         if not refs:
             return "Every diagram relationship needs at least one numbered source citation."
         if source_key == target_key:
@@ -221,8 +216,8 @@ def chart_numbers_cited(
         bare = [
             row[0]
             for row in table[1]
-            if re.search(r"\d", CITE.sub("", " ".join(row[1:])))
-            and not re.search(r"\[\d", " ".join(row))
+            if re.search(r"\d", strip_citations(" ".join(row[1:])))
+            and not citation_numbers(" ".join(row), bare_only=True)
         ]
         if bare:
             found.append(
@@ -235,11 +230,7 @@ def chart_numbers_cited(
         if context.evidence is not None:
             for row in table[1]:
                 joined = " ".join(row)
-                refs = [
-                    int(n)
-                    for group in re.findall(r"\[([\d,，、 ]+)\]", joined)
-                    for n in re.findall(r"\d+", group)
-                ]
+                refs = citation_numbers(joined, bare_only=True)
                 passages = "\n".join(
                     context.evidence[n].context or context.evidence[n].text
                     for n in refs
@@ -261,7 +252,7 @@ def chart_numbers_cited(
                 header_unit = "%" if any("%" in cell for cell in table[0][1:]) else ""
                 values = [
                     normalized(v)
-                    for v in re.findall(pattern, CITE.sub("", " ".join(row[1:])))
+                    for v in re.findall(pattern, strip_citations(" ".join(row[1:])))
                 ]
                 missing = [
                     v

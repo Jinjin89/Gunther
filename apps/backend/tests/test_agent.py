@@ -32,7 +32,7 @@ from sqlalchemy import select
 
 from evals.sse import AnswerStreamError, ask_turn, read_events
 from gunther import online_search, trace
-from gunther.agent import AskAgent, writer_prompt
+from gunther.agent import FORMAT, WRITER, AskAgent, writer_prompt
 from gunther.answer_runs import AnswerRun
 from gunther.ask_research import Budget
 from gunther.ask_turns import conversation_history
@@ -310,6 +310,21 @@ def test_a_claim_from_the_models_own_knowledge_gets_a_source_when_one_is_found()
     assert sum(is_looking_up(r) for r in fake.requests) == 1
 
 
+def test_lookup_follows_an_unverified_mark_on_the_next_line() -> None:
+    answer = "Water boils at 100 C at sea level.\n[?]"
+    fake, result = claim_run(
+        {"claims": [{"claim": 1, "supports": [1], "contradicts": []}]},
+        [page("Physics", "https://a.org/p", "Water boils at 100 C at sea level.")],
+        answer,
+    )
+    assert result.content == "Water boils at 100 C at sea level.\n[1]"
+    [claim] = result.coverage["claims"]
+    assert claim["verdict"] == "supported"
+    assert sum(is_looking_up(r) for r in fake.requests) == 1
+    assert leads_in("A fact.\n\n[?]", 1) == []
+    assert leads_in("A fact.\n```\nx\n```\n[?]", 1) == []
+
+
 def test_a_claim_with_no_source_stays_marked_and_a_contradicted_one_is_kept_as_disputed() -> None:
     _, result = claim_run(
         {"claims": [{"claim": 1, "supports": [], "contradicts": []}]},
@@ -584,6 +599,75 @@ def test_check_citations_and_renumbering_handle_labels() -> None:
     assert text == "A [i:3] and B [1][3]; C [?]."
     assert used == [3, 1]
     assert renumber_citations("A [i:6] B [p:4][6] C [?]", [6, 4]) == "A [i:1] B [p:2][1] C [?]"
+
+
+def test_citation_edits_keep_protected_markup_exactly() -> None:
+    protected = (
+        "```python\narr[7]  = arr[3]; f(a , b)  # [3][3]\n```\n\n"
+        "    arr[7]  = arr[3]\n\n$$\nx[7]  = y[3]\n$$\n\n"
+        "<svg><text>[7] [3]</text></svg>\n\n"
+    )
+    source = protected + "Use ``arr[7]  = arr[3]`` or $$x[7]  = y[3]$$  [1][1]. Price $5 and $10."
+    expected = protected + "Use ``arr[7]  = arr[3]`` or $$x[7]  = y[3]$$ [1]. Price $5 and $10."
+    assert check_citations(collapse_citations(source), {1}) == (expected, [1])
+    assert renumber_citations(expected.replace(" [1].", " [3]."), {3: 1}) == expected
+
+
+def test_the_checker_marks_prose_around_code_and_math() -> None:
+    block = "```python\ncall(arr[7] ,  arr[3])\n```\n$$\nx[7] + y[3]\n$$\n"
+    source = f"Read this.    Use `arr[7]. [?]` for the result [3].\n{block}A fact after the blocks."
+    fake = FakeProvider(agent_replies(
+        source,
+        {"action": "answer"},
+        checked={"sentences": [
+            {"n": 1, "verdict": "nonfactual"},
+            {"n": 2, "verdict": "partly", "missing": "a detail"},
+            {"n": 3, "verdict": "unsourced"},
+        ]},
+    ))
+    result = run(fake, box(), pool=[passage("Earlier note", "A result.", ref=3)])
+    assert result.content == (
+        f"Read this. Use `arr[7]. [?]` for the result [p:1].\n{block}A fact after the blocks [?]."
+    )
+    assert result.support_notes == ("a detail",)
+    checking = next(r for r in fake.requests if is_sentence_checking(r))
+    prompt = str(checking["messages"][-1]["content"])
+    assert "(3) A fact after the blocks." in prompt
+    assert "call(arr" not in prompt and "y[3]" not in prompt
+
+
+def test_the_checker_uses_the_table_row_offsets_to_find_unverified_marks() -> None:
+    text = (
+        "| Syntax | Claim | Syntax |\n| --- | --- | --- |\n"
+        "| `open | The result is reliable [1] [?] | close` |"
+    )
+    fake = FakeProvider(agent_replies(
+        text,
+        {"action": "answer"},
+        checked={"sentences": [{"n": 2, "verdict": "supported"}]},
+    ))
+    result = run(fake, box(), pool=[passage("A note", "The result is reliable.", ref=1)])
+    row = next(claim for claim in result.coverage["claims"] if claim.get("tableRow") == [0, 2])
+    assert row["refs"] == [1]
+    assert row["verdict"] == "unsourced"
+
+
+def test_only_prose_spans_supply_unsourced_leads() -> None:
+    source = (
+        "Before a block without a stop\n~~~\ncode [?].\n~~~\n"
+        "$$\nx[?]\n$$\nAfter $$y[?].$$ and `x[?]` [?]."
+    )
+    assert [source[a:b].strip() for a, b in sentence_spans(source)] == [
+        "Before a block without a stop", "After $$y[?].$$ and `x[?]` [?]."
+    ]
+    [(start, marker, claim)] = leads_in(source, 5)
+    assert source[start:marker].strip() == claim == "After $$y[?].$$ and `x[?]`"
+    assert source[marker:].startswith("[?]")
+    assert leads_in("`code only` [?]", 5) == []
+
+
+def test_writer_prompt_puts_the_format_before_style() -> None:
+    assert writer_prompt("concise").startswith(f"{WRITER}\n\n{FORMAT}\n\nStyle: ")
 
 
 def test_disputed_marks_are_kept_counted_renumbered_and_collapsed() -> None:
@@ -1814,6 +1898,20 @@ def test_a_failed_checklist_item_revises_once_then_checks_sentences_again() -> N
     labels = [step.label for step in result.steps]
     assert labels[-2:] == ["Checked the method", "Revised to follow the method"]
     assert result.coverage["status"] == "partial" and not result.checked
+
+
+def test_the_writer_and_reviser_keep_indented_code_at_the_start_of_the_answer() -> None:
+    code = "    first = arr[7]  \n    second = arr[3]"
+    written = f"{code}\n\n{CHECKED_ANSWER}"
+    revised = f"{written} Weather adjustment explains the gap [1]."
+    fake, result = skilled(
+        f"\n \n{written}\n\n",
+        method_check((True, False, True)),
+        revised=f"\n\n{revised}\n \n",
+    )
+    [request] = [r for r in fake.requests if is_revising(r)]
+    assert f"Answer:\n{written}\n\nItems not passed:" in str(request["messages"][-1]["content"])
+    assert result.content == revised
 
 
 def test_an_answer_that_passes_the_checklist_is_not_revised() -> None:

@@ -11,6 +11,9 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
+from gunther.citations import citation_numbers, has_markers, marker_spans, strip_citations
+from gunther.markup import Markup, markdown_lines, parse_markup, prose_lines
+
 LAYOUTS = (
     "title",
     "section",
@@ -41,7 +44,6 @@ READ_FACTOR = 1.5
 
 MARK = re.compile(r"\A\s*<!--\s*layout:\s*(?P<layout>[a-z_]+)(?P<attrs>[^>]*?)\s*-->[ \t]*\n?")
 ATTR = re.compile(r";\s*(?P<key>[a-z_]+)\s*:\s*(?P<value>[^;]+?)\s*(?=;|$)")
-CITE = re.compile(r"\s*\[(?:\?|\d+(?:\s*[,，]\s*\d+)*)\]")
 BOLD_LEAD = re.compile(r"^\*\*(?P<lead>[^*]+?)\*\*\s*[:：—–-]?\s*(?P<rest>.*)$")
 NUMBERED = re.compile(r"^\d+[.)]\s+(?P<text>.+)$")
 BULLET = re.compile(r"^[-*•]\s+(?P<text>.+)$")
@@ -62,7 +64,7 @@ COVER_DATE = re.compile(r"\b(19|20)\d{2}\b|\b\d{1,2}\s+\w+\s+\d{4}\b")
 
 def cover_meta_line(line: str) -> bool:
     text = line.strip()
-    if not text or CITE.search(text):
+    if not text or has_markers(text):
         return False
     if " · " in text:
         return True
@@ -73,7 +75,7 @@ def units(text: str) -> int:
     """How long a piece of text looks on a slide: a CJK character counts as two, citation
     marks and Markdown emphasis count nothing."""
 
-    plain = CITE.sub("", text).replace("**", "").replace("__", "")
+    plain = strip_citations(text, trim_space=True).replace("**", "").replace("__", "")
     plain = re.sub(r"(?<!\w)[*_](?=\S)|(?<=\S)[*_](?!\w)", "", plain)
     total = 0
     for char in plain.strip():
@@ -191,7 +193,7 @@ def read_table(body: list[str]) -> tuple[list[list[str]], list[str]]:
 
 
 def number_cell(cell: str) -> bool:
-    plain = CITE.sub("", cell).replace("**", "").strip()
+    plain = strip_citations(cell, trim_space=True).replace("**", "").strip()
     return bool(re.fullmatch(r"[-+−]?\d[\d,，]*(?:\.\d+)?\s*(?:%|[A-Za-z€$£¥%°一-鿿]{0,6})", plain))
 
 
@@ -226,7 +228,7 @@ def check_slide(slide: Slide, *, first: bool, read: bool = False) -> list[str]:
             limit("title", slide.title, 80, 8)
         if subtitle:
             limit("subtitle", subtitle, 160)
-            if re.search(r"\d", CITE.sub("", subtitle)) and not CITE.search(subtitle):
+            if re.search(r"\d", strip_citations(subtitle)) and not has_markers(subtitle):
                 problems.append(
                     "The subtitle states numbers: cite the passages they come from, like [2]."
                 )
@@ -484,7 +486,7 @@ def check_deck(
                 f'"{uncited[0][:70]}" states a number without a citation: add the passage '
                 "number after it, or drop the number."
             )
-        if CITE.search(slide.title):
+        if has_markers(slide.title):
             problems.append(
                 "Take the citation marks out of the title; the body proves it and cites."
             )
@@ -638,7 +640,7 @@ def strip_labels(slide: str) -> str:
 
 def _same(one: str, two: str) -> bool:
     def norm(text: str) -> str:
-        return re.sub(r"\W+", "", CITE.sub("", text)).casefold()
+        return re.sub(r"\W+", "", strip_citations(text)).casefold()
 
     return bool(one) and norm(one) == norm(two)
 
@@ -663,15 +665,15 @@ def cite_captions(text: str) -> str:
             return block
         caption = lines[1]
         body = re.sub(r"^(?:Exhibit|图表|图)\s*\d+", "", caption)
-        if CITE.search(caption) or not re.search(r"\d", body):
+        if has_markers(caption) or not re.search(r"\d", body):
             return block
-        refs = list(dict.fromkeys(re.findall(r"\[(\d+)\]", "\n".join(lines[2:]))))
+        refs = citation_numbers("\n".join(lines[2:]), bare_only=True)
         if not refs:
             return block
         lines[1] = caption.rstrip() + " " + "".join(f"[{n}]" for n in refs)
         return "\n".join(lines)
 
-    return EXHIBIT.sub(fix, text)
+    return parse_markup(text).map_prose(lambda prose: EXHIBIT.sub(fix, prose), include_inline=True)
 
 
 def cite_exhibit_rows(text: str) -> str:
@@ -683,7 +685,7 @@ def cite_exhibit_rows(text: str) -> str:
         source = next(
             (ln for ln in reversed(lines) if re.match(r"^(Source|Sources|来源)\s*[:：]", ln)), ""
         )
-        refs = "".join(f"[{n}]" for n in dict.fromkeys(re.findall(r"\[(\d+)\]", source)))
+        refs = "".join(f"[{n}]" for n in citation_numbers(source, bare_only=True))
         if not refs:
             return match.group(0)
         out = []
@@ -693,7 +695,7 @@ def cite_exhibit_rows(text: str) -> str:
                 cells
                 and not all(re.fullmatch(r"\s*:?-{2,}:?\s*", c) for c in cells)
                 and re.search(r"\d", "".join(cells[1:]))
-                and not CITE.search(line)
+                and not has_markers(line)
                 and line is not lines[0]
             )
             if data and out and any(o.startswith("|") for o in out):
@@ -701,14 +703,14 @@ def cite_exhibit_rows(text: str) -> str:
             out.append(line)
         return "\n".join(out)
 
-    return EXHIBIT.sub(fix, text)
+    return parse_markup(text).map_prose(lambda prose: EXHIBIT.sub(fix, prose), include_inline=True)
 
 
 def _overlap(one: str, two: str) -> float:
     """How much of the shorter text's words (or CJK characters) the longer one shares."""
 
     def bag(text: str) -> set[str]:
-        plain = CITE.sub("", text).casefold()
+        plain = strip_citations(text, trim_space=True).casefold()
         words = set(re.findall(r"[a-z0-9]{3,}", plain))
         return words | {ch for ch in plain if "\u4e00" <= ch <= "\u9fff"}
 
@@ -736,14 +738,15 @@ def uncited_lines(lines: list[str]) -> list[str]:
     found = []
     for index, line in enumerate(lines):
         text = line.strip()
-        if not text or text.startswith(("#", "!", "|---", "| ---")) or CITE.search(text):
+        if not text or text.startswith(("#", "!", "|---", "| ---")) or has_markers(text):
             continue
         following = next((ln.strip() for ln in lines[index + 1 :] if ln.strip()), "")
         if text.startswith("|") and re.fullmatch(r"\|?[\s:|-]+\|?", following):
             continue
-        if re.fullmatch(r"\*\*[^*]+\*\*", text) and CITE.search(following):
+        if re.fullmatch(r"\*\*[^*]+\*\*", text) and has_markers(following):
             continue
-        plain = re.sub(r"\b[A-Za-z]+[-‑]?\d+[A-Za-z]*\b", "", text)  # names like GPT-4
+        prose = " ".join(text[a:b] for a, b in parse_markup(text).prose_ranges())
+        plain = re.sub(r"\b[A-Za-z]+[-‑]?\d+[A-Za-z]*\b", "", prose)  # names like GPT-4
         if any(_countable(n) for n in re.findall(r"\d[\d,，.]*%?", plain)):
             found.append(text)
     return found
@@ -758,20 +761,24 @@ def trim_to_notes(text: str, *, first: bool, read: bool = False) -> str:
     before = [p for p in check_slide(slide, first=first, read=read) if "units long" in p]
     if not before:
         return text
-    lines = text.split("\n")
+    rows = markdown_lines(text)
+    lines = [line for line, _ in rows]
     body = [
         n
-        for n, ln in enumerate(lines)
-        if ln.strip()
+        for n, (ln, protected) in enumerate(rows)
+        if not protected and ln.strip()
         and not ln.lstrip().startswith(("<!--", "#", "|", "!"))
         and not re.match(r"^\s*(Note|Notes|备注)\s*[:：]", ln)
     ]
     note_at = next(
-        (n for n, ln in enumerate(lines) if re.match(r"^\s*(Note|Notes|备注)\s*[:：]", ln)), None
+        (n for n, (ln, protected) in enumerate(rows)
+         if not protected and re.match(r"^\s*(Note|Notes|备注)\s*[:：]", ln)), None
     )
     for n in sorted(body, key=lambda i: -units(lines[i])):
         line = lines[n]
-        cuts = [m.start() for m in re.finditer(r"(?:; |；| — | – |, but |，但|。)", line)]
+        separator = re.compile(r"(?:; |；| — | – |, but |，但|。)")
+        cuts = [m.start() for a, b in parse_markup(line).prose_ranges()
+                for m in separator.finditer(line, a, b)]
         cuts = [c for c in cuts if c > len(line) * 0.4]
         if not cuts:
             continue
@@ -779,13 +786,13 @@ def trim_to_notes(text: str, *, first: bool, read: bool = False) -> str:
         head, tail = line[:cut].rstrip(" ;；—–,，"), line[cut:].lstrip(" ;；—–,，。").strip()
         if not tail:
             continue
-        refs = "".join(dict.fromkeys(re.findall(r"\[(?:\d+|\?)\]", line)))
-        if refs and not CITE.search(head):
+        refs = "".join(dict.fromkeys(line[a:b] for a, b in marker_spans(line)))
+        if refs and not has_markers(head):
             head = head + " " + refs
         candidate = list(lines)
         candidate[n] = head
         tail = tail[0].upper() + tail[1:] if tail[:1].islower() else tail
-        tail = tail if CITE.search(tail) or not refs else tail + " " + refs
+        tail = tail if has_markers(tail) or not refs else tail + " " + refs
         if note_at is None:
             candidate.append(f"Note: {tail}")
         else:
@@ -803,14 +810,24 @@ def table_separators(text: str) -> str:
     """A Markdown table whose header row has no separator line under it gets one, so the first
     row reads (and draws) as the header, not as data."""
 
-    lines = text.split("\n")
+    def row_text(source: Markup | None) -> str:
+        if source is None or not source.text.lstrip().startswith("|"):
+            return ""
+        start = len(source.text) - len(source.text.lstrip())
+        end = len(source.text.rstrip("\r\n"))
+        if any(left <= start < right or left <= end < right for left, right in source.inline):
+            return ""
+        return source.text.strip()
+
+    lines = list(prose_lines(text))
+    rows = [row_text(source) for _, source in lines]
     out: list[str] = []
-    for index, line in enumerate(lines):
+    for index, (line, _) in enumerate(lines):
         out.append(line)
-        is_row = line.strip().startswith("|")
-        starts = is_row and (index == 0 or not lines[index - 1].strip().startswith("|"))
-        following = lines[index + 1].strip() if index + 1 < len(lines) else ""
-        if starts and following.startswith("|") and not re.fullmatch(r"\|?[\s:|-]+\|?", following):
-            columns = len(line.strip().strip("|").split("|"))
-            out.append("|" + " --- |" * columns)
-    return "\n".join(out)
+        starts = rows[index] and (index == 0 or not rows[index - 1])
+        following = rows[index + 1] if index + 1 < len(rows) else ""
+        if starts and following and not re.fullmatch(r"\|?[\s:|-]+\|?", following):
+            columns = len(rows[index].strip("|").split("|"))
+            ending = line[len(line.rstrip("\r\n")):]
+            out.append("|" + " --- |" * columns + ending)
+    return "".join(out)

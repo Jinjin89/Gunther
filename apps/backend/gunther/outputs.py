@@ -16,11 +16,17 @@ from gunther.checks import (
     issue_view,
     map_refs,
 )
-from gunther.citations import CITATION_GROUP, SENTENCE_END, UNSOURCED, renumber_citations
+from gunther.citations import (
+    citation_numbers,
+    renumber_citations,
+    sentence_spans,
+    strip_citations,
+)
 from gunther.evidence import Evidence, Step, Tool, ToolFailure, key_result_block
 from gunther.llm import ModelGateway, ModelInfo
+from gunther.markup import markdown_lines, parse_markup
 from gunther.model_profiles import Effort
-from gunther.output_shapes import SHAPES, OutputUnit, markdown_lines
+from gunther.output_shapes import SHAPES, OutputUnit
 from gunther.output_types import OutputLength
 from gunther.schemas import ConversationCitationOut
 from gunther.skill_checks import (
@@ -108,7 +114,9 @@ def chart_unverified(
         _normalized_chart_value(value).rstrip("%")
         for line in page.body
         if line.strip().startswith("|")
-        for value in VALUE_IN.findall(CITATION_GROUP.sub("", line))
+        for value in VALUE_IN.findall(
+            strip_citations(line, bare_only=True, include_unsourced=False)
+        )
     }
 
     def about_values(claim: str) -> bool:
@@ -255,12 +263,12 @@ def check_heading_refs(
 ) -> str:
     """Check a heading's conclusion against the passages used by its section."""
     refs = "".join(
-        f"[{n}]" for n in dict.fromkeys(re.findall(r"\[(\d+)\]", body))
-        if by_ref is None or int(n) in by_ref
+        f"[{n}]" for n in citation_numbers(body, bare_only=True)
+        if by_ref is None or n in by_ref
     )
-    for index, line in enumerate(lines):
-        if re.match(r"^#{1,2}\s", line):
-            if refs and not re.search(r"\[\d+\]", line):
+    for index, (line, protected) in enumerate(markdown_lines("\n".join(lines))):
+        if not protected and re.match(r"^#{1,2}\s", line):
+            if refs and not citation_numbers(line, bare_only=True):
                 lines[index] = line.rstrip() + " " + refs
             break
     return "\n".join(lines)
@@ -550,17 +558,10 @@ def _notes_block(notes: Notes) -> list[str]:
 # Shaping what the writer returns -----------------------------------------------------------
 
 
-def _numbers(chunk: str) -> list[int]:
-    found: list[int] = []
-    for group in CITATION_GROUP.findall(chunk):
-        found += [int(part) for part in re.split(r"[,，、]", group)]
-    return list(dict.fromkeys(found))
-
-
 def _plain(chunk: str) -> str:
     """A sentence without its numbers and markers."""
 
-    text = " ".join(CITATION_GROUP.sub("", chunk).replace(UNSOURCED, "").split())
+    text = " ".join(strip_citations(chunk, bare_only=True).split())
     return re.sub(r"\s+([,.;:!?，。；：！？])", r"\1", text)
 
 
@@ -569,42 +570,14 @@ def cited_sentences(text: str) -> list[tuple[int, int, str, list[int]]]:
     no sentence; the positions are still those of the whole text."""
 
     shift = len(text) - len(layout_of(text)[1])
-    text = text[shift:]
-    spans: list[tuple[int, int]] = []
-    start = 0
-    for match in SENTENCE_END.finditer(text):
-        spans.append((start, match.end()))
-        start = match.end()
-    if start < len(text):
-        spans.append((start, len(text)))
-    merged: list[tuple[int, int]] = []
-    for begin, end in spans:
-        rest = re.sub(r"[\s.!?。！？,，、;；:：*_>#-]", "", CITATION_GROUP.sub("", text[begin:end]))
-        if merged and not rest:
-            # Only a number, after the sentence's own full stop: it belongs to that sentence.
-            merged[-1] = (merged[-1][0], end)
-        else:
-            merged.append((begin, end))
+    markup = parse_markup(text[shift:])
     found = []
-    for begin, end in merged:
-        chunk = text[begin:end]
-        numbers = _numbers(chunk)
-        if numbers and _plain(chunk):
-            found.append((begin + shift, end + shift, chunk, numbers))
+    for begin, end in sentence_spans(markup):
+        chunk = markup.prose_slice(begin, end)
+        numbers = citation_numbers(chunk, bare_only=True)
+        if numbers:
+            found.append((begin + shift, end + shift, chunk.text, numbers))
     return found
-
-
-def unsource(chunk: str) -> str:
-    """A sentence with its numbers taken off and the marker put in their place."""
-
-    body = CITATION_GROUP.sub("", chunk)
-    body = re.sub(r"[ \t]{2,}", " ", body)
-    body = re.sub(r"[ \t]+([,.;:!?，。；：！？])", r"\1", body)
-    stripped = body.rstrip()
-    trailing = body[len(stripped) :]
-    tail = re.search(r"[.!?。！？]+$", stripped)
-    cut = tail.start() if tail else len(stripped)
-    return f"{stripped[:cut]} {UNSOURCED}{stripped[cut:]}{trailing}"
 
 
 @dataclass
@@ -648,13 +621,13 @@ def diagram_fallback_reason(draft: Draft) -> str | None:
     claims = draft.coverage.get("claims", [])
 
     def clean(value: str) -> str:
-        value = CITATION_GROUP.sub("", value)
+        value = strip_citations(value, bare_only=True, include_unsourced=False)
         value = re.sub(r"[*_`|]", " ", value)
         return " ".join(value.split()).casefold()
 
     for row in diagram_edge_rows(draft.text):
         expected = clean(" ".join(row))
-        row_refs = set(_numbers(row[1]))
+        row_refs = set(citation_numbers(row[1], bare_only=True))
         matched = [
             claim
             for claim in claims

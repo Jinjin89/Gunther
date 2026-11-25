@@ -19,6 +19,8 @@ dependencies = [
   "uvicorn[standard]>=0.35.0,<1",
   "websockets>=17.0.1,<18",
   "av>=14,<20",
+  "markdown-it-py>=4,<5",
+  "mdit-py-plugins>=0.5,<1",
 ]
 
 [dependency-groups]

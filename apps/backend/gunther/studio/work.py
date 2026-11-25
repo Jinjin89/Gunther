@@ -29,6 +29,7 @@ from gunther.checks import (
     merge_verdicts,
     verdicts_of,
 )
+from gunther.citations import citation_numbers
 from gunther.evidence import Evidence
 from gunther.llm import ModelError
 from gunther.llm import unfence as _unfence
@@ -481,7 +482,7 @@ class StudioWorkAgents(StudioAgents):
                 + (f" Its job: {goal}." if goal else "")
                 + (f" Layout: {layout}." if deck and layout else "")
             )
-        cited = [*refs, *(int(n) for n in re.findall(r"\[(\d+)\]", whole))]
+        cited = [*refs, *citation_numbers(shape.markup(whole), bare_only=True)]
         material = self._part_material(pool, cited, f"{headings[index]} {goal} {instruction or ''}")
         scientific = self._science_run(spec)
         model_language = (
@@ -651,8 +652,9 @@ def load_built(work: Work, built: BuiltOutput, made: Pool, pool: Pool, brief) ->
     outline, parts = [], {}
     next_item = work.next_item
     reserved = set(ids)
+    shape = SHAPES[work.spec.kind]
     for position, (section, plan) in enumerate(zip(sections, plans, strict=True)):
-        text, _ = _translate(section.text, version_map)
+        text, _ = _translate(shape.markup(section.text), version_map)
         while f"p{next_item}" in reserved:
             next_item += 1
         item = _section_item(

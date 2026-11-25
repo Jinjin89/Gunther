@@ -9,6 +9,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from gunther.citations import rewrite_citations, strip_citations
+
 MAX_BLOCKS, MAX_NODES, MAX_DEPTH, MAX_SCENE_CHARS = 24, 40, 4, 24_000
 FENCE = re.compile(r"^\s*(?:\x60{3}|~~~)")
 HEADING = re.compile(r"^#{1,2}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$")
@@ -28,7 +30,8 @@ CHART_VALUE = re.compile(
     r"(\d[\d,]*(?:\.\d+)?)\s*([%‰°][A-Za-z℃℉]*|[A-Za-z]{1,8})?\s*$"
 )
 LIST_LINE = re.compile(r"^(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)")
-ALL_CITATIONS = re.compile(r"\[(?:[ipd]:)?\d+(?:\s*[,，、]\s*\d+)*\]|\[\?\]")
+# Stored scene envelopes and the desktop agree on the original fingerprint input.
+_SOURCE_HASH_CITATIONS = re.compile(r"\[(?:[ipd]:)?\d+(?:\s*[,，、]\s*\d+)*\]|\[\?\]")
 
 
 class SceneModel(BaseModel):
@@ -131,7 +134,7 @@ def visible_markdown(text: str) -> str:
     for line, fenced in rows:
         if not fenced and NOTE.match(line):
             break
-        visible.append(line if fenced else ALL_CITATIONS.sub("", line))
+        visible.append(line if fenced else _SOURCE_HASH_CITATIONS.sub("", line))
     return "\n".join(visible).strip()
 
 
@@ -180,29 +183,18 @@ def rebind_graphics_hash(
         if graphics_markdown(before) != graphics_markdown(after):
             return after
     else:
-        citation = re.compile(r"\[((?:[ipd]:)?)(\d+(?:\s*[,，、]\s*\d+)*)\]")
+        def replace(label: str, refs: list[str], _lead: str) -> str:
+            mapped = [reference_map[int(ref)] for ref in refs]
+            if any(not isinstance(value, int) or value < 1 for value in mapped):
+                raise ValueError("The trusted reference map contains an invalid reference.")
+            prefix = f"{label}:" if label else ""
+            return "".join(f"[{prefix}{value}]" for value in mapped)
 
-        def translated(text: str) -> str | None:
-            def replace(match: re.Match[str]) -> str:
-                refs = [int(value) for value in re.findall(r"\d+", match.group(2))]
-                if any(ref not in reference_map for ref in refs):
-                    raise KeyError("The trusted reference map is incomplete.")
-                mapped = [reference_map[ref] for ref in refs]
-                if any(not isinstance(value, int) or value < 1 for value in mapped):
-                    raise ValueError("The trusted reference map contains an invalid reference.")
-                prefix = match.group(1)
-                return "".join(f"[{prefix}{value}]" for value in mapped)
-
-            output = []
-            try:
-                for line, fenced in _lines(graphics_markdown(text)):
-                    output.append(line if fenced else citation.sub(replace, line))
-            except (KeyError, ValueError):
-                return None
-            return "\n".join(output)
-
-        expected = translated(before)
-        if expected is None or expected != graphics_markdown(after):
+        try:
+            expected = rewrite_citations(graphics_markdown(before), replace)
+        except (KeyError, ValueError):
+            return after
+        if expected != graphics_markdown(after):
             return after
     updated = scene.model_copy(update={"graphics_hash": graphics_hash(after)})
     return with_scene(after, updated)
@@ -224,7 +216,7 @@ def _block_type(rows: list[tuple[str, bool]]) -> str:
     if quoted and len(quoted) + sum(line.startswith("—") for line in lines) == len(lines):
         return "quote"
     if len(lines) == 1:
-        candidate = ALL_CITATIONS.sub("", lines[0]).strip()
+        candidate = strip_citations(lines[0]).strip()
         if STAT.fullmatch(candidate) and VALUE.fullmatch(candidate[2:-2].strip()):
             return "stat"
     return "text"
@@ -257,7 +249,7 @@ def _chart_candidate(markdown: str) -> bool:
         return False
     values = []
     for row in data:
-        cell = ALL_CITATIONS.sub("", row[1]).strip()
+        cell = strip_citations(row[1]).strip()
         match = CHART_VALUE.fullmatch(cell)
         if not match:
             return False

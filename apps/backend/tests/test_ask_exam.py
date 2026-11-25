@@ -169,6 +169,12 @@ def test_sentences_keep_citations_after_the_full_stop_with_their_sentence() -> N
     ]
 
 
+def test_ask_scoring_counts_unverified_marks_in_prose():
+    answer = "See `a[?]` and $$x[?]$$. Fact [?].\n```\ncode[?]\n```"
+    assert score.unverified(answer) == 1
+    assert score.sentences(answer) == ["See `a[?]` and $$x[?]$$.", "Fact [?]."]
+
+
 def test_judgement_decides_pass() -> None:
     quiet = score.Judgement(
         support=[score.SupportVerdict(n=1, verdict="supported")], mentioned=[True]

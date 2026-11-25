@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from gunther import key_results
 from gunther.artifact_read import _verified_payload, latest_check_records
 from gunther.checks import claim_text, claim_view
-from gunther.citations import MARKED, UNSOURCED, collapse_citations
+from gunther.citations import collapse_citations, has_checker_marks
 from gunther.claim_checks import check_claims
 from gunther.document_structure import evidence_eligible
 from gunther.evidence import EVIDENCE_CHARS
@@ -53,7 +53,7 @@ def _claims(rows: Iterable[dict], cited: dict[int, ConversationCitationOut]) -> 
     claims = []
     for row in rows:
         text = row.get("text") or ""
-        if UNSOURCED in text or MARKED.search(text):
+        if has_checker_marks(text):
             continue
         citations = tuple(
             cited[ref] for ref in row.get("refs", [])

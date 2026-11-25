@@ -3,19 +3,25 @@
 import re
 
 from gunther.checks import claim_text
-from gunther.citations import ANY_CITATION, UNSOURCED, collapse_citations
+from gunther.citations import citation_numbers
+from gunther.markup import Markup, inline_markup
 
 HEADER = "<!-- map: {type_id}; design: v1 -->"
 _HEADER = re.compile(r"<!-- map: [a-z][a-z0-9_]*; design: v1 -->")
-_NODE = re.compile(r"((?:  )*)- +(\S.*)")
+_NODE = re.compile(r"^((?:  )*)- +(\S[^\r\n]*)", re.M)
 
 
 def node_of(line: str) -> tuple[int, str] | None:
     if match := _NODE.fullmatch(line.rstrip()):
-        label = claim_text(match[2].replace(UNSOURCED, ""))
+        label = claim_text(match[2], include_unsourced=True)
         if label:
             return len(match[1]) // 2, label
     return None
+
+
+def node_markup(text: str) -> Markup:
+    """Only a node's label is Markdown. Leading spaces encode the node's depth."""
+    return inline_markup(text, (match.span(2) for match in _NODE.finditer(text)))
 
 
 def node_spans(content: str) -> tuple[int, list[tuple[int, int]]]:
@@ -55,6 +61,6 @@ def check_map(content: str, *, header: str | None = None) -> list[str]:
 
 
 def check_text(unit: str, *, ancestors: tuple[str, ...] = (), refs=None, rest=None) -> list[str]:
-    if not node_of(unit) or not ANY_CITATION.search(collapse_citations(unit)):
+    if not node_of(unit) or not citation_numbers(node_markup(unit)):
         return []
     return [" › ".join((*ancestors, unit.lstrip()[2:].strip()))]

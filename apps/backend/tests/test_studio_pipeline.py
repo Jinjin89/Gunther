@@ -9,6 +9,7 @@ from fake_models import FakeProvider, gateway, model, output_replies
 from gunther.answer_runs import Stopped
 from gunther.evidence import Evidence, Tool
 from gunther.llm import ModelError
+from gunther.output_shapes import lend_refs
 from gunther.outputs import Issue, Notes, Planned, Pool, Spec, split_document
 from gunther.schemas import ConversationCitationOut
 from gunther.studio import format as fmt
@@ -390,6 +391,18 @@ def test_direct_report_keeps_the_supported_exhibit_when_its_rows_are_repeated(tm
     exhibits = list(fmt.EXHIBIT.finditer(version["content"]))
     assert [block["attrs"].strip() for block in exhibits] == ["chart=column", ""]
     assert all("| Raw | 18 [1] |" in block["body"] for block in exhibits)
+
+
+def test_report_verification_repairs_prose_tables_and_preserves_code(monkeypatch):
+    agents = StudioAgents(gateway(FakeProvider("unused")))
+    monkeypatch.setattr(agents, "_claims", lambda *args, **kwargs: {})
+    code = "```text\n| name | arr[7] |\n| value | x[3] |\n```"
+    inline = "Example `lines\n| name | literal |\n| value | literal |`."
+    prefix = f"## Results\n\n{code}\n\n{inline}\n\n"
+    source = prefix + "| Name | Status |\n| Trial | Done |"
+    run = Run(Spec("report", ""), "")
+    [draft] = agents.verify(agents.gateway.models[0], run, [source], Pool(10), lambda _: None)
+    assert draft.text == prefix + "| Name | Status |\n| --- | --- |\n| Trial | Done |"
 
 
 @pytest.mark.parametrize(("heading", "needs_format_repair"), [
@@ -1006,8 +1019,6 @@ def test_without_a_renderer_the_step_is_skipped():
 
 
 def test_the_title_slide_borrows_the_citations_other_slides_give_for_its_figures():
-    from gunther.output_shapes import lend_refs
-
     rest = (
         "## Weather adjustment halves the saving\n- 9% weather-adjusted saving [3][4]\n"
         "- 2.1 °C cooler [2]\n- Albedo fell [7]"
@@ -1015,6 +1026,16 @@ def test_the_title_slide_borrows_the_citations_other_slides_give_for_its_figures
     assert lend_refs("# Cool roofs: 2.1 °C comfort, 9% not 18%", rest).endswith("[3] [4] [2]")
     assert lend_refs("Comfort is real [1]", rest) == "Comfort is real [1]"
     assert lend_refs("A 40% gain", rest) == "A 40% gain"
+
+
+def test_citation_lending_uses_the_whole_documents_inline_markup():
+    evidence = "7 participants [2]"
+    assert lend_refs("Read `arr[7]`", evidence) == "Read `arr[7]`"
+    rest = "Example `a\narr[2]` and 7 participants."
+    assert lend_refs("7 participants", rest) == "7 participants"
+    assert lend_refs("7 participants", "Example `a\narr[7]` [2].") == "7 participants"
+    text = "7 participants use `a\nb[3]`.\n7 observations"
+    assert lend_refs(text, evidence) == text + " [2]"
 
 
 def test_the_subtitle_is_rewritten_to_state_what_the_slide_titles_say():

@@ -653,6 +653,15 @@ def test_figures_read_digits_words_and_percents() -> None:
     assert score.figures("CD3D and CO2") == []
 
 
+def test_artifact_scoring_uses_only_prose_citations():
+    protected = "```python\narr[2] = 901\n```\n\nUse `arr[3]` and $$x[4]$$."
+    text = "Evidence documents the claim [1].\n\n" + protected
+    citations = [{"ref": ref, "sourceTitle": f"Passage {ref}"} for ref in range(1, 5)]
+    assert score._cited_titles(text, citations) == {"Passage 1"}
+    assert score.identified(text, citations).endswith(protected)
+    assert score.figures(text) == []
+
+
 # The scorecard ---------------------------------------------------------------------------------
 
 

@@ -6,6 +6,7 @@ from test_artifact_agent import done, turn
 from test_output_cards import EVIDENCE, EXAMPLES, checks_in, conversation, document
 from test_outputs import app_for, route, workspace
 
+from gunther.citations import check_citations, renumber_citations
 from gunther.output_types import SHAPES
 from gunther.outputs import section_hash
 
@@ -24,6 +25,13 @@ def test_map_split_preserves_ancestry_and_checks_cited_nodes(case):
         assert [MAP.check_text(unit) for unit in units] == [[], [], [CLAIM]]
     else:
         assert MAP.check_text(units[2]) == ["Trial › Setup › Timing [2]"]
+
+
+def test_detached_node_indentation_does_not_hide_its_prose_citations():
+    node = "    - Call `f[7]` [3] [9]"
+    checked, used = check_citations(MAP.markup(node), {3})
+    assert used == [3] and checked.rstrip() == "    - Call `f[7]` [3]"
+    assert renumber_citations(MAP.markup(checked), used).rstrip() == "    - Call `f[7]` [1]"
 
 
 @pytest.mark.parametrize(("nodes", "problem"), [

@@ -24,6 +24,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from gunther.citations import citation_numbers, has_unsourced, strip_citations
 from gunther.llm import ModelError
 from gunther.studio import format as fmt
 from gunther.studio import prompts as P
@@ -33,7 +34,6 @@ logger = logging.getLogger(__name__)
 STYLES_DIR = Path(__file__).resolve().parent / "styles"
 PLACEHOLDER = "<gunther-chart></gunther-chart>"
 NOTE_LINE = re.compile(r"^\s*(?:Note|Notes|备注|讲者备注)\s*[:：]")
-CITATION = re.compile(r"\[(?:\?|\d+(?:\s*[,，]\s*\d+)*)\]")
 # A number, with its sign only when the sign stands alone ("GPT-4" and "2021-2023" hold no signs).
 NUMBER = re.compile(r"(?:(?<![\w.])[-+−])?(?<![\d.,，])\d[\d,，.]*")
 LIST_NUMBER = re.compile(r"(?m)^\s*\d+[.)]\s+")
@@ -142,20 +142,20 @@ def extract_section(reply: str) -> str:
 def numbers(text: str) -> set[str]:
     """The numbers a text states: not its citation marks or its list numbering."""
 
-    text = LIST_NUMBER.sub("", CITATION.sub("", text))
+    text = LIST_NUMBER.sub("", strip_citations(text))
     found = (fmt.normal_number(m.group().rstrip(".,，")) for m in NUMBER.finditer(text))
     return {n for n in found if n}
 
 
 def refs(text: str) -> set[int]:
-    return {int(n) for mark in CITATION.findall(text) for n in re.findall(r"\d+", mark)}
+    return set(citation_numbers(text))
 
 
 def words(text: str) -> str:
     """Letters and digits only, in lower case: titles compare regardless of case, spacing and
     punctuation."""
 
-    plain = CITATION.sub("", unicodedata.normalize("NFKC", text))
+    plain = strip_citations(unicodedata.normalize("NFKC", text))
     return "".join(ch.lower() for ch in plain if ch.isalnum())
 
 
@@ -203,7 +203,7 @@ def check_design(slide: str, html: str) -> list[str]:
         problems.append(
             "These citations are not in the content: " + ", ".join(f"[{n}]" for n in added)
         )
-    if "[?]" in content and "[?]" not in text:
+    if has_unsourced(content) and not has_unsourced(text):
         problems.append("The [?] mark of the content is missing.")
     placeholders = len(re.findall(r"<gunther-chart\b", html, re.I))
     if chart and (placeholders != 1 or len(CHART_TAG.findall(html)) != 1):

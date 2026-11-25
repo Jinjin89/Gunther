@@ -5,6 +5,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from gunther.citations import check_citations, renumber_citations
 from gunther.evidence import Evidence
 from gunther.llm import ModelError, ModelInfo
+from gunther.markup import Markup, parse_markup
 from gunther.model_profiles import Effort
 from gunther.output_types import SHAPES, output_type_for
 from gunther.outputs import (
@@ -38,7 +39,7 @@ def project_outline(
 
 
 def number_output_citations(
-    texts: Iterable[str], by_ref: Mapping[int, Evidence], *,
+    texts: Iterable[str | Markup], by_ref: Mapping[int, Evidence], *,
     saved: Mapping[int, Evidence] | None = None,
 ) -> tuple[dict[int, int], list[ConversationCitationOut]]:
     """Keep the saved numbers and add newly cited passages in order of first use."""
@@ -58,9 +59,10 @@ def number_output_citations(
     return numbers, citations
 
 
-def number_output_part(text: str, numbers: dict[int, int]) -> str:
-    numbered = renumber_citations(text, numbers)
-    return rebind_graphics_hash(text, numbered, numbers)
+def number_output_part(text: str | Markup, numbers: dict[int, int]) -> str:
+    markup = parse_markup(text)
+    numbered = renumber_citations(markup, numbers)
+    return rebind_graphics_hash(markup.text, numbered, numbers)
 
 
 def assemble_output(
@@ -86,11 +88,14 @@ def assemble_output(
         if reason is not None:
             raise ModelError("Chart values must be verified before saving. " + reason)
     raw = join_document(preamble, [draft.text for draft in drafts], spec.kind)
-    numbers, citations = number_output_citations([raw], by_ref)
-    valid = set(by_ref)
-    final = [number_output_part(check_citations(draft.text, valid)[0], numbers) for draft in drafts]
-    content = join_document(preamble, final, spec.kind)
     shape = SHAPES[spec.kind]
+    numbers, citations = number_output_citations([shape.markup(raw)], by_ref)
+    valid = set(by_ref)
+    final = []
+    for draft in drafts:
+        checked, _ = check_citations(shape.markup(draft.text), valid)
+        final.append(number_output_part(shape.markup(checked), numbers))
+    content = join_document(preamble, final, spec.kind)
     if shape.pipeline == "direct":
         problems = output_type_for(spec.kind, spec.output_type).direct_problems(content)
         if problems:

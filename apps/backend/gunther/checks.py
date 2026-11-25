@@ -7,16 +7,15 @@ import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from gunther.citations import strip_citations
+
 Verdicts = dict[str, dict[str, Any]]
 LEGACY_EVIDENCE = "legacy"
 PENDING = {"unchecked", "unavailable"}
 _RANK = {"unchecked": 0, "unavailable": 1, "supported": 2, "unsupported": 2}
 _OUTCOME = ("verdict", "label", "reason", "issue", "findings")
-_CITE = re.compile(r"\[(?:[ipd]:)?\d+(?:[ \t]*[,，、][ \t]*\d+)*\]")
-
-
-def claim_text(text: str) -> str:
-    plain = " ".join(_CITE.sub("", text).split())
+def claim_text(text: str, *, include_unsourced: bool = False) -> str:
+    plain = " ".join(strip_citations(text, include_unsourced=include_unsourced).split())
     return re.sub(r"\s+([,.;:!?，。；：！？])", r"\1", plain)
 
 
@@ -24,7 +23,10 @@ def verdict_key(row: Mapping[str, Any]) -> str:
     stage = row["stage"]
     text = row["text"]
     # The audit reads the whole section and needs to distinguish cited from uncited text.
-    text = " ".join(_CITE.sub("[#]", text).split()) if stage == "audit" else claim_text(text)
+    text = (
+        " ".join(strip_citations(text, include_unsourced=False, replacement="[#]").split())
+        if stage == "audit" else claim_text(text)
+    )
     context = (row.get("tableRow"), claim_text(row.get("tableHeader", "")))
     digest = hashlib.sha256(repr((text, context)).encode()).hexdigest()
     return f"{stage}:{digest}:{row.get('evidenceHash') or ''}"
@@ -180,7 +182,7 @@ def read_verdicts(record: Mapping[str, Any], text: str) -> Verdicts:
             if "tableHeader" not in row and (header := table_headers.get(position)):
                 row["tableHeader"] = header
             if stage == "checker":
-                plain = claim_text(row["text"].replace("[?]", ""))
+                plain = claim_text(row["text"], include_unsourced=True)
                 key = plain if plain in pending else plain[:300].rstrip()
                 if key in pending:
                     matched.add(key)

@@ -39,8 +39,15 @@ from gunther.checks import (
     merge_verdicts,
     read_verdicts,
 )
-from gunther.citations import ANY_CITATION, sentence_spans
+from gunther.citations import (
+    citation_numbers,
+    marker_spans,
+    rewrite_citations,
+    sentence_spans,
+    trailing_markers_end,
+)
 from gunther.evidence import Evidence
+from gunther.markup import Markup, parse_markup
 from gunther.output_shapes import OutputUnit
 from gunther.output_types import (
     DECK_USES,
@@ -362,10 +369,7 @@ def _adopt(pool: Pool, citations: Sequence[ConversationCitationOut]) -> list[int
     return numbers
 
 
-_GROUP = re.compile(r"([ \t]?)\[(?:(i|p|d):(\d+)|(\d+(?:\s*[,，、]\s*\d+)*))\]")
-
-
-def _translate(text: str, version_map: Sequence[int]) -> tuple[str, list[int]]:
+def _translate(text: str | Markup, version_map: Sequence[int]) -> tuple[str, list[int]]:
     """A version's text with its source numbers (``[1]``, ``[p:2]``…) turned into the pool's,
     and the numbers it had to leave out. A number the version has no source for is left out:
     kept as it is, it could be read as some other source of the pool."""
@@ -378,37 +382,27 @@ def _translate(text: str, version_map: Sequence[int]) -> tuple[str, list[int]]:
         dropped.append(version_number)
         return None
 
-    def replace(match: re.Match[str]) -> str:
-        lead = match.group(1)
-        if match.group(2):
-            mapped = number(int(match.group(3)))
-            return f"{lead}[{match.group(2)}:{mapped}]" if mapped is not None else ""
+    def replace(label: str, refs: list[str], lead: str) -> str:
+        prefix = f"{label}:" if label else ""
         kept = [
-            f"[{mapped}]"
-            for part in re.split(r"[,，、]", match.group(4))
-            if (mapped := number(int(part))) is not None
+            f"[{prefix}{mapped}]" for ref in refs if (mapped := number(int(ref))) is not None
         ]
         return lead + "".join(kept) if kept else ""
 
-    translated = _GROUP.sub(replace, text)
+    markup = parse_markup(text)
+    translated = rewrite_citations(markup, replace, trim_space=True)
     return rebind_graphics_hash(
-        text,
+        markup.text,
         translated,
         {number: mapped for number, mapped in enumerate(version_map, start=1)},
     ), dropped
 
 
-def pool_numbered(text: str, version_map: Sequence[int]) -> str:
+def pool_numbered(text: str | Markup, version_map: Sequence[int]) -> str:
     """A version's text as a work holds it, citing pool numbers. ``[2, 5]`` becomes ``[2][5]``,
     as the Checker writes it; a number the version has no source for is left out."""
 
     return _translate(text, version_map)[0]
-
-
-def _cited(text: str) -> list[int]:
-    """The numbers a text cites, in order of first use."""
-
-    return list(dict.fromkeys(int(match.group(2)) for match in ANY_CITATION.finditer(text)))
 
 
 # Finding a passage ------------------------------------------------------------------------------
@@ -416,11 +410,6 @@ def _cited(text: str) -> list[int]:
 # A message quotes a passage as the person saw it, with the numbers of the saved version; the
 # work's text cites the pool's. So the numbers are never part of what is looked for.
 
-# A citation group or the model's own marker: [3], [3, 4], [i:3], [?].
-_MARK = r"\[(?:(?:i|p|d):\d+|\d+(?:\s*[,，、]\s*\d+)*|\?)\]"
-_MARKS = re.compile(_MARK)
-_ENDS_WITH_MARK = re.compile(rf"{_MARK}\s*\Z")
-_MARKS_RIGHT_AFTER = re.compile(rf"(?:[ \t]*{_MARK})+")
 _PUNCTUATION = ",.;:!?，。；：！？"
 # How much a window of sentences must look like the passage to be taken for it.
 RESEMBLANCE = 0.9
@@ -435,12 +424,12 @@ def _comparable(text: str) -> tuple[str, list[int]]:
 
     chars: list[str] = []
     came_from: list[int] = []
-    marks = _MARKS.finditer(text)
+    marks = marker_spans(text)
     mark = next(marks, None)
     at = 0
     while at < len(text):
-        if mark is not None and at == mark.start():
-            at, mark = mark.end(), next(marks, None)
+        if mark is not None and at == mark[0]:
+            at, mark = mark[1], next(marks, None)
             continue
         char = text[at]
         if char.isspace():
@@ -474,10 +463,8 @@ def _loosely(passage: str, text: str) -> tuple[int, int] | None:
     if at < 0:
         return None
     start, end = came_from[at], came_from[at + len(wanted) - 1] + 1
-    if _ENDS_WITH_MARK.search(passage):
-        after = _MARKS_RIGHT_AFTER.match(text, end)
-        if after is not None:
-            end = after.end()
+    if any(not passage[stop:].strip() for _, stop in marker_spans(passage)):
+        end = trailing_markers_end(text, end)
     return start, end
 
 
@@ -1214,7 +1201,7 @@ def _section_item(
         id=identity, heading=heading_of(section) or (plan.heading if plan else ""),
         goal=plan.goal if plan else "",
         layout=_layout_of(kind, position, raw),
-        refs=_cited(text),
+        refs=citation_numbers(SHAPES[kind].markup(text)),
     )
 
 
@@ -1300,13 +1287,14 @@ def import_work(
         (int(plan.id[1:]) + 1 for plan in planned if re.fullmatch(r"p[0-9]+", plan.id)),
         default=1,
     )
+    shape = SHAPES[kind]
     for position, section in enumerate(sections):
         plan = planned[position] if planned else None
         identity = plan.id if plan and plan.id not in work.parts else ""
         if not identity:
             identity = f"p{work.next_item}"
             work.next_item += 1
-        text, dropped = _translate(section.text, version_map)
+        text, dropped = _translate(shape.markup(section.text), version_map)
         marked = _marked(section.text) if kind == "slides" else None
         design = plan.design.model_dump(exclude_none=True) if plan and plan.design else None
         if marked and marked.composition != "standard":
@@ -1324,7 +1312,7 @@ def import_work(
             layout_locked=plan.layout_locked if plan else False,
             design_locked=plan.design_locked if plan else False,
             design_attempted=plan.design_attempted if plan else False,
-            refs=_cited(text),
+            refs=citation_numbers(shape.markup(text)),
         )
         part = PartRec(text=text, inputs="")
         _take_check(part, section, checks.get(section_hash(section)), version_map)
@@ -1381,10 +1369,11 @@ def _refresh_checks(work: Work, head: ArtifactOut, checks: Mapping[str, Mapping[
     """The work already matches the head, so only the head's checks can be new (the user
     pressed Check again): a part whose text is a section of the head takes its findings."""
 
-    by_text = {
-        section_hash(replace(unit, text=pool_numbered(unit.text, work.version_map))): unit
-        for unit in document_units(head.content, work.spec.kind)
-    }
+    shape = SHAPES[work.spec.kind]
+    by_text = {}
+    for unit in document_units(head.content, shape.id):
+        numbered = pool_numbered(shape.markup(unit.text), work.version_map)
+        by_text[section_hash(replace(unit, text=numbered))] = unit
     changed = False
     for identity, unit in work_units(work).items():
         part = work.parts[identity]
@@ -1429,7 +1418,8 @@ def sync(
     store_pool(workspace, pool)
     sections = document_units(head.content, kind)
     reserved = work.parts.keys()
-    translated = [_translate(section.text, version_map) for section in sections]
+    shape = SHAPES[kind]
+    translated = [_translate(shape.markup(section.text), version_map) for section in sections]
     texts = [text for text, _ in translated]
     matched = _match(work, sections, texts)
     items: list[ItemRec] = []

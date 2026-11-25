@@ -19,10 +19,11 @@ from gunther.checks import (
     verdict,
     verdicts_of,
 )
-from gunther.citations import collapse_citations, leads_in
+from gunther.citations import collapse_citations, has_unsourced, leads_in
 from gunther.claim_checks import check_claims, check_evidence_hash, checker_inventory
 from gunther.evidence import Evidence
 from gunther.llm import ModelError, ModelInfo
+from gunther.markup import parse_markup
 from gunther.output_shapes import SHAPES, OutputUnit
 from gunther.outputs import Issue, _marked, _plain, cited_sentences
 
@@ -74,7 +75,10 @@ def output_claim_inventory(
         return text, checker_inventory(text, by_ref, spans=spans)
     text = "\n".join(parts)
     if scientific:
-        text = re.sub(r"(?m)^([ \t]*)\d+[.)]\s+", r"\1", text)
+        text = parse_markup(text).map_prose(
+            lambda prose: re.sub(r"(?m)^([ \t]*)\d+[.)]\s+", r"\1", prose),
+            include_inline=True,
+        )
     return text, checker_inventory(text, by_ref, prior)
 
 
@@ -99,7 +103,13 @@ def check_projected_parts(
 ) -> list[Verdicts]:
     """Batch projected claims while retaining each unit's own stored verdicts."""
     projected = [output_claim_inventory(kind, unit, by_ref) for unit in units]
-    active = {key: row for _, inventory in projected for key, row in inventory.items()}
+    active = {}
+    for text, inventory in projected:
+        # Joining independent projections can change which backticks form a code span.
+        markup = parse_markup(text)
+        for key, row in inventory.items():
+            source = markup.prose_slice(row["start"], row["end"])
+            active[key] = {**row, "has_unsourced": has_unsourced(source)}
     inventory = {key: {**row, "n": n} for n, (key, row) in enumerate(active.items(), 1)}
     checked = check_part(
         checker, model, "Verify the cited claims in these output lines.",

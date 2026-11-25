@@ -15,14 +15,15 @@ from gunther.checks import LEGACY_EVIDENCE, Verdicts, claim_coverage, stage_rows
 from gunther.checks import verdict as stored_verdict
 from gunther.citations import (
     _MARKDOWN_ROW,
-    ANY_CITATION,
-    MARKDOWN_TABLE,
-    SENTENCE_END,
     UNSOURCED,
     _marked_unsourced,
     _plain,
+    citation_numbers,
     collapse_citations,
+    has_unsourced,
+    label_citations,
     leads_in,
+    markdown_tables,
     sentence_spans,
 )
 from gunther.evidence import (
@@ -36,6 +37,7 @@ from gunther.evidence import (
     ToolFailure,
 )
 from gunther.llm import ModelError, ModelInfo
+from gunther.markup import parse_markup
 
 if TYPE_CHECKING:
     pass
@@ -46,11 +48,6 @@ logger = logging.getLogger("gunther.agent")
 class Relevance(BaseModel):
     # The numbers of the results that help answer the question; may be empty.
     relevant: list[int] = Field(default_factory=list, max_length=40)
-
-
-class Verdict(BaseModel):
-    supports: list[int] = Field(default_factory=list, max_length=40)
-    contradicts: list[int] = Field(default_factory=list, max_length=40)
 
 
 class Unmarked(BaseModel):
@@ -93,12 +90,6 @@ numbered results. Keep only the ones that help answer the user's question: they 
 must be about the same subject, not merely share a word or a general term with it. \
 Results about a different subject are dropped, even when they are the closest there \
 is. Return the numbers to keep, possibly none."""
-
-CHECKER = """\
-You are the checking step of Gunther, a research assistant. A claim was written \
-from memory. Numbered search results follow. List the numbers of results that state \
-the claim ("supports") and of results that state the opposite ("contradicts"). A \
-result that is merely related to the claim counts as neither."""
 
 AUDITOR = """\
 You are the audit step of Gunther, a research assistant. An answer follows. List, \
@@ -152,18 +143,20 @@ def check_claims(
     spans: Sequence[tuple[int, int]] | None = None,
 ) -> list[dict[str, Any]]:
     """The claims a check covers, including the header of each table row."""
+    markup = parse_markup(text)
     rows = {}
-    for index, table in enumerate(MARKDOWN_TABLE.finditer(text)):
+    for index, table in enumerate(markdown_tables(markup)):
         header, *body = re.finditer(_MARKDOWN_ROW, table[0], re.M)
         for row_index, row in enumerate(body, 1):
             rows[table.start() + row.start()] = (index, row_index, header[0].strip())
     claims = []
     line, offset = 0, 0
-    for n, (start, end) in enumerate(sentence_spans(text) if spans is None else spans, 1):
+    for n, (start, end) in enumerate(sentence_spans(markup, groups=spans), 1):
         line += text.count("\n", offset, start)
         offset = start
-        sentence = " ".join(text[start:end].split())
-        refs = list(dict.fromkeys(int(m.group(2)) for m in ANY_CITATION.finditer(sentence)))
+        source = markup.prose_slice(start, end)
+        sentence = " ".join(source.text.split())
+        refs = citation_numbers(source)
         claim = {
             "id": hashlib.sha256(f"{n}:{sentence}".encode()).hexdigest()[:20],
             "n": n, "start": start, "end": end, "line": line, "text": sentence, "refs": refs,
@@ -182,7 +175,8 @@ def checker_inventory(
     *, spans: Sequence[tuple[int, int]] | None = None,
 ) -> Verdicts:
     claims = stage_rows(prior or {}, "checker")
-    if spans is not None or not claims or any(
+    markup = parse_markup(text)
+    if spans is not None or markup.blocks or markup.inline or not claims or any(
         "evidenceHash" not in claim or claim["evidenceHash"] == LEGACY_EVIDENCE for claim in claims
     ):
         claims = check_claims(collapse_citations(text), by_ref, spans=spans)
@@ -226,6 +220,9 @@ class ClaimChecks:
     def unsourced_claims(self, model: ModelInfo, text: str) -> list[str] | None:
         """The audit's uncited factual sentences. None means the audit failed."""
 
+        text = "\n\n".join(
+            text[start:end] for start, end in parse_markup(text).prose_ranges(include_inline=True)
+        )
         if len(text) < 40:
             return []
         try:
@@ -257,13 +254,28 @@ class ClaimChecks:
         raise_model_error: bool = False,
     ) -> Check:
         """Check an answer, updating any supplied claim records in place."""
-        text = collapse_citations(text)
+        markup = None
+        if claims is None or checklist:
+            text = collapse_citations(text)
+            markup = parse_markup(text)
         if claims is None:
             claims = check_claims(text, by_ref)
         if not claims:
             check = Check()
             check._coverage = claim_coverage(claims)
             return check
+
+        def is_unsourced(claim: Mapping[str, Any]) -> bool:
+            nonlocal markup
+            if "has_unsourced" in claim:
+                return claim["has_unsourced"]
+            start, end = claim.get("start"), claim.get("end")
+            if start is None or end is None:
+                return has_unsourced(claim["text"])
+            if markup is None:
+                markup = parse_markup(collapse_citations(text))
+            return has_unsourced(markup.prose_slice(start, end))
+
         batch_size = max(1, min(60, self.limits.check_sentences if limit is None else limit))
         lines: dict[int, str] = {}
         for ref, item in by_ref.items():
@@ -354,9 +366,7 @@ class ClaimChecks:
                 claim = batch[verdict.n - 1]
                 if claim["n"] in verdicts:
                     continue
-                if verdict.verdict == "supported" and (
-                    not claim["refs"] or UNSOURCED in claim["text"]
-                ):
+                if verdict.verdict == "supported" and (not claim["refs"] or is_unsourced(claim)):
                     verdict = verdict.model_copy(update={"verdict": "unsourced"})
                 verdicts[claim["n"]] = verdict.model_copy(update={"n": claim["n"]})
                 claim.update(verdict=verdict.verdict, reason=verdict.missing)
@@ -389,27 +399,28 @@ class ClaimChecks:
         )
         claims = check._coverage["claims"]
         verdicts = {verdict.n: verdict for verdict in check.sentences}
+        markup = parse_markup(text)
         missing: dict[int, list[str]] = {}
         facts: list[str] = []
         # From the end, so the spans before an edit keep their places.
         for n in sorted(verdicts, reverse=True):
             start, end = claims[n - 1]["start"], claims[n - 1]["end"]
-            span, verdict = text[start:end], verdicts[n]
+            source, verdict = markup.prose_slice(start, end), verdicts[n]
             if verdict.verdict in {"supported", "nonfactual"}:
                 continue
-            if UNSOURCED in span:
+            if has_unsourced(source):
                 # Written from memory: the checker only says whether it is a fact to look up.
                 if verdict.verdict in ("not", "unsourced"):
-                    facts.append(_plain(span))
+                    facts.append(_plain(source))
                 continue
             if verdict.verdict == "inference":
-                span = re.sub(r"\[(\d+)\]", r"[i:\1]", span)
+                span, _ = label_citations(source, "i")
             elif verdict.verdict == "partly":
-                span, count = re.subn(r"\[(\d+)\]", r"[p:\1]", span)
+                span, count = label_citations(source, "p")
                 missing[n] = [verdict.missing] * count
             else:
-                span = _marked_unsourced(span)
-                facts.append(_plain(span))
+                span = _marked_unsourced(source)
+                facts.append(_plain(source, trim_space=True))
             text = text[:start] + span + text[end:]
         support_notes = [note for n in sorted(missing) for note in missing[n]]
         return collapse_citations(text), check, support_notes, facts[::-1]
@@ -431,8 +442,8 @@ class ClaimChecks:
     ) -> str:
         """Look for a source for each claim the model made from its own knowledge.
 
-        Like ``check_leads`` (Outputs keeps that one), but the results of all the claims
-        are judged in one call. Supported: the marker becomes the source's number.
+        The results of all the claims are judged in one call. If supported, the marker
+        becomes the source's number.
         Contradicted: the claim is kept, marked ``[d:n]`` with the sources that disagree,
         and a note says so. Neither: it stays marked.
         With ``only`` (the facts the sentence checker listed), a claim that is not part of
@@ -557,92 +568,3 @@ class ClaimChecks:
         for start, end, replacement in sorted(edits, reverse=True):
             text = text[:start] + replacement + text[end:]
         return collapse_citations(text)
-
-    def check_leads(
-        self,
-        model: ModelInfo,
-        text: str,
-        toolbox: Toolbox,
-        adopt: Callable[[Evidence], Evidence],
-        steps: list[Step],
-        notes: list[str],
-        emit: Events,
-        dropped: list[tuple[str, str]] | None = None,
-    ) -> str:
-        """Look for a source for each claim the model made from its own knowledge.
-
-        Supported: the marker becomes the source's number. Contradicted: the claim is
-        left out and a note says why (``dropped``, when given, also hears the claim and
-        the titles of the sources that disagree). Neither: it stays marked as unverified.
-        """
-
-        edits: list[tuple[int, int, str]] = []
-        leads = leads_in(text, self.limits.leads)
-        for number, (start, at, claim) in enumerate(leads):
-            query = " ".join(claim.split())[:300]
-            candidates: list[Evidence] = []
-            for tool in toolbox.tools:
-                label = f"Checked {tool.where} for a claim: “{query[:70]}”"
-                emit({"type": "step", "state": "running", "tool": tool.name, "label": label})
-                try:
-                    found = tool.run(query)
-                except ToolFailure as error:
-                    steps.append(Step(tool.name, label, query, 0, str(error)))
-                else:
-                    steps.append(Step(tool.name, label, query, len(found)))
-                    candidates += found
-                emit({"type": "step", "state": "done", **steps[-1].out()})
-            candidates = candidates[:12]
-            if not candidates:
-                continue
-            listing = "\n".join(
-                f"[{index}] {item.title}: {' '.join(item.text.split())[:400]}"
-                for index, item in enumerate(candidates, start=1)
-            )
-            try:
-                with trace.step(
-                    "check", "Checking a claim against sources", claim=claim
-                ) as checking:
-                    verdict, _ = self.gateway.complete_json(
-                        model,
-                        Verdict,
-                        system=CHECKER,
-                        prompt=f"Claim:\n{claim}\n\nResults:\n{listing}",
-                        effort=self.check_effort,
-                    )
-                    trace.update(
-                        checking,
-                        supports=[
-                            candidates[n - 1].title
-                            for n in verdict.supports
-                            if 0 < n <= len(candidates)
-                        ],
-                        contradicts=[
-                            candidates[n - 1].title
-                            for n in verdict.contradicts
-                            if 0 < n <= len(candidates)
-                        ],
-                    )
-            except ModelError as error:
-                logger.info("The checking step failed: %s", error)
-                continue
-            valid = range(1, len(candidates) + 1)
-            supports = [n for n in dict.fromkeys(verdict.supports) if n in valid]
-            contradicts = [n for n in dict.fromkeys(verdict.contradicts) if n in valid]
-            if supports and not contradicts:
-                refs = [adopt(candidates[n - 1]).ref for n in supports[:3]]
-                edits.append((at, at + len(UNSOURCED), "".join(f"[{ref}]" for ref in refs)))
-            elif contradicts and not supports:
-                titles = ", ".join(dict.fromkeys(candidates[n - 1].title for n in contradicts[:3]))
-                stop = leads[number + 1][0] if number + 1 < len(leads) else len(text)
-                tail = SENTENCE_END.search(text, at + len(UNSOURCED), stop)
-                edits.append((start, tail.end() if tail else stop, ""))
-                notes.append(
-                    f"Left out a statement from the model's own knowledge, because "
-                    f"the sources disagree with it ({titles}): “{claim[:120]}”"
-                )
-                if dropped is not None:
-                    dropped.append((claim, titles))
-        for start, end, replacement in sorted(edits, reverse=True):
-            text = text[:start] + replacement + text[end:]
-        return text

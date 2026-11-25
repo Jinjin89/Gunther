@@ -21,7 +21,6 @@ from gunther.artifact_workspace import (
     Work,
     Workspace,
     WorkSpec,
-    _cited,
     active_work,
     approach_state,
     locate,
@@ -30,7 +29,7 @@ from gunther.artifact_workspace import (
     spec_of,
     status,
 )
-from gunther.citations import check_citations
+from gunther.citations import check_citations, citation_numbers
 from gunther.evidence import Tool
 from gunther.library_lookup import SearchHit
 from gunther.llm import Turn
@@ -724,10 +723,12 @@ class ArtifactActions:
         c, act = self.ctx, m.act
         work = active_work(self.workspace)
         numbering = self._numbering()
-        kind = SHAPES[work.spec.kind].name if work else "sources"
+        kind = "sources"
         lines = [f"The question: {c.text}", f"What to answer: {act.about}"]
         cited: list[int] = []
         if work is not None:
+            shape = SHAPES[work.spec.kind]
+            kind = shape.name
             lines += ["", f"The {kind}:", *part_lines(work, self.brief, numbering)]
             wanted = [i for i in (m.ids or [])]
             # Only a part the user pointed at narrows the answer; the slide merely on screen
@@ -754,13 +755,14 @@ class ArtifactActions:
                         f"- {where}: “{claim}” "
                         f"{issue.get('verdict', '')}: {_one_line(str(issue.get('note', '')), 160)}"
                     )
-                cited += [n for n in _cited(part.text) if n not in cited]
+                cited += [n for n in citation_numbers(shape.markup(part.text)) if n not in cited]
             if shown == 0:
                 lines.append("- (nothing)")
             # The sources of the rest of the work follow, for what the parts shown lead to.
             for item in work.outline:
                 if item.id in work.parts:
-                    cited += [n for n in _cited(work.parts[item.id].text) if n not in cited]
+                    refs = citation_numbers(shape.markup(work.parts[item.id].text))
+                    cited += [n for n in refs if n not in cited]
         else:
             cited = [i.ref for i in self.pool.items if i.ref and i.ref > self.pool_top][:30]
         by_ref = self.pool.by_ref()

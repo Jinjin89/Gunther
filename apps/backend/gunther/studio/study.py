@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 
+from gunther.citations import strip_citations
 from gunther.llm import Image, ModelError
 from gunther.llm import unfence as _unfence
 from gunther.outputs import BuiltOutput, Events, Pool
@@ -384,7 +385,7 @@ class StudioStudy:
                     for number, slide in enumerate(slides, 1)
                     if any(f"gunther-asset:{asset}" in slide for asset in assets)
                     or values
-                    & fmt.numbers_in(re.sub(r"\[\d+\]|\(gunther-asset:[^)]*\)", "", slide))
+                    & fmt.numbers_in(re.sub(r"\(gunther-asset:[^)]*\)", "", strip_citations(slide)))
                 }
                 if showing:
                     wanted |= showing

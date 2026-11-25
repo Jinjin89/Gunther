@@ -16,7 +16,7 @@ from gunther import key_result_index, key_result_origins, key_results, usage
 from gunther.activity import Activity
 from gunther.agent import AskAgent
 from gunther.checks import claim_text
-from gunther.citations import ANY_CITATION, UNSOURCED, collapse_citations, sentence_spans
+from gunther.citations import has_markers, sentence_spans
 from gunther.database import session_scope
 from gunther.knowledge_index import Embedder
 from gunther.llm import AnalysisNeedsModel, ModelError, ModelGateway, ModelInfo
@@ -113,13 +113,9 @@ def _distill(
                     continue
                 text, same_as = kept.text, kept.id
             else:
-                text = " ".join(item.text.split())
-                if (
-                    UNSOURCED in text or ANY_CITATION.search(collapse_citations(text))
-                    or len(sentence_spans(text)) != 1
-                ):
+                if has_markers(item.text) or len(sentence_spans(item.text)) != 1:
                     continue
-                text = claim_text(text)
+                text = claim_text(item.text)
             candidates.append(key_results.CheckedResult(
                 text, same_as, tuple(by_ref[n] for n in refs),
             ))

@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from gunther.citations import citation_numbers, strip_citations
 from gunther.llm import Image, ModelError, ModelInfo
 from gunther.model_profiles import Effort
 from gunther.outputs import BuiltOutput, Draft, Events, Pool
@@ -91,13 +92,13 @@ def _facts(text: str) -> set[str]:
     """The numbers a slide states: not its marker, citation marks or list numbering."""
 
     text = fmt.MARK.sub("", fmt.without_design(text), count=1)
-    text = fmt.CITE.sub("", text)
+    text = strip_citations(text, trim_space=True)
     text = re.sub(r"(?m)^\s*\d+[.)]\s+", "", text)
     return fmt.numbers_in(text)
 
 
-def _refs(text: str) -> set[str]:
-    return set(re.findall(r"\[(\d+)\]", text))
+def _refs(text: str) -> set[int]:
+    return set(citation_numbers(text, bare_only=True))
 
 
 def look(

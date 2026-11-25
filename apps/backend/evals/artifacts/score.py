@@ -27,7 +27,9 @@ from typing import Any
 from pydantic import BaseModel
 
 from evals.ask.score import LIBRARY_DIR, library_texts, word_count
+from gunther.citations import citation_numbers, rewrite_citations, strip_citations
 from gunther.llm import ModelError, ModelGateway, ModelInfo
+from gunther.markup import parse_markup
 from gunther.output_types import output_type_for
 from gunther.outputs import join_document, split_document
 
@@ -52,8 +54,6 @@ INTENTS = ("ask", "answer", "make", "change")
 ASKS = ("must", "may", "must_not")
 # What each placeholder in a case needs its setup to have made.
 PLACEHOLDERS = {"typo": "typo", "fixed": "typo", "quote": "quote"}
-CITATION = re.compile(r"\[(?:([ipd]):)?(\d+(?:\s*[,，、]\s*\d+)*)\]")
-UNSOURCED = re.compile(r"\[\?\]")
 # Anything a model puts in brackets as a source mark, including slips like [?, 24].
 MARKS = re.compile(r"\[[\d?,，、\sipd:]*\]")
 # The line that says how a slide is drawn, when it has one: <!-- layout: compare -->. The exam
@@ -483,7 +483,7 @@ class Outcome:
 def plain(text: str) -> str:
     """Text without its source numbers and markers, on one line."""
 
-    text = " ".join(UNSOURCED.sub("", CITATION.sub("", MARK_LINE.sub("", text))).split())
+    text = " ".join(strip_citations(MARK_LINE.sub("", text)).split())
     return re.sub(r"\s+([,.;:!?，。；：！？])", r"\1", text)
 
 
@@ -521,12 +521,12 @@ def identified(text: str, citations: Sequence[dict[str, Any]]) -> str:
 
     by_ref = {c["ref"]: passage_identity(c) for c in citations if c.get("ref") is not None}
 
-    def swap(match: re.Match[str]) -> str:
-        label = f"{match.group(1)}:" if match.group(1) else ""
-        found = [int(n) for n in re.findall(r"\d+", match.group(2))]
-        return f"[{label}{','.join(by_ref.get(n, f'?{n}') for n in found)}]"
+    def swap(label: str, refs: list[str], _lead: str) -> str:
+        prefix = f"{label}:" if label else ""
+        found = [int(ref) for ref in refs]
+        return f"[{prefix}{','.join(by_ref.get(n, f'?{n}') for n in found)}]"
 
-    return CITATION.sub(swap, text)
+    return rewrite_citations(text, swap)
 
 
 @dataclass
@@ -685,7 +685,8 @@ def _value(core: str) -> str:
 def figures(text: str) -> list[tuple[str, bool]]:
     """The numbers a text states, as (value, whether a reader would take it as a fact)."""
 
-    cleaned = re.sub(r"(?m)^\s*\d+[.)]\s+", "", MARKS.sub("", text))
+    prose = " ".join(MARKS.sub("", text[a:b]) for a, b in parse_markup(text).prose_ranges())
+    cleaned = re.sub(r"(?m)^\s*\d+[.)]\s+", "", prose)
     found = []
     for match in NUMBER.finditer(cleaned):
         value = _value(match.group(1))
@@ -794,11 +795,7 @@ def _result_text(outcome: Outcome) -> str:
 
 def _cited_titles(part: str, citations: Sequence[dict[str, Any]]) -> set[str]:
     by_ref = {c.get("ref"): c.get("sourceTitle") or c.get("source_title") or "" for c in citations}
-    return {
-        by_ref.get(int(n), "")
-        for match in CITATION.finditer(part)
-        for n in re.findall(r"\d+", match.group(2))
-    } - {""}
+    return {by_ref.get(n, "") for n in citation_numbers(part)} - {""}
 
 
 def _invented(
