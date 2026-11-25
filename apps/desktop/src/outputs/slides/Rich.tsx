@@ -13,12 +13,6 @@ export interface SlideContextValue {
 export const SlideContext = createContext<SlideContextValue>({ numbers: [], sources: [], onCite: undefined });
 export const useSlide = () => useContext(SlideContext);
 
-// A citation: [3], [1, 2], [?] and the Checker's [i:3], [p:3], [d:3].
-const CITATION = /[ \t]+(?=\[(?:[ipd]:)?\d+(?:\s*[,，、]\s*\d+)*\]|\[\?\])/g;
-
-/** The text with the space before each citation made a no-break space, so a number never starts a line of its own. */
-export const tight = (text: string) => text.replace(CITATION, "\u00a0");
-
 /**
  * A piece of the slide's Markdown. AnswerBody draws it, so a citation is a number that opens its
  * evidence. It is drawn again only when its text or the deck's citations change: a chart changes
@@ -27,7 +21,7 @@ export const tight = (text: string) => text.replace(CITATION, "\u00a0");
  */
 export const Rich = memo(function Rich({ text }: { text: string | null | undefined }) {
   const { numbers, onCite } = useSlide();
-  return text ? <AnswerBody content={tight(text)} numbers={numbers} onCitation={onCite} /> : null;
+  return text ? <AnswerBody content={text} numbers={numbers} onCitation={onCite} tightCitations /> : null;
 });
 
 /** The slide's heading, drawn as a Markdown heading is in every slide (an h1 for the title, an h2 for the rest). */

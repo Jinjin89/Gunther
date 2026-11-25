@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 const tauriHost = process.env.TAURI_DEV_HOST;
 const apiProxyTarget =
   process.env.GUNTHER_API_PROXY_TARGET ?? "http://127.0.0.1:8787";
+const startupModules = new WeakMap<object, Set<string>>();
 
 export default defineConfig({
   clearScreen: false,
@@ -42,19 +43,22 @@ export default defineConfig({
     rollupOptions: {
       output: {
         // Vendor code changes rarely; keeping it apart keeps the app chunk small and cacheable.
-        manualChunks(id) {
+        manualChunks(id, graph) {
           if (!id.includes("node_modules")) return undefined;
+          // Follow static imports from the entry points. Let Rollup place modules
+          // reached only through import(), including their transitive dependencies.
+          let startup = startupModules.get(graph);
+          if (!startup) {
+            startup = new Set([...graph.getModuleIds()].filter((moduleId) => graph.getModuleInfo(moduleId)?.isEntry));
+            for (const moduleId of startup) {
+              for (const dependency of graph.getModuleInfo(moduleId)?.importedIds ?? []) startup.add(dependency);
+            }
+            startupModules.set(graph, startup);
+          }
+          if (!startup.has(id)) return undefined;
           if (/[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return "react";
           if (id.includes("lucide-react")) return "icons";
           if (id.includes("@tauri-apps")) return "tauri";
-          // The Markdown editor loads on first use; keep CodeMirror out of the startup chunk.
-          if (/[\\/](@codemirror|@lezer|crelt|style-mod|w3c-keyname)[\\/]/.test(id)) return "editor";
-          // The PDF viewer also loads on first use; left in "vendor", pdf.js would load at every start.
-          if (/[\\/](pdfjs-dist|react-pdf|make-cancellable-promise|make-event-props|merge-refs)[\\/]/.test(id)) return "pdf";
-          // The slide viewer loads when a deck is opened.
-          if (/[\\/](reveal\.js|@revealjs)[\\/]/.test(id)) return "reveal";
-          // So do the slides' charts (visx, and the d3 it is made of).
-          if (/[\\/](@visx|d3-[a-z-]+|internmap)[\\/]/.test(id)) return "charts";
           return "vendor";
         },
       },

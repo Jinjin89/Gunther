@@ -1,6 +1,7 @@
 import type { Artifact, ContentsSource, ConversationCitation } from "@gunther/contracts";
 import { useMemo, useState } from "react";
 import { isWebCitation } from "../components/evidence/citationKind";
+import { proseCitationNumbers } from "../components/evidence/citationMarks";
 import { WebFindActions } from "../components/evidence/WebFindActions";
 import { scopeLabel } from "../outputs/artifactConversations";
 import { splitDesign, splitDocument } from "../outputs/sections";
@@ -23,11 +24,10 @@ export function OutputEvidence({ artifact, sources, partInView, imports, onOpen 
   // Citation marks are part of the output's Markdown format, including checker annotations.
   const part = parts[partInView ?? 0] ?? "";
   const text = artifact.kind === "slides" ? splitDesign(part).text : part;
-  const inPart = new Set([...text.matchAll(/\[(?:[ipd]:)?(\d+(?:\s*[,，、]\s*\d+)*)\]/g)]
-    .flatMap((match) => match[1]!.split(/[,，、]/).map((number) => Number(number.trim()) - 1)));
+  const inPart = useMemo(() => canFilter && onlyPart ? new Set(proseCitationNumbers(text)) : null, [canFilter, onlyPart, text]);
   const groups = new Map<string, { citation: ConversationCitation; indices: number[] }>();
   artifact.citations.forEach((citation, index) => {
-    if (canFilter && onlyPart && !inPart.has(index)) return;
+    if (inPart && !inPart.has(index + 1)) return;
     const key = isWebCitation(citation) ? `url:${citation.url || citation.id}` : `source:${citation.sourceId || citation.id}`;
     const group = groups.get(key);
     if (group) group.indices.push(index);

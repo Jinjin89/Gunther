@@ -2,23 +2,17 @@ import type { AgentStep, ConversationContext, OutputSection, ResearchUsed } from
 import { BookOpen, ChevronRight, CircleAlert, ClipboardCheck, Globe2, Library, ListChecks, LoaderCircle, PenLine } from "lucide-react";
 import { useMemo, useRef } from "react";
 import Markdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { sourceAssetUrl } from "../api";
 import { CitationButton } from "../components/evidence/CitationButton";
-import { withoutMarks } from "../components/evidence/citationMarks";
+import { MarkdownLink, markdownUrlTransform, richComponents } from "../components/markdown/rich/components";
+import { richRemarkPlugins } from "../components/markdown/rich/plugins";
+import { remarkCitations } from "../components/markdown/rich/remarkCitations";
 import type { LiveStep } from "./liveAnswer";
 import { BrandMark } from "../design/BrandMark";
 import type { LiveAnswerState } from "./liveAnswer";
 import { stepResult } from "./stepResult";
 
-const CITATION = /\[(\d+)\]/g;
 const CITE_LINK = /^#cite-(\d+)$/;
-const UNSOURCED = /\[\?\]/g;
 const UNSOURCED_LINK = "#unverified";
-// What the checker adds: [i:3] is an inference from source 3, [p:3] is partly supported by it, [d:3] is disputed by it.
-const INFERENCE_RUN = /\[i:\d+\](?:[ \t]*\[i:\d+\])*/g;
-const DISPUTED_RUN = /\[d:\d+\](?:[ \t]*\[d:\d+\])*/g;
-const PARTLY = /\[p:(\d+)\]/g;
 const INFER_LINK = /^#infer-(\d+(?:-\d+)*)$/;
 const DISPUTED_LINK = /^#disputed-(\d+(?:-\d+)*)$/;
 const PARTLY_LINK = /^#partly-(\d+)-(\d+)$/;
@@ -35,35 +29,7 @@ export function noSourcesNeeded(context: ConversationContext): boolean {
   return !(context.steps?.length);
 }
 
-export { withoutMarks };
-
-/**
- * `[2]` becomes a link to `#cite-2`, so the Markdown renderer can turn it into a button, and
- * `[?]` (a claim from the model's own knowledge that no source backs) a marker. A run of
- * `[i:n]` becomes one "inference" label, `[d:n]` one "disputed" label; `[p:n]` a hollow number that knows its place (`k`)
- * among the partly supported ones, which is where its note is.
- */
-export function withCitationLinks(text: string, numbers: number[]): string {
-  let partly = 0;
-  return text
-    .replace(CITATION, (whole, digits: string) => numbers.includes(Number(digits)) ? `[${digits}](#cite-${digits})` : whole)
-    .replace(INFERENCE_RUN, (run) => {
-      const found = [...run.matchAll(/\d+/g)].map((m) => Number(m[0])).filter((n) => numbers.includes(n));
-      return found.length ? `[inference](#infer-${[...new Set(found)].join("-")})` : run;
-    })
-    .replace(DISPUTED_RUN, (run) => {
-      const found = [...run.matchAll(/\d+/g)].map((m) => Number(m[0])).filter((n) => numbers.includes(n));
-      return found.length ? `[disputed](#disputed-${[...new Set(found)].join("-")})` : run;
-    })
-    .replace(PARTLY, (whole, digits: string) => {
-      const k = partly++;
-      return numbers.includes(Number(digits)) ? `[${digits}](#partly-${digits}-${k})` : whole;
-    })
-    .replace(UNSOURCED, `[?](${UNSOURCED_LINK})`);
-}
-
-const SAFE_WEB = /^https?:\/\//i;
-const RETAINED_IMAGE = /^gunther-asset:([A-Za-z0-9_-]{1,160})$/;
+export { withoutMarks } from "../components/evidence/citationMarks";
 
 export function verificationNotice(coverage: OutputSection["coverage"]): string | undefined {
   if (coverage?.audit?.status === "unavailable") return "Source audit unavailable";
@@ -75,7 +41,15 @@ export function verificationNotice(coverage: OutputSection["coverage"]): string 
 }
 
 /** An answer, as Markdown, with its [n] citations as buttons that open the evidence. */
-export function AnswerBody({ content, numbers, onCitation, supportNotes, coverage }: { content: string; numbers: number[]; onCitation?: ((index: number) => void) | undefined; supportNotes?: string[] | undefined; coverage?: ConversationContext["coverage"] }) {
+export function AnswerBody({ content, numbers, onCitation, supportNotes, coverage, hideCitations = false, tightCitations = false }: {
+  content: string;
+  numbers: number[];
+  onCitation?: ((index: number) => void) | undefined;
+  supportNotes?: string[] | undefined;
+  coverage?: ConversationContext["coverage"];
+  hideCitations?: boolean;
+  tightCitations?: boolean;
+}) {
   const current = useRef({ numbers, onCitation, supportNotes });
   current.current = { numbers, onCitation, supportNotes };
   // Keep the Markdown element types stable when the reader reports focus or scroll changes.
@@ -88,7 +62,10 @@ export function AnswerBody({ content, numbers, onCitation, supportNotes, coverag
         : <span className={className} title={note}>{label}</span>}</sup>;
     };
     return {
-      a({ href, children }) {
+      ...richComponents,
+      a({ node, ...props }) {
+        if (node?.properties.dataCitation !== true) return <MarkdownLink {...props} />;
+        const { href } = props;
         if (href === UNSOURCED_LINK) return <sup className="unverified-mark" title="From the model's own knowledge; no source was found for it">unverified</sup>;
         const infer = href ? INFER_LINK.exec(href) : null;
         if (infer?.[1]) return <span className="inference-mark" title="Follows from these sources; they do not state it">inference · from {infer[1].split("-").map((n) => citation(n))}</span>;
@@ -101,18 +78,13 @@ export function AnswerBody({ content, numbers, onCitation, supportNotes, coverag
         }
         const cite = href ? CITE_LINK.exec(href) : null;
         if (cite?.[1]) return citation(cite[1]);
-        if (href && SAFE_WEB.test(href)) return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
-        return <span>{children}</span>;
-      },
-      img: ({ src, alt }) => {
-        const retained = typeof src === "string" ? RETAINED_IMAGE.exec(src) : null;
-        return retained ? <img src={sourceAssetUrl(retained[1]!)} alt={alt ?? ""} loading="lazy" style={{ maxWidth: "100%", height: "auto" }} /> : null;
+        return <MarkdownLink {...props} />;
       },
     };
   }, []);
   const notice = verificationNotice(coverage);
   return <div className="answer-markdown">
-    <Markdown remarkPlugins={[remarkGfm]} components={components} urlTransform={(url, key) => ((key === "src" && RETAINED_IMAGE.test(url)) || CITE_LINK.test(url) || INFER_LINK.test(url) || DISPUTED_LINK.test(url) || PARTLY_LINK.test(url) || url === UNSOURCED_LINK || SAFE_WEB.test(url) ? url : "")}>{withCitationLinks(content, numbers)}</Markdown>
+    <Markdown remarkPlugins={[...richRemarkPlugins, [remarkCitations, { numbers, hide: hideCitations, tight: tightCitations }]]} components={components} urlTransform={markdownUrlTransform}>{content}</Markdown>
     {notice && <p role="status" className="outputs-flag">{notice}</p>}
   </div>;
 }
@@ -183,7 +155,7 @@ export function LiveAnswer({ state, className = "" }: { state: LiveAnswerState; 
     {state.research && <LiveResearch research={state.research} />}
     <AgentSteps steps={state.steps} />
     {state.text
-      ? <div className="message-body"><AnswerBody content={withoutMarks(state.text)} numbers={[]} /></div>
+      ? <div className="message-body"><AnswerBody content={state.text} numbers={[]} hideCitations /></div>
       : <div className="live-wait"><span><i /><i /><i /></span><small>{state.steps.length ? "Reading what it found…" : "Working out what to look up…"}</small></div>}
   </article>;
 }

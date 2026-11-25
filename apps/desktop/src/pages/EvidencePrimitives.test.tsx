@@ -41,7 +41,7 @@ it("opens the flagged claims and leaves unflagged claims out of the disclosure",
     { tone: "verified", count: 1 }, { tone: "warning", count: 1 },
   ]} claims={[
     { id: "verified", n: 1, text: "A supported finding", refs: [1], verdict: "supported", reason: "" },
-    { id: "partial", n: 2, text: "A qualified finding", refs: [2], verdict: "partly", reason: "Only one condition was measured" },
+    { id: "partial", n: 2, text: "A qualified finding uses `arr[1]` [2].", refs: [2], verdict: "partly", reason: "Only one condition was measured" },
   ]} />);
 
   const summary = screen.getByText("1 of 2 claims verified");
@@ -52,7 +52,9 @@ it("opens the flagged claims and leaves unflagged claims out of the disclosure",
 
   await user.click(summary);
   expect(screen.getByText("Partly supported")).toBeVisible();
-  expect(screen.getByText(/A qualified finding/)).toBeVisible();
+  const finding = screen.getByText(/A qualified finding/);
+  expect(finding).toBeVisible();
+  expect(finding).toHaveTextContent("A qualified finding uses `arr[1]`.");
   expect(reason).toBeVisible();
   expect(screen.queryByText("A supported finding")).not.toBeInTheDocument();
 });

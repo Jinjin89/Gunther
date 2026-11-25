@@ -74,6 +74,12 @@ it("locks a quiz choice, reveals its citations, and tracks and resets the score"
   expect(reader.getByRole("button", { name: "Start again" })).toBeDisabled();
 });
 
+it("preserves inline code in a quiz choice while hiding prose citations", () => {
+  const { reader } = show("## (quiz) Which expression?\n- [x] `arr[1]` [2]\n- [ ] Nothing\nWhy: The index is required [1].");
+  expect(reader.getByRole("button", { name: "`arr[1]`" })).toBeVisible();
+  expect(reader.queryByText(/\[2\]/)).not.toBeInTheDocument();
+});
+
 it("shows every question and answer in the list and returns to practice", async () => {
   const user = userEvent.setup();
   const fixture = documentSections.find((item) => item.shape === "cards")!;

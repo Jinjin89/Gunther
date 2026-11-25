@@ -4,7 +4,7 @@ import { type ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SlideFace } from "../SlideFace";
 import { figureSize } from "./BigNumberSlide";
-import { tight } from "./Rich";
+import { Rich } from "./Rich";
 
 const NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
@@ -407,10 +407,9 @@ describe("a line chart", () => {
 
 describe("the words of a slide", () => {
   it("keep a citation with the word before it", () => {
-    expect(tight("A claim [3] and another [1][2].")).toBe("A claim\u00a0[3] and another\u00a0[1][2].");
-    expect(tight("Not sure [?], partly [p:3], inferred [i:3] and two [1, 2]")).toBe("Not sure\u00a0[?], partly\u00a0[p:3], inferred\u00a0[i:3] and two\u00a0[1, 2]");
-    expect(tight("No citation here, only a [bracket] and [text].")).toBe("No citation here, only a [bracket] and [text].");
-    expect(tight("A  \t [4]")).toBe("A\u00a0[4]");
+    const { container } = render(<Rich text={"A claim [3], partly [p:3], inferred [i:3], and two  \t [1, 2]. [text] `arr [1]`"} />);
+    expect(container.querySelector("p")?.textContent).toBe("A claim\u00a0[3], partly\u00a0[p:3], inferred\u00a0[i:3], and two\u00a0[1, 2]. [text] arr [1]");
+    expect(container.querySelector("code")?.textContent).toBe("arr [1]");
   });
 
   it("are drawn by AnswerBody, so a citation the deck does not have stays as written", () => {

@@ -121,9 +121,11 @@ button.gx-md-task:active { transform: scale(0.88); }
   font-weight: 600;
   letter-spacing: 0.02em;
 }
+.gx-md-code figcaption > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gx-md-code figcaption button {
   width: 24px;
   height: 24px;
+  flex: none;
   display: grid;
   place-items: center;
   border: 0;
@@ -145,7 +147,30 @@ button.gx-md-task:active { transform: scale(0.88); }
   font-size: calc(12.5px * var(--gx-fs, 1));
   line-height: 1.6;
   tab-size: 2;
+  white-space: pre;
 }
+.gx-md-code pre code { font: inherit; white-space: inherit; }
+.gx-md-code code span { color: var(--shiki-light, inherit); }
+@media screen {
+  [data-theme="dark"] .gx-md-code code span { color: var(--shiki-dark, inherit); }
+}
+@media print {
+  #print-root .gx-md-code, #print-root .gx-md-code pre { break-inside: auto; overflow: visible; }
+  #print-root .gx-md-code pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+}
+.gx-md-code-toggle {
+  width: 100%;
+  padding: 7px 12px;
+  border: 0;
+  border-top: 1px solid var(--gx-line);
+  background: transparent;
+  color: var(--gx-muted);
+  font-family: var(--gx-font-sans);
+  font-size: calc(11px * var(--gx-fs, 1));
+  text-align: start;
+}
+.gx-md-code-toggle:hover { background: var(--gx-hover); color: var(--gx-ink); }
+.gx-md-code-toggle:focus-visible { outline-offset: -2px; }
 .gx-md-image { max-width: 100%; height: auto; border-radius: var(--gx-radius-md); border: 1px solid var(--gx-line); }
 .gx-md-image-link {
   padding: 1px 7px;

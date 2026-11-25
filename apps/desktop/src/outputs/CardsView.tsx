@@ -128,7 +128,7 @@ export function CardsView({ artifact, onCite, onAsk, changed, onPart, goTo }: Ca
       <div className="cards-practice">
         <CardTools position={card.position} onAsk={onAsk} changed={changed} />
         <div className="cards-question">
-          <AnswerBody content={`## ${revealed ? card.question : withoutMarks(card.question)}`} {...citations} />
+          <AnswerBody content={`## ${card.question}`} {...citations} hideCitations={!revealed} />
           {card.kind === "flashcard" && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm cards-flip"
             aria-expanded={flipped} onClick={() => setFlipped(!flipped)}>{flipped ? "Hide answer" : "Show answer"}</button>}
         </div>

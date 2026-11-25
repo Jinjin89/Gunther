@@ -1,5 +1,6 @@
 import type { Artifact } from "@gunther/contracts";
 import { createPortal } from "react-dom";
+import { PrintCodeContext } from "../components/markdown/rich/CodeBlock";
 import { outputViews } from "./OutputViews";
 
 const DOCUMENT_PAGE = "@page { size: A4; margin: 18mm 16mm; }";
@@ -10,7 +11,7 @@ export function PrintRoot({ artifact, from = 0, to = Number.POSITIVE_INFINITY }:
   return createPortal(
     <div id="print-root" aria-hidden="true" data-kind={artifact.kind}>
       <style>{pageRule ?? DOCUMENT_PAGE}</style>
-      <Print artifact={artifact} from={from} to={to} />
+      <PrintCodeContext.Provider value={true}><Print artifact={artifact} from={from} to={to} /></PrintCodeContext.Provider>
     </div>,
     document.body,
   );

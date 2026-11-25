@@ -44,6 +44,25 @@ it("includes grouped citation marks and excludes numbers in slide design HTML", 
   expect(screen.queryByRole("button", { name: "Inspect citation 8" })).toBeNull();
 });
 
+it("filters a report section by prose markers, excluding code, math and escaped literals", async () => {
+  const user = userEvent.setup();
+  const content = [
+    "## First",
+    "Prose [2] [p:3]. Inline `arr[4]` and $$x[5]$$. Escaped \\[6\\].",
+    "See https&#58;//example.org and [10].",
+    "~~~\narr[1]\n~~~",
+    "    arr[7]",
+    "$$\nx[8]\n$$",
+    "## Second\nSee https&#58;//example.org and &#91;9&#93;.",
+  ].join("\n\n");
+  const artifact: Artifact = { ...deck, kind: "report", content };
+  const { rerender } = render(<OutputEvidence artifact={artifact} sources={sources} partInView={0} onOpen={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "This section" }));
+  expect(screen.getAllByRole("button", { name: /Inspect citation/ }).map((button) => button.textContent)).toEqual(["[2]", "[3]", "[10]"]);
+  rerender(<OutputEvidence artifact={artifact} sources={sources} partInView={1} onOpen={vi.fn()} />);
+  expect(screen.getAllByRole("button", { name: /Inspect citation/ }).map((button) => button.textContent)).toEqual(["[9]"]);
+});
+
 it("only offers part filtering beyond twelve citations with multiple parts", () => {
   const { rerender } = render(<OutputEvidence artifact={{ ...deck, citations: citations.slice(0, 12) }} sources={sources} partInView={0} onOpen={vi.fn()} />);
   expect(screen.queryByRole("group", { name: "Citation scope" })).toBeNull();

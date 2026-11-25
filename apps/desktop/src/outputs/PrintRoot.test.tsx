@@ -14,6 +14,15 @@ const drawn = () => Array.from(document.querySelectorAll("#print-root .outputs-s
 
 afterEach(cleanup);
 
+it("prints every line of long report code without a toolbar or fold control", () => {
+  const code = Array.from({ length: 55 }, (_, index) => `line ${index + 1}`).join("\n");
+  const artifact: Artifact = { ...deck(`# Report\n\n## Methods\n\n~~~\n${code}\n~~~`), kind: "report" };
+  render(<PrintRoot artifact={artifact} />);
+  const block = document.querySelector("#print-root .gx-md-code");
+  expect(block?.querySelector("pre code")?.textContent).toBe(code);
+  expect(block?.querySelector("figcaption, button")).toBeNull();
+});
+
 it("prints the audio script and static citations with no playback controls", () => {
   const fixture = documentSections.find((item) => item.shape === "audio")!;
   const artifact: Artifact = { ...deck(fixture.content, [], [{ sourceTitle: "Trial log", quote: "Supporting passage." }]), kind: "audio" };

@@ -3,12 +3,15 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { CitationDetails } from "../components/evidence/CitationButton";
-import { AgentSteps, AnswerBody, citationNumbers, withCitationLinks, withoutMarks } from "./AnswerBody";
+import { MarkdownView } from "../components/markdown/MarkdownView";
+import { AgentSteps, AnswerBody, citationNumbers, LiveAnswer } from "./AnswerBody";
 
 describe("AnswerBody", () => {
   it("links only citations that exist", () => {
-    expect(withCitationLinks("A [1] and B [3].", [1, 2])).toBe("A [1](#cite-1) and B [3].");
-    expect(withCitationLinks("A [4] and B [1].", [4, 6])).toBe("A [4](#cite-4) and B [1].");
+    render(<AnswerBody content="A [4] and B [1]." numbers={[4, 6]} onCitation={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Inspect citation 4" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Inspect citation 1" })).toBeNull();
+    expect(screen.getByText(/B \[1\]/)).toBeVisible();
   });
 
   it("renders Markdown with citation buttons that open the evidence", async () => {
@@ -70,46 +73,131 @@ describe("AnswerBody", () => {
     expect(screen.getByText("unverified")).toBeInTheDocument();
   });
 
+  it("leaves citation syntax and spacing in fenced code, inline code and math", () => {
+    const code = "arr[1]  =  arr[7]\n[?]";
+    const content = `A result [1] uses \`arr[1]\` and $$x[1]$$.\n\n~~~python\n${code}\n~~~\n\n$$\nx[1] + y[?]\n\n$$`;
+    const { container } = render(<AnswerBody content={content} numbers={[1]} onCitation={vi.fn()} />);
+    expect(screen.getAllByRole("button", { name: "Inspect citation 1" })).toHaveLength(1);
+    expect(screen.getByText("arr[1]", { selector: "code" })).toBeVisible();
+    const [fence, formula] = container.querySelectorAll("pre code");
+    expect(fence?.textContent).toBe(code);
+    expect(formula?.textContent).toBe("x[1] + y[?]\n");
+    expect(screen.queryByText("unverified")).toBeNull();
+  });
+
+  it("looks at the original spelling of citations in continued Markdown text", () => {
+    const content = [String.raw`> Literal \[1\], \[1], [1\], &#91;1&#93;, \[?\].`, String.raw`>    Actual [1] and \\[2].`].join("\r\n");
+    const { container } = render(<AnswerBody content={content} numbers={[1, 2]} onCitation={vi.fn()} />);
+    expect(container.querySelector("blockquote")?.textContent).toContain("Literal [1], [1], [1], [1], [?].");
+    expect(screen.getAllByRole("button", { name: "Inspect citation 1" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Inspect citation 2" })).toHaveLength(1);
+    expect(screen.queryByText("unverified")).toBeNull();
+  });
+
+  it("renders a citation after a decoded autolink and keeps a positioned escaped literal", () => {
+    const content = String.raw`See https&#58;//example.org and [1]. Literal **\[2\]**.`;
+    render(<AnswerBody content={content} numbers={[1, 2]} onCitation={vi.fn()} />);
+    expect(screen.getByRole("link", { name: "https://example.org" })).toHaveAttribute("href", "https://example.org");
+    expect(screen.getByRole("button", { name: "Inspect citation 1" })).toBeVisible();
+    expect(screen.getByText("[2]", { selector: "strong" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Inspect citation 2" })).toBeNull();
+  });
+
+  it("keeps a long BOM-prefixed open fence unfolded", () => {
+    const body = `${"line\n".repeat(26)}last line`;
+    const { container } = render(<AnswerBody content={`\uFEFF~~~\n${body}`} numbers={[]} />);
+    expect(container.querySelector("pre code")?.textContent).toBe(body);
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+  });
+
   it("hides numbers and marks while an answer is still being written", () => {
-    expect(withoutMarks("A [4] and B [1, 3]. C [?].")).toBe("A and B. C.");
-    expect(withoutMarks("A [i:1] [i:2] and B [p:3] C [d:2].")).toBe("A and B C.");
+    const code = `${"arr[1]\n".repeat(26)}arr[7]`;
+    const { container } = render(<LiveAnswer state={{ steps: [], text: `A [4] and B [1, 3]. C [?].\n\nD [i:1] [i:2] and E [p:3] F [d:2].\n\n\`\`\`python\n${code}` }} />);
+    expect(screen.getByText("A and B. C.")).toBeVisible();
+    expect(screen.getByText("D and E F.")).toBeVisible();
+    expect(container.querySelector("pre code")?.textContent).toBe(code);
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
   });
 
   it("shows a run of inferences as one label naming its sources", async () => {
     const onCitation = vi.fn();
-    expect(withCitationLinks("So [i:1] [i:2] it is. [i:7] stays.", [1, 2])).toBe("So [inference](#infer-1-2) it is. [i:7] stays.");
-    render(<AnswerBody content="Likely so [i:1][i:2]." numbers={[1, 2]} onCitation={onCitation} />);
+    render(<AnswerBody content="Likely so [i:1] [i:2][i:1]. [i:7] stays." numbers={[1, 2]} onCitation={onCitation} />);
     expect(screen.getAllByText(/inference/)).toHaveLength(1);
     await userEvent.click(screen.getByRole("button", { name: "Inspect citation 2" }));
     expect(onCitation).toHaveBeenCalledWith(1);
     expect(screen.getByRole("button", { name: "Inspect citation 1" })).toBeInTheDocument();
+    expect(screen.getByText(/\[i:7\] stays/)).toBeVisible();
   });
 
   it("shows a run of disputes as one label naming the sources that disagree", async () => {
     const onCitation = vi.fn();
-    expect(withCitationLinks("So [d:1] [d:2] it is. [d:7] stays.", [1, 2])).toBe("So [disputed](#disputed-1-2) it is. [d:7] stays.");
-    render(<AnswerBody content="Boils at 100 C [d:1][d:2]." numbers={[1, 2]} onCitation={onCitation} />);
+    render(<AnswerBody content="Boils at 100 C [d:1][d:2]. [d:7] stays." numbers={[1, 2]} onCitation={onCitation} />);
     const label = screen.getByText(/disputed ·/);
     expect(label).toHaveClass("disputed-mark");
     expect(label).toHaveAttribute("title", "Sources disagree with this statement from the model's own knowledge");
     await userEvent.click(screen.getByRole("button", { name: "Inspect citation 2" }));
     expect(onCitation).toHaveBeenCalledWith(1);
+    expect(screen.getByText(/\[d:7\] stays/)).toBeVisible();
   });
 
   it("shows a partly supported claim as a hollow number with what the source leaves out", () => {
-    expect(withCitationLinks("A [p:2]. B [p:1].", [1, 2])).toBe("A [2](#partly-2-0). B [1](#partly-1-1).");
-    render(<AnswerBody content="A [p:2]. B [p:1]." numbers={[1, 2]} onCitation={vi.fn()} supportNotes={["no date"]} />);
-    const [first, second] = screen.getAllByRole("button");
+    render(<AnswerBody content={"A `[p:2]` $$[p:2]$$ **[p:2]**. B [p:1]."} numbers={[1, 2]} onCitation={vi.fn()} supportNotes={["no date"]} />);
+    const [first, second] = screen.getAllByRole("button", { name: /Inspect citation/ });
     expect(first).toHaveClass("is-partly");
     expect(first).toHaveAttribute("title", "Partly supported: no date");
     expect(second).toHaveAttribute("title", "Partly supported");
   });
 
-  it("never loads remote images and only opens web links", () => {
+  it("shows a link chip for a remote image without loading it and blocks unsafe links", () => {
     render(<AnswerBody content={"![x](https://tracker.example/p.png) [site](https://example.org) [bad](javascript:alert(1))"} numbers={[]} />);
     expect(document.querySelector("img")).toBeNull();
+    expect(screen.getByRole("link", { name: "x" })).toHaveClass("gx-md-image-link");
+    expect(screen.getByRole("link", { name: "x" })).toHaveAttribute("href", "https://tracker.example/p.png");
     expect(screen.getByRole("link", { name: "site" })).toHaveAttribute("href", "https://example.org");
     expect(screen.queryByRole("link", { name: "bad" })).toBeNull();
+  });
+
+  it("uses revocable blob URLs for supported embedded images in answers and notes", () => {
+    const createObjectURL = vi.fn().mockReturnValueOnce("blob:answer").mockReturnValueOnce("blob:note");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", class extends URL {
+      static createObjectURL = createObjectURL;
+      static revokeObjectURL = revokeObjectURL;
+    });
+    try {
+      const { unmount } = render(<>
+        <AnswerBody content="![Answer figure](data:image/png;base64,iVBORw0KGgo=)" numbers={[]} />
+        <MarkdownView source="![Note figure](data:image/gif,GIF89a%00%01) ![Unsupported](data:image/svg+xml;base64,PHN2Zy8+)" />
+      </>);
+      expect(screen.getByRole("img", { name: "Answer figure" })).toHaveAttribute("src", "blob:answer");
+      expect(screen.getByRole("img", { name: "Note figure" })).toHaveAttribute("src", "blob:note");
+      expect(screen.queryByRole("img", { name: "Unsupported" })).toBeNull();
+      expect(createObjectURL.mock.calls.map(([blob]) => [blob.type, blob.size])).toEqual([["image/png", 8], ["image/gif", 8]]);
+      unmount();
+      expect(revokeObjectURL.mock.calls).toEqual([["blob:answer"], ["blob:note"]]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps Markdown link labels and ordinary fragment links intact", () => {
+    render(<AnswerBody content="[Details [1]](https://example.org) [Anchor](#cite-1) and [1]." numbers={[1]} onCitation={vi.fn()} />);
+    expect(screen.getByRole("link", { name: "Details [1]" })).toHaveAttribute("href", "https://example.org");
+    expect(screen.getByRole("link", { name: "Anchor" })).toHaveAttribute("href", "#cite-1");
+    expect(screen.getAllByRole("button", { name: "Inspect citation 1" })).toHaveLength(1);
+  });
+
+  it("uses the authored link target when it wraps a remote image", () => {
+    render(<AnswerBody content="[![Chart](https://example.org/chart.png)](https://example.org/study)" numbers={[]} />);
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Chart" })).toHaveAttribute("href", "https://example.org/study");
+    expect(screen.queryByRole("img")).toBeNull();
+  });
+
+  it("renders single dollar signs as currency", () => {
+    render(<AnswerBody content="It costs $5 and $10." numbers={[]} />);
+    expect(screen.getByText("It costs $5 and $10.")).toBeVisible();
+    expect(document.querySelector("code")).toBeNull();
   });
 
   it("renders only managed local figures while retaining the source citation", () => {
