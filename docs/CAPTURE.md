@@ -39,7 +39,7 @@ Clients send PCM in `input_audio_buffer.append` frames stamped with their record
 
 Use the microphone in a supported desktop text field to insert a transcript. Ask's composer also supports its dictation shortcut. macOS global dictation uses Option+Space and copies the result to the clipboard. Dictation uses its own transcription job. [Desktop shortcut registry](../apps/desktop/src/shortcuts/shortcuts.ts)
 
-The global voice panel opens on the display under the pointer, above its usable lower edge. Placement is recalculated in macOS logical points on every opening, so moving between displays with different scales or disconnecting a display keeps the panel visible. Shortcut registration, requests and window updates are recorded in the app log; open it through Settings → Developer → Log files → Show.
+The global voice panel opens on the display under the pointer, above its usable lower edge. Placement is recalculated in macOS logical points on every opening, so moving between displays with different scales or disconnecting a display keeps the panel visible.
 
 The menu-bar G has idle, draft, preparing, recording, paused, review and attention states. Recording shows a red light with elapsed time, and pause uses amber bars. The menu offers the actions for the current state, including Pause, Resume, Mark Moment, Finish and Show Recorder. Settings can show the item only during work. A preference change applies after it is saved. Hiding Capture keeps an active recording going. Quit checks for unsaved or active capture work. [Tray states SVG](CAPTURE_TRAY_STATES.svg) · [Native capture shell](../apps/desktop/src-tauri/src/capture_shell.rs)
 
