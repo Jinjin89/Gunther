@@ -30,7 +30,7 @@ tauri-plugin-single-instance = "2"
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSGeometry", "objc2-core-foundation"] }
 
 [features]
 default = ["custom-protocol"]
@@ -40,5 +40,11 @@ native-smoke = []
 [[test]]
 name = "native_quit_guard"
 path = "tests/native_quit_guard.rs"
+harness = false
+required-features = ["native-smoke"]
+
+[[test]]
+name = "native_dictation_window"
+path = "tests/native_dictation_window.rs"
 harness = false
 required-features = ["native-smoke"]

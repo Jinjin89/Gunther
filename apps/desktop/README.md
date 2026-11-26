@@ -34,6 +34,12 @@ macOS 原生退出保护回归（需要图形桌面；使用独立空白窗口�
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features native-smoke --test native_quit_guard
 ```
 
+macOS 语音浮窗回归（独立空白窗口；验证原生快捷键派发、混合缩放屏幕内的可见位置、重新打开与焦点；不启动后端或麦克风）：
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features native-smoke --test native_dictation_window
+```
+
 原生构建：
 
 ```bash
