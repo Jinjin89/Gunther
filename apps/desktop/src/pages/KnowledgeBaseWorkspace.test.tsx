@@ -6,7 +6,10 @@ import type {
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiRequestError, ServiceUnavailableError, knowledgeApi } from "../api";
+import { kickActivity } from "../activity/events";
+import { activityItem } from "../activity/fixtures";
+import { ActivityProvider } from "../activity/useActivity";
+import { ApiRequestError, ServiceUnavailableError, knowledgeApi, type OutputEvent } from "../api";
 import { forgetAskSkills } from "../components/search/skills";
 import { keyResultsChanged } from "../keyResults/events";
 import { announceModelsChanged, OPEN_SETTINGS_EVENT, WEB_PREFERENCE_KEY, WEB_SEARCH_HINT } from "../models/askModel";
@@ -173,7 +176,9 @@ const readyOverview: LibraryOverview = {
   suggestedQuestions: [suggestedQuestion],
 };
 
-function setup({ artifacts = [], conversations = [] }: { artifacts?: Artifact[]; conversations?: ArtifactConversationDetail[] } = {}) {
+function setup({ artifacts = [], conversations = [], wrapper }: {
+  artifacts?: Artifact[]; conversations?: ArtifactConversationDetail[]; wrapper?: typeof ActivityProvider;
+} = {}) {
   const stored = new Map(conversations.map((item) => [item.id, item]));
   const create = vi.spyOn(knowledgeApi, "createArtifactConversation").mockImplementation(async (_base, payload) => {
     const detail = conversation(payload.id!, { scope: payload.scope ?? libraryScope() });
@@ -199,7 +204,8 @@ function setup({ artifacts = [], conversations = [] }: { artifacts?: Artifact[];
   const onAdd = vi.fn();
   const onNotify = vi.fn();
   const onTrashed = vi.fn();
-  const view = render(<KnowledgeBaseWorkspace base={base} workspaceId={ws} onOpenSource={vi.fn()} onNotify={onNotify} onAdd={onAdd} onTrashed={onTrashed} />);
+  const view = render(<KnowledgeBaseWorkspace base={base} workspaceId={ws} onOpenSource={vi.fn()} onNotify={onNotify} onAdd={onAdd} onTrashed={onTrashed} />,
+    wrapper ? { wrapper } : undefined);
   return { view, create, patch, turn, artifacts, onAdd, onNotify, onTrashed };
 }
 
@@ -475,14 +481,14 @@ describe("Library chats column", () => {
   });
 });
 
-it("renders each catalog icon on its Studio tile", async () => {
+it("renders each catalog icon on its Studio tile and saved row", async () => {
   // Icon names served by the backend's output_types.py catalog.
   const catalog: [OutputType, string][] = [
     [report, "lucide-file-text"],
-    [{ ...report, id: "briefing", label: "Briefing doc", icon: "ClipboardList" }, "lucide-clipboard-list"],
-    [{ ...report, id: "study_guide", label: "Study guide", icon: "BookOpen" }, "lucide-book-open"],
-    [{ ...report, id: "faq", label: "FAQ", icon: "CircleHelp" }, "lucide-circle-question-mark"],
-    [{ ...report, id: "timeline", label: "Timeline", icon: "CalendarDays" }, "lucide-calendar-days"],
+    [{ ...briefing, icon: "ClipboardList" }, "lucide-clipboard-list"],
+    [{ ...guide, icon: "BookOpen" }, "lucide-book-open"],
+    [{ ...report, id: "faq", label: "FAQ", icon: "CircleHelp", legacyStyles: [] }, "lucide-circle-question-mark"],
+    [{ ...report, id: "timeline", label: "Timeline", icon: "CalendarDays", legacyStyles: [] }, "lucide-calendar-days"],
     [slides, "lucide-presentation"],
     [flashcards, "lucide-layers"],
     [quiz, "lucide-list-checks"],
@@ -490,11 +496,18 @@ it("renders each catalog icon on its Studio tile", async () => {
     [audioOverview, "lucide-audio-lines"],
   ];
   vi.mocked(knowledgeApi.outputTypes).mockResolvedValue(catalog.map(([type]) => type));
-  setup();
+  setup({ artifacts: catalog.map(([type]) => version({
+    id: type.id, lineageId: type.id, title: `Saved ${type.label}`, kind: type.shape, format: type.shape,
+    style: type.legacyStyles?.[0] ?? type.id, outputType: type.label,
+  })) });
   const studio = within(screen.getByRole("complementary", { name: "Studio" }));
+  await userEvent.click(await studio.findByText("New output", { selector: "summary" }));
   for (const [type, iconClass] of catalog) {
     const tile = await studio.findByRole("button", { name: type.label });
     expect(tile.querySelector("svg")).toHaveClass(iconClass);
+    const row = studio.getByRole("button", { name: `Saved ${type.label} ${type.label} Version 1` });
+    expect(row.querySelector("svg")).toHaveClass(iconClass);
+    expect(row.querySelector("small [aria-hidden]")).toHaveTextContent("/ v1");
   }
 });
 
@@ -517,10 +530,48 @@ it("shows an unavailable Studio source count until a contents refresh succeeds",
   const studio = within(screen.getByRole("complementary", { name: "Studio" }));
   expect(await studio.findByText("Source count unavailable")).toBeVisible();
   expect(screen.getByText("Sources could not be loaded.")).toBeVisible();
+  expect(await studio.findByRole("button", { name: "Report" })).toBeDisabled();
 
   act(() => window.dispatchEvent(new Event("gunther:sources-updated")));
   expect(await studio.findByText("Building from all 3 sources")).toBeVisible();
   expect(studio.queryByText("Source count unavailable")).not.toBeInTheDocument();
+  expect(studio.getByRole("button", { name: "Report" })).toBeEnabled();
+});
+
+it("preserves the Studio options draft and blocks new builds after a failed source refresh", async () => {
+  const user = userEvent.setup();
+  const { create, turn } = setup();
+  const studio = within(screen.getByRole("complementary", { name: "Studio" }));
+  await studio.findByText("Building from all 3 sources");
+  const tile = await studio.findByRole("button", { name: "Report" });
+  const pencil = studio.getByRole("button", { name: "Report options" });
+  await user.click(pencil);
+  const form = studio.getByRole("form", { name: "Report options" });
+  const focus = within(form).getByRole("textbox", { name: "Focus" });
+  const submit = within(form).getByRole("button", { name: "Build Report" });
+  await user.type(focus, "Compare the field observations");
+
+  const refresh = () => act(() => window.dispatchEvent(new Event("gunther:sources-updated")));
+  vi.mocked(knowledgeApi.contents).mockRejectedValueOnce(new Error("Could not refresh contents"));
+  refresh();
+  expect(await studio.findByText("Source count unavailable")).toBeVisible();
+  expect(tile).toBeDisabled();
+  expect(pencil).toBeDisabled();
+  expect(submit).toBeDisabled();
+  fireEvent.submit(form);
+  expect(create).not.toHaveBeenCalled();
+  expect(turn).not.toHaveBeenCalled();
+
+  refresh();
+  await studio.findByText("Building from all 3 sources");
+  expect(studio.getByRole("textbox", { name: "Focus" })).toBe(focus);
+  expect(focus).toHaveValue("Compare the field observations");
+  expect(tile).toBeEnabled();
+  expect(submit).toBeEnabled();
+  await user.click(submit);
+  await waitFor(() => expect(turn).toHaveBeenCalledExactlyOnceWith(base.id, expect.any(String),
+    expect.objectContaining({ build: { type: "report", scope: libraryScope(), focus: "Compare the field observations" } }),
+    ws, expect.any(Function), expect.any(AbortSignal)));
 });
 
 it("shows empty-library guidance instead of disabled Studio tiles", async () => {
@@ -577,6 +628,25 @@ it("keeps the open Studio options draft when a fourth card arrives", async () =>
   expect(focus).toHaveFocus();
 });
 
+it("retries the selected failed build with its saved options", async () => {
+  const user = userEvent.setup();
+  const failure = (id: string, build: BuildTurnInput) => conversation(id, {
+    lastTurn: { kind: "build", error: "The source could not be read.", build, createdAt: at },
+  });
+  const build: BuildTurnInput = { type: "report", title: "Trial analysis", focus: "Compare trials", length: "short", scope: selected("s3") };
+  const { turn, create } = setup({ conversations: [failure("first", { type: "slides", title: "Field slides" }), failure("second", build)] });
+  const row = await screen.findByRole("button", { name: /Trial analysis .*The source could not be read/ });
+  await user.click(await screen.findByRole("button", { name: "Only Lab notes" }));
+  await user.click(row);
+  expect(row).toHaveAttribute("aria-current", "page");
+  expect(within(screen.getByRole("article", { name: "Open output" })).queryByRole("button", { name: "Stop" })).toBeNull();
+  await user.click(within(row.closest("li")!).getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(turn).toHaveBeenCalledExactlyOnceWith(base.id, "second", {
+    clientRequestId: expect.any(String), kind: "build", build,
+  }, ws, expect.any(Function), expect.any(AbortSignal)));
+  expect(create).not.toHaveBeenCalled();
+});
+
 it("builds an audio overview with the two voices from Studio options", async () => {
   const user = userEvent.setup();
   vi.mocked(knowledgeApi.outputTypes).mockResolvedValue([audioOverview]);
@@ -603,7 +673,7 @@ async function openAudio(user: ReturnType<typeof userEvent.setup>, status: Artif
   return { artifacts, saved, reader };
 }
 
-it("follows the recording timings, seeks on line clicks, and opens citations without seeking", async () => {
+it("follows the recording timings, seeks from timestamps, and opens citations without seeking", async () => {
   const user = userEvent.setup();
   const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
   const { reader } = await openAudio(user);
@@ -614,6 +684,8 @@ it("follows the recording timings, seeks on line clicks, and opens citations wit
   fireEvent.timeUpdate(audio);
   expect(lines[1]).toHaveAttribute("aria-current", "true");
   await user.click(reader.getByText("When was the trial?"));
+  expect(audio.currentTime).toBe(1.5);
+  await user.click(reader.getByRole("button", { name: /^Play line 1, Speaker A/ }));
   expect(audio.currentTime).toBe(0);
   expect(lines[0]).toHaveAttribute("aria-current", "true");
   expect(play).toHaveBeenCalledTimes(1);
@@ -674,10 +746,174 @@ it("retries and changes voices on the same version while the recording stage sta
   expect(await reader.findByLabelText("Audio overview recording")).toHaveAttribute("src", expect.stringContaining("/api/assets/wav-2"));
 });
 
+it("reselects the recording's version from the running Studio row after switching versions", async () => {
+  const user = userEvent.setup();
+  vi.mocked(knowledgeApi.outputTypes).mockResolvedValue([audioOverview]);
+  const earlier = audioVersion();
+  const latest = { ...audioVersion("error"), id: "version-2", versionNumber: 2, supersedesArtifactId: earlier.id,
+    content: earlier.content.replace("When was the trial?", "When was the follow-up?") };
+  let finish!: () => void;
+  const recording = vi.spyOn(knowledgeApi, "retryAudioStream").mockImplementation((_base, _id, _payload, _ws, hear) => new Promise((resolve) => {
+    hear({ type: "stage", id: "audio", label: "Recording audio", state: "running" });
+    finish = () => resolve(latest);
+  }));
+  const { view, onAdd, onNotify, onTrashed } = setup({ artifacts: [earlier, latest] });
+  view.rerender(<KnowledgeBaseWorkspace base={base} workspaceId={ws} onOpenSource={vi.fn()} onNotify={onNotify}
+    onAdd={onAdd} onTrashed={onTrashed} outputActivity={{ view: "library", libraryId: base.id, tab: "outputs",
+      conversationId: latest.conversationId ?? null, lineageId: latest.lineageId, artifactId: latest.id }} />);
+
+  const reader = within(await screen.findByRole("article", { name: "Open output" }));
+  expect(await reader.findByText("When was the follow-up?")).toBeVisible();
+  await user.click(reader.getByRole("button", { name: "Retry audio" }));
+  expect(recording).toHaveBeenCalledExactlyOnceWith(base.id, latest.id, {}, ws, expect.any(Function), expect.any(AbortSignal));
+  await user.click(reader.getByRole("button", { name: "Output actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "Versions" }));
+  await user.click(reader.getByRole("button", { name: "Version 1" }));
+  expect(await reader.findByText("When was the trial?")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: /Field interview .*Recording audio/ }));
+
+  const reopened = within(screen.getByRole("article", { name: "Open output" }));
+  expect(await reopened.findByText("When was the follow-up?")).toBeVisible();
+  expect(reopened.getByText("Version 2")).toBeVisible();
+  expect(reopened.getByRole("button", { name: "Stop" })).toBeEnabled();
+  await act(async () => finish());
+});
+
+it("reopens and stops a recording on its earlier saved version from the running Studio row", async () => {
+  const user = userEvent.setup();
+  vi.mocked(knowledgeApi.outputTypes).mockResolvedValue([audioOverview]);
+  const earlier = audioVersion("error");
+  const latest = { ...audioVersion(), id: "version-2", versionNumber: 2, supersedesArtifactId: earlier.id,
+    content: earlier.content.replace("When was the trial?", "When was the follow-up?") };
+  const stop = vi.spyOn(knowledgeApi, "stopArtifactTurn").mockResolvedValue(undefined);
+  let finish!: () => void;
+  const recording = vi.spyOn(knowledgeApi, "retryAudioStream").mockImplementation((_base, _id, _payload, _ws, hear) => new Promise((resolve) => {
+    hear({ type: "stage", id: "audio", label: "Recording audio", state: "running", detail: "line 2 of 2" });
+    finish = () => resolve(earlier);
+  }));
+  setup({ artifacts: [earlier, latest] });
+  await user.click(await screen.findByRole("button", { name: /Field interview Audio overview Version 2/ }));
+  await user.click(await screen.findByRole("button", { name: "Output actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "Versions" }));
+  await user.click(screen.getByRole("button", { name: "Version 1" }));
+  await user.click(await screen.findByRole("button", { name: "Retry audio" }));
+  expect(recording).toHaveBeenCalledExactlyOnceWith(base.id, earlier.id, {}, ws, expect.any(Function), expect.any(AbortSignal));
+
+  await user.click(screen.getByRole("button", { name: "Back to chat" }));
+  await user.click(await screen.findByRole("button", { name: /Field interview .*Recording audio · line 2 of 2/ }));
+  const reader = within(screen.getByRole("article", { name: "Open output" }));
+  expect(await reader.findByText("When was the trial?")).toBeVisible();
+  expect(reader.getByText("Version 1")).toBeVisible();
+  expect(reader.getByRole("status")).toHaveTextContent("Recording audio · line 2 of 2");
+  await user.click(reader.getByRole("button", { name: "Stop" }));
+  expect(stop).toHaveBeenCalledExactlyOnceWith(base.id, earlier.conversationId, ws);
+  await act(async () => finish());
+  expect(reader.getByText("Version 1")).toBeVisible();
+});
+
+it("uses Activity's version and lineage when reconnecting to a run in a shared output conversation", async () => {
+  const user = userEvent.setup();
+  vi.mocked(knowledgeApi.outputTypes).mockResolvedValue([report, audioOverview]);
+  const first = version({ id: "report-v1", lineageId: "report-lineage" });
+  const earlier = audioVersion("pending");
+  const latest = { ...audioVersion(), id: "version-2", versionNumber: 2, supersedesArtifactId: earlier.id,
+    content: earlier.content.replace("When was the trial?", "When was the follow-up?") };
+  vi.spyOn(knowledgeApi, "activity").mockResolvedValue({ version: 1, items: [activityItem({
+    id: `output-conv:${earlier.conversationId}`, kind: "output", title: "Resuming the recording", detail: "Waiting for progress",
+    open: { view: "library", tab: "outputs", libraryId: base.id, conversationId: earlier.conversationId ?? null,
+      typeId: audioOverview.id, lineageId: earlier.lineageId, artifactId: earlier.id },
+  })] });
+  const stop = vi.spyOn(knowledgeApi, "stopArtifactTurn").mockResolvedValue(undefined);
+  setup({ artifacts: [first, earlier, latest], wrapper: ActivityProvider });
+  let finish!: () => void;
+  vi.mocked(knowledgeApi.followArtifactTurn).mockImplementation((_base, _id, _ws, hear) => new Promise((resolve) => {
+    hear({ type: "stage", id: "audio", label: "Recording audio", state: "running", detail: "line 2 of 2" });
+    finish = () => resolve(null);
+  }));
+
+  await user.click(await screen.findByRole("button", { name: /Field interview .*Waiting for progress/ }));
+  const running = await screen.findByRole("button", { name: /Field interview .*Recording audio · line 2 of 2/ });
+  expect(running).toHaveAttribute("aria-current", "page");
+  expect(screen.getByRole("button", { name: /Field findings Report Version 1/ })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Back to chat" }));
+  await user.click(running);
+  const reader = within(screen.getByRole("article", { name: "Open output" }));
+  expect(await reader.findByText("When was the trial?")).toBeVisible();
+  expect(reader.getByText("Version 1")).toBeVisible();
+  expect(reader.getByRole("status")).toHaveTextContent("Recording audio · line 2 of 2");
+  await user.click(reader.getByRole("button", { name: "Stop" }));
+  expect(stop).toHaveBeenCalledExactlyOnceWith(base.id, earlier.conversationId, ws);
+  await act(async () => finish());
+});
+
+it.each(["started here", "reconnected", "stream disconnects"])("shows the review saved by a reopened running Studio row (%s)", async (mode) => {
+  const user = userEvent.setup();
+  const deck = version({ kind: "slides", format: "slides", style: "slides", outputType: "Slides", title: "Field deck",
+    content: "# First slide", outline: [{ id: "cover", heading: "First slide", goal: "Introduce the findings" }] });
+  const reviewed = version({ ...deck, id: "version-2", versionNumber: 2, supersedesArtifactId: deck.id, origin: "revise",
+    provenance: { ...deck.provenance, skill: { name: "slides", version: 1, skipped: [], visualReview: {
+      version: 1, status: "needs_review", candidateHash: deck.contentHash, imageReview: "reviewed", calls: 1, repairCycles: 0,
+      repairedSlides: [], history: [], findings: [{ slideId: "cover", blockId: null, severity: "error", route: "layout",
+        problem: "Labels are too small", correction: "Give the labels more room." }],
+    } } },
+  });
+  const open = { view: "library", tab: "outputs", libraryId: base.id, conversationId: deck.conversationId ?? null,
+    lineageId: deck.lineageId, typeId: slides.id, artifactId: deck.id } as const;
+  const stage = "Reviewing rendered slides";
+  const running = activityItem({ id: `output-conv:${deck.conversationId}`, kind: "output", title: stage, detail: stage, open });
+  const activity = vi.spyOn(knowledgeApi, "activity").mockResolvedValue({ version: 1, items: mode === "reconnected" ? [running] : [] });
+  const withActivity = mode !== "started here";
+  const { artifacts } = setup({ artifacts: [deck], ...(withActivity ? { wrapper: ActivityProvider } : {}) });
+  let finish!: (saved: Artifact) => void;
+  let disconnect!: (reason: Error) => void;
+  const runReview = (hear: (event: OutputEvent) => void) => new Promise<Artifact>((resolve, reject) => {
+    hear({ type: "stage", id: "visual_review", label: stage, state: "running" });
+    finish = resolve;
+    disconnect = reject;
+  });
+  if (mode !== "reconnected") {
+    const review = vi.spyOn(knowledgeApi, "reviewSlidesStream").mockImplementation((_base, _id, _payload, _ws, hear) => runReview(hear));
+    await user.click(await screen.findByRole("button", { name: /Field deck Slides Version 1/ }));
+    await user.click(await screen.findByRole("button", { name: "Review rendered slides" }));
+    expect(review).toHaveBeenCalledExactlyOnceWith(base.id, deck.id, { clientRequestId: expect.any(String) }, ws,
+      expect.any(Function), expect.any(AbortSignal));
+    if (mode === "stream disconnects") {
+      await act(async () => {
+        activity.mockResolvedValue({ version: 2, items: [running] });
+        kickActivity();
+      });
+    }
+  } else {
+    vi.mocked(knowledgeApi.followArtifactTurn).mockImplementation((_base, _id, _ws, hear) => runReview(hear));
+    await user.click(await screen.findByRole("button", { name: /Field deck .*Reviewing rendered slides/ }));
+  }
+  await user.click(screen.getByRole("button", { name: "Back to chat" }));
+  await user.click(await screen.findByRole("button", { name: /Field deck .*Reviewing rendered slides/ }));
+  const reader = within(screen.getByRole("article", { name: "Open output" }));
+  expect(await reader.findByRole("button", { name: "Review rendered slides" })).toBeDisabled();
+  expect(reader.getByRole("button", { name: "Stop" })).toBeEnabled();
+
+  if (mode === "stream disconnects") {
+    await act(async () => disconnect(new Error("Review stream disconnected")));
+    expect(reader.getByRole("alert")).toHaveTextContent("Review stream disconnected");
+  }
+  await act(async () => {
+    artifacts.push(reviewed);
+    if (mode !== "stream disconnects") finish(reviewed);
+    if (withActivity) {
+      activity.mockResolvedValue({ version: 3, items: [{ ...running, state: "done", endedAt: at,
+        open: { ...open, artifactId: reviewed.id } }] });
+      kickActivity();
+    }
+  });
+  await user.click(await screen.findByRole("button", { name: "Slides need visual review" }));
+  expect(screen.getByText("Slide 1: Labels are too small")).toBeVisible();
+});
+
 it("opens the saved script during a first recording and loads the WAV once it finishes", async () => {
   const user = userEvent.setup();
   vi.mocked(knowledgeApi.outputTypes).mockResolvedValue([audioOverview]);
-  const { artifacts, turn } = setup();
+  const { artifacts, create, turn } = setup();
   let start!: () => void;
   let finish!: () => void;
   turn.mockImplementation((_base, id, _payload, _ws, hear) => new Promise((resolve) => {
@@ -698,10 +934,16 @@ it("opens the saved script during a first recording and loads the WAV once it fi
   await waitFor(() => expect(turn).toHaveBeenCalledTimes(1));
   await user.click(tile);
   act(start);
+  expect(await screen.findByRole("region", { name: "Audio overview" })).toBeVisible();
+  expect(await screen.findByRole("button", { name: /Field interview .*Recording audio · line 1 of 2/ })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Back to chat" }));
+  await user.click(tile);
   const reader = within(await screen.findByRole("region", { name: "Audio overview" }));
   expect(within(screen.getByRole("article", { name: "Open output" })).getByRole("status")).toHaveTextContent("Recording audio · line 1 of 2");
   expect(reader.getByText("When was the trial?")).toBeVisible();
   expect(reader.queryByLabelText("Audio overview recording")).toBeNull();
+  expect(create).toHaveBeenCalledTimes(1);
+  expect(turn).toHaveBeenCalledTimes(1);
   act(finish);
   expect(await reader.findByLabelText("Audio overview recording")).toHaveAttribute("src", expect.stringContaining("/api/assets/wav-1"));
 });
@@ -1216,16 +1458,23 @@ it("changes the selected answer without switching tabs and clears its old detail
 
 it("keeps Evidence selected when an output opens from Activity", async () => {
   const user = userEvent.setup();
-  const { view, onAdd, onNotify, onTrashed } = setup({ artifacts: [version()] });
+  const previous = version();
+  const latest = version({ id: "version-2", versionNumber: 2, supersedesArtifactId: previous.id });
+  const other = version({ id: "other-version", lineageId: "other-lineage", title: "Other findings" });
+  const { view, onAdd, onNotify, onTrashed } = setup({ artifacts: [previous, latest, other] });
   await user.click(await screen.findByRole("tab", { name: "Evidence (0)" }));
   view.rerender(<KnowledgeBaseWorkspace base={base} workspaceId={ws} onOpenSource={vi.fn()} onNotify={onNotify}
-    onAdd={onAdd} onTrashed={onTrashed} outputActivity={{ view: "library", libraryId: base.id, tab: "outputs", artifactId: "version-1" }} />);
+    onAdd={onAdd} onTrashed={onTrashed} outputActivity={{ view: "library", libraryId: base.id, tab: "outputs", artifactId: previous.id }} />);
   expect(await screen.findByRole("article", { name: "Open output" })).toBeVisible();
   expect(screen.getByRole("tab", { name: "Evidence (0)" })).toHaveAttribute("aria-selected", "true");
   await waitFor(() => {
     const evidence = within(screen.getByRole("tabpanel", { name: "Evidence" }));
     expect(evidence.getByText("Nothing cited", { exact: true })).toBeVisible();
   });
+  await user.click(screen.getByRole("tab", { name: "Studio" }));
+  const studio = within(screen.getByRole("complementary", { name: "Studio" }));
+  const selected = studio.getByRole("button", { name: /Field findings Report Version 2/ });
+  expect(studio.getAllByRole("button", { current: "page" })).toEqual([selected]);
 });
 
 it("refreshes read-time library links in an open output and its citation detail after Trash", async () => {
@@ -1704,7 +1953,7 @@ it("opens card evidence and shows a refined card in the new version", async () =
     focus: { section: 2, selected: true }, targetLineageId: saved.lineageId,
   }), ws, expect.any(Function), expect.any(AbortSignal));
   expect(await screen.findByRole("heading", { name: "At what time were readings recorded?" })).toBeVisible();
-  expect(reader().getByText("2 / 2")).toBeVisible();
+  expect(reader().getByText("2 of 2")).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: "Output actions" }));
   await user.click(screen.getByRole("menuitem", { name: "Versions" }));
@@ -1933,6 +2182,7 @@ it("updates Key results when the selected sources change", async () => {
 it("starts a new tile build with type options and reopens its running card from the tile", async () => {
   const user = userEvent.setup();
   const { artifacts, create, turn } = setup();
+  const stop = vi.spyOn(knowledgeApi, "stopArtifactTurn").mockResolvedValue(undefined);
   let complete!: (result: ArtifactTurnOut) => void;
   const finished = new Promise<ArtifactTurnOut>((resolve) => { complete = resolve; });
   turn.mockImplementation(async (_base, _id, _input, _ws, hear) => {
@@ -1948,7 +2198,8 @@ it("starts a new tile build with type options and reopens its running card from 
   await user.selectOptions(within(options).getByRole("combobox", { name: "Length" }), "short");
   expect(within(options).queryByRole("combobox", { name: "Use" })).toBeNull();
   await user.click(within(options).getByRole("button", { name: "Build Report" }));
-  await screen.findByRole("button", { name: /Writing the report · 3 of 8/ });
+  const runningCard = await screen.findByRole("button", { name: /Writing the report · 3 of 8/ });
+  expect(within(runningCard.closest("li")!).queryByRole("button", { name: /Retry|Actions for/ })).toBeNull();
   const id = create.mock.calls[0]![1].id!;
   const scope = selected("s1", "s2");
   expect(create).toHaveBeenCalledExactlyOnceWith(base.id, { id, scope }, ws);
@@ -1958,11 +2209,18 @@ it("starts a new tile build with type options and reopens its running card from 
 
   await user.click(screen.getByRole("button", { name: "Report" }));
   expect(within(screen.getByRole("article", { name: "Open output" })).getByRole("status")).toHaveTextContent("Writing the report · 3 of 8");
+  expect(runningCard).toHaveAttribute("aria-current", "page");
   expect(create).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Back to chat" }));
+  expect(runningCard).not.toHaveAttribute("aria-current");
+  await user.click(runningCard);
+  await user.click(within(screen.getByRole("article", { name: "Open output" })).getByRole("button", { name: "Stop" }));
+  expect(stop).toHaveBeenCalledExactlyOnceWith(base.id, id, ws);
   const saved = version({ conversationId: id, scope });
   artifacts.push(saved);
   await act(async () => complete(done(saved)));
   expect(await screen.findByRole("heading", { name: saved.title })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Field findings Report Version 1/ })).toHaveAttribute("aria-current", "page");
 });
 
 it("uses the shared Tavily availability and sends Web only for opted-in Studio forms", async () => {

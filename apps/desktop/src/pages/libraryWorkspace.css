@@ -102,7 +102,7 @@
 .library-reading .gx-paper-card { margin-top: 20px; }
 
 .studio-column { height: 100%; padding: 0 12px 12px; overflow: auto; scrollbar-width: thin; }
-.studio-scope { margin: 10px 0; overflow: hidden; color: var(--gx-muted); font-size: var(--gx-text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.studio-scope { margin: 10px 0; color: var(--gx-muted); font-size: var(--gx-text-xs); overflow-wrap: anywhere; }
 .studio-new > summary { padding: 6px 0; color: var(--gx-muted); font-size: var(--gx-text-xs); cursor: pointer; }
 .studio-column [role="alert"] { color: var(--gx-danger); font-size: var(--gx-text-xs); }
 .studio-model-note { margin-bottom: 12px; font-size: var(--gx-text-sm); }
@@ -133,14 +133,16 @@
 }
 .studio-tile > button:first-child:hover:not(:disabled), .studio-card-open:hover { background: var(--gx-hover); }
 .studio-tile > button:first-child:disabled { color: var(--gx-faint); cursor: default; }
-.studio-tile > .gx-icon-button { width: 23px; height: 26px; margin: 6px 2px 0 -4px; opacity: 0; }
-.studio-tile:hover > .gx-icon-button, .studio-tile:focus-within > .gx-icon-button, .studio-tile > .gx-icon-button[aria-expanded="true"] { opacity: 1; }
+.studio-tile > button:first-child > svg { flex: none; }
+.studio-tile > button:first-child > span { min-width: 0; overflow-wrap: anywhere; }
+.studio-tile > .gx-icon-button { width: 23px; height: 26px; margin: 6px 2px 0 -4px; }
 .studio-popover { position: relative; z-index: 5; }
 .studio-options {
   position: absolute;
   top: 6px;
   width: 100%;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   padding: 10px;
   border: 1px solid var(--gx-line-2);
@@ -160,6 +162,7 @@
   color: var(--gx-ink);
   font: inherit;
 }
+.studio-options :is(input, select, textarea) { min-width: 0; }
 .studio-options .studio-web-switch, .output-refine .studio-web-switch { display: flex; align-items: center; gap: 6px; width: fit-content; }
 .studio-web-switch input { accent-color: var(--gx-ink); }
 .studio-web-switch:has(:disabled) { color: var(--gx-muted); }
@@ -167,26 +170,45 @@
 .studio-options > button, .output-refine > button { justify-self: start; }
 .studio-cards { margin: 14px 0 0; padding: 0; list-style: none; border-top: 1px solid var(--gx-line); }
 .studio-cards:empty { display: none; }
-.studio-cards > li { display: flex; align-items: center; gap: 4px; padding: 4px; border-bottom: 1px solid var(--gx-line); background: var(--gx-surface); }
+.studio-cards > li {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding-inline-end: 12px;
+  border-block-end: 1px solid var(--gx-line);
+  border-inline-start: 2px solid transparent;
+  background: var(--gx-surface);
+}
+.studio-cards > li:has(.studio-card-open[aria-current]) { border-inline-start-color: var(--gx-ink); }
+.studio-cards > li > :is(.contents-menu, .gx-btn) { flex: none; margin-block-start: 4px; }
 .studio-card-open {
   flex: 1;
   display: flex;
   align-items: flex-start;
   gap: 8px;
   min-width: 0;
-  padding: 8px 4px;
+  padding-block: 8px;
+  padding-inline: 10px 0;
   border: 0;
   border-radius: var(--gx-radius-sm);
   background: transparent;
   color: var(--gx-ink);
   font: inherit;
-  text-align: left;
+  text-align: start;
+  cursor: pointer;
 }
-.studio-card-open > svg { flex: none; color: var(--gx-muted); }
-.studio-card-open > span { display: grid; min-width: 0; gap: 3px; overflow-wrap: anywhere; }
-.studio-card-open strong { font-size: var(--gx-text-sm); font-weight: 580; }
+.studio-card-open > svg { flex: none; margin-block-start: 1px; color: var(--gx-muted); }
+.studio-card-open > span { display: grid; min-width: 0; gap: 2px; line-height: 1.3; overflow-wrap: anywhere; }
+.studio-card-open strong { font-size: var(--gx-text-md); font-weight: 600; }
 .studio-card-open small { color: var(--gx-muted); font-size: var(--gx-text-xs); }
 .studio-card-open small.is-failed, .output-error { color: var(--gx-danger); }
+@media not (any-pointer: coarse) {
+  .studio-tile:not(:hover, :focus-within) > .gx-icon-button:not([aria-expanded="true"]),
+  .studio-cards > li:not(:hover, :focus-within) > .contents-menu > button:not([aria-expanded="true"]) {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
 
 .output-run, .output-scope { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: var(--gx-text-xs); }
 .output-versions { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; padding: 0; list-style: none; }

@@ -209,14 +209,31 @@ describe("source pages", () => {
       content: "# Cell biology lecture\n\nDuration: 00:42:10 · Captured: today · Local recording: rec_0123456789abcdef01234567\n\n## Marked moments\n\n- 00:03:05 · Definition\n\n## Summary\n\nMarkers identify **cell types**.\n\n## Key points\n\n- Context matters\n\n## Full transcript\n\n[00:00:01] Welcome back.\n[00:00:09] Today: markers.",
     }));
     const user = userEvent.setup();
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
     const { container } = renderPage();
     expect(await screen.findByRole("button", { name: "Play" })).toBeVisible();
-    expect(container.querySelector("audio")).toHaveAttribute("src", "/api/recordings/rec_0123456789abcdef01234567");
-    expect(screen.getByRole("button", { name: /3:05\s*Definition/ })).toBeVisible();
+    const audio = container.querySelector("audio")!;
+    expect(audio).toHaveAttribute("src", "/api/recordings/rec_0123456789abcdef01234567");
+    const download = screen.getByRole("link", { name: "Download the original audio" });
+    expect(download).toHaveAttribute("href", audio.getAttribute("src"));
+    expect(download).toHaveAttribute("download", "Cell biology lecture.webm");
+    await user.click(screen.getByRole("button", { name: "Jump to 3:05: Definition" }));
+    expect(audio.currentTime).toBe(185);
+    expect(play).toHaveBeenCalledOnce();
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    expect(audio.currentTime).toBe(180);
+    await user.click(screen.getByRole("button", { name: /3:05\s*Definition/ }));
+    expect(audio.currentTime).toBe(185);
+    fireEvent.keyDown(window, { key: " " });
+    expect(play).toHaveBeenCalledTimes(3);
+    await user.click(screen.getByRole("button", { name: "Playback speed 1×" }));
+    expect(audio.playbackRate).toBe(1.25);
     expect(screen.getByText("cell types").tagName).toBe("STRONG");
     expect(screen.getByText("Context matters")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Transcript" }));
-    expect(screen.getByRole("button", { name: "Play from 0:09" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Play from 0:09" }));
+    expect(audio.currentTime).toBe(9);
+    expect(play).toHaveBeenCalledTimes(4);
     await user.type(screen.getByRole("textbox", { name: "Find in transcript" }), "markers");
     expect(screen.getByText("1 passage")).toBeVisible();
     expect(screen.queryByText("Welcome back.")).not.toBeInTheDocument();
@@ -236,6 +253,36 @@ describe("source pages", () => {
     expect(await screen.findByText(trailing)).toBeVisible();
     expect(container.querySelector("audio")).toHaveAttribute("src", `/api/recordings/${recordingId}`);
     expect(screen.getByRole("slider", { name: "Position" })).toHaveAttribute("max", "42");
+  });
+
+  it("disables transcript playback with a reason when the original recording is missing", async () => {
+    api.source.mockResolvedValue(source({
+      kind: "recording",
+      recordingId: null,
+      content: "# Lecture\n\n## Transcript\n\n[00:09] The saved transcript is still readable.",
+    }));
+    renderPage();
+    const timestamp = await screen.findByRole("button", { name: "Play from 0:09" });
+    expect(timestamp).toBeDisabled();
+    expect(timestamp).toHaveAccessibleDescription(/The audio for this recording isn’t attached/);
+    expect(screen.getByText("The saved transcript is still readable.")).toBeVisible();
+  });
+
+  it("lets a recording item retry Play after a browser refusal", async () => {
+    api.source.mockResolvedValue(source({ kind: "recording", recordingId: "rec_0123456789abcdef01234567" }));
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play")
+      .mockRejectedValueOnce(new DOMException("Playback requires permission.", "NotAllowedError"))
+      .mockResolvedValue();
+    const { container } = renderPage();
+    const control = await screen.findByRole("button", { name: "Play" });
+    const audio = container.querySelector("audio");
+    fireEvent.click(control);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Playback requires permission.");
+    expect(control).toBeEnabled();
+    fireEvent.click(control);
+    expect(play).toHaveBeenCalledTimes(2);
+    expect(container.querySelector("audio")).toBe(audio);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it.each([false, true])("refreshes measured recording duration (legacy %s)", async (legacy) => {

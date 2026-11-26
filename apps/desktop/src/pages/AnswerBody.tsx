@@ -1,5 +1,6 @@
 import type { AgentStep, ConversationContext, OutputSection, ResearchUsed } from "@gunther/contracts";
 import { BookOpen, ChevronRight, CircleAlert, ClipboardCheck, Globe2, Library, ListChecks, LoaderCircle, PenLine } from "lucide-react";
+import type { Root } from "mdast";
 import { useMemo, useRef, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import { CitationButton } from "../components/evidence/CitationButton";
@@ -40,8 +41,20 @@ export function verificationNotice(coverage: OutputSection["coverage"]): string 
   }
 }
 
+// A nonbreaking space starts a paragraph while preserving inline delimiter boundaries.
+// Remove it after the citation pass has used the parser's source offsets.
+const INLINE_BOUNDARY = "\u00a0";
+
+function remarkInlineMarkdown() {
+  return (tree: Root) => {
+    const paragraph = tree.children[0];
+    const first = paragraph?.type === "paragraph" ? paragraph.children[0] : undefined;
+    if (first?.type === "text" && first.value.startsWith(INLINE_BOUNDARY)) first.value = first.value.slice(INLINE_BOUNDARY.length);
+  };
+}
+
 /** An answer, as Markdown, with its [n] citations as buttons that open the evidence. */
-export function AnswerBody({ content, numbers, onCitation, supportNotes, coverage, hideCitations = false, tightCitations = false, table }: {
+export function AnswerBody({ content, numbers, onCitation, supportNotes, coverage, hideCitations = false, tightCitations = false, inline = false, table }: {
   content: string;
   numbers: number[];
   onCitation?: ((index: number) => void) | undefined;
@@ -49,6 +62,7 @@ export function AnswerBody({ content, numbers, onCitation, supportNotes, coverag
   coverage?: ConversationContext["coverage"];
   hideCitations?: boolean;
   tightCitations?: boolean;
+  inline?: boolean;
   table?: Components["table"];
 }) {
   const current = useRef({ numbers, onCitation, supportNotes });
@@ -92,7 +106,11 @@ export function AnswerBody({ content, numbers, onCitation, supportNotes, coverag
   }, [table]);
   const notice = verificationNotice(coverage);
   return <div className="answer-markdown">
-    <Markdown remarkPlugins={[...richRemarkPlugins, [remarkCitations, { numbers, hide: hideCitations, tight: tightCitations }]]} components={components} urlTransform={markdownUrlTransform}>{content}</Markdown>
+    <Markdown remarkPlugins={[
+      ...richRemarkPlugins,
+      [remarkCitations, { numbers, hide: hideCitations, tight: tightCitations }],
+      ...(inline ? [remarkInlineMarkdown] : []),
+    ]} components={components} urlTransform={markdownUrlTransform}>{inline ? INLINE_BOUNDARY + content : content}</Markdown>
     {notice && <p role="status" className="outputs-flag">{notice}</p>}
   </div>;
 }

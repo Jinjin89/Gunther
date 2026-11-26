@@ -27,6 +27,8 @@ Choose tokens from the CSS when adding surfaces. Use `--gx-hover` and `--gx-acti
 
 The Library workspace uses `--gx-sidebar` for Library, `--gx-canvas` for the middle, and `--gx-surface-2` with `--gx-surface` cards for Inspector. Their 44 px headers share a hairline; Chat uses neutral ink and focus treatments.
 
+Studio rows use a 16 px catalog icon, a 14 px semibold title and 12 px details. Titles and details wrap as the Inspector resizes. The current row has a 2 px ink rule. Row menus appear on hover or keyboard focus and stay visible on touch. [Studio outputs](OUTPUTS.md#conversations-and-versions)
+
 Studio document readers use local Source Serif 4 for reading and Inter for controls. The controls honor the Serif and Rounded appearance choices. The title, reading and footer align to a centered column up to 66 characters wide, capped at the content width token. Verified exhibits can use the wider content area, and the map can use the middle pane. Heading size and Edit layout respond to the middle pane's available width. Citation numbers keep a visible keyboard focus indicator. Paper uses a white A4 page, 11 pt reading text and static numbered references. [Studio outputs](OUTPUTS.md#conversations-and-versions)
 
 The Inspector uses underlined tabs and tabular Evidence counts. Evidence opens with context and status, followed by cited sources, key results, or a passage. Supporting provenance uses foldable rows. The Brief uses serif for the goal, selectable text for reading, and inline fields in edit mode. [Conversation Brief](ASK.md#conversation-brief)

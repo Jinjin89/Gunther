@@ -1,6 +1,7 @@
 import type { Artifact, ConversationCitation, LibraryContents, OutputActivityOpen, SessionMessage, TrashItem } from "@gunther/contracts";
 import { ArrowLeft, Camera, FileText, Link2, Mic2, NotebookText, Plus } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { isTurnResult, type OutputDone } from "../api";
 import type { KnowledgeBase } from "../atlas";
 import type { Notify } from "../App";
 import { BulkImport } from "../components/BulkImport";
@@ -13,7 +14,7 @@ import { useTraces } from "../developer/useTraces";
 import { KeyResultsGroup } from "../keyResults/KeyResultsGroup";
 import { discardOutputEdit } from "../outputs/EditPane";
 import { OpenOutput } from "../outputs/OpenOutput";
-import { StudioColumn } from "../outputs/StudioColumn";
+import { StudioColumn, type StudioRun } from "../outputs/StudioColumn";
 import { type OutputTarget, type OutputTrashTarget, useStudio } from "../outputs/useStudio";
 import { persistentStorage } from "../persistentStorage";
 import { useEscape, useShortcut } from "../shortcuts/shortcuts";
@@ -27,7 +28,8 @@ import { useLibraryChats } from "./useLibraryChats";
 import { useSlideOverOutside } from "./useSlideOverOutside";
 import "./libraryWorkspace.css";
 
-type Middle = { kind: "chat" } | { kind: "source"; id: string } | { kind: "output"; target: OutputTarget };
+type FollowedRun = StudioRun & { result: Promise<OutputDone | null> | undefined };
+type Middle = { kind: "chat" } | { kind: "source"; id: string } | { kind: "output"; target: OutputTarget; run?: FollowedRun | undefined };
 const chat: Middle = { kind: "chat" };
 const outputKey = (target: OutputTarget) => target.artifactId ? `version:${target.artifactId}`
   : target.lineageId ? `lineage:${target.lineageId}` : `conversation:${target.conversationId}`;
@@ -74,16 +76,32 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   const scope = outputScope(selection, sourceIds);
   const scopeEmpty = selection.mode === "selected" && sourceIds.length === 0;
   const studio = useStudio(base.id, workspaceId);
+  // The result stays available when the reader closes and reopens during a run.
+  const directRuns = useRef(new Map<string, Promise<OutputDone | null>>());
+  const direct: typeof studio.direct = (id, ...args) => {
+    const result = studio.direct(id, ...args);
+    if (!directRuns.current.has(id)) {
+      directRuns.current.set(id, result);
+      const clear = () => directRuns.current.delete(id);
+      void result.then(clear, clear);
+    }
+    return result;
+  };
   const workspace = useRef<HTMLDivElement>(null);
   const libraryColumn = useRef<HTMLDivElement>(null);
   const chatActions = useRef<LibraryChatActions>(null);
   const target = middle.kind === "output" ? middle.target : null;
-  const readerKey = target ? outputKey(target) : null;
+  const [readerRevision, setReaderRevision] = useState(0);
+  const readerKey = target ? `${outputKey(target)}:${readerRevision}` : null;
   const [outputState, setOutputState] = useState<{ key: string | null; artifact: Artifact | null; part: number | null }>({ key: null, artifact: null, part: null });
   const [sourceCount, setSourceCount] = useState<{ id: string; count: number } | null>(null);
   const onSourceCount = useCallback((id: string, count: number) => setSourceCount((current) =>
     current?.id === id && current.count === count ? current : { id, count }), []);
   const artifact = readerKey !== null && outputState.key === readerKey ? outputState.artifact : null;
+  const displayedVersionId = artifact?.id;
+  const selectedOutput = artifact ?? (target?.artifactId ? studio.artifacts.find((version) => version.id === target.artifactId) : undefined);
+  const activeLineageId = selectedOutput?.lineageId ?? target?.lineageId ?? null;
+  const activeRunId = target && !target.lineageId && !target.artifactId ? target.conversationId ?? null : null;
   const partInView = readerKey !== null && outputState.key === readerKey ? outputState.part : null;
   const onArtifactChange = useCallback((next: Artifact | null) => setOutputState((current) =>
     current.key === readerKey && current.artifact === next ? current : { key: readerKey, artifact: next, part: current.key === readerKey ? current.part : null }), [readerKey]);
@@ -101,13 +119,50 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     window.requestAnimationFrame(() => workspace.current?.querySelector<HTMLInputElement>(".contents-filter input")?.focus());
   };
   const choose = useCallback((next: Middle) => {
-    if (middle.kind === "output" && next.kind === "output" && outputKey(middle.target) === outputKey(next.target)) return true;
+    if (middle.kind === "output" && next.kind === "output" && outputKey(middle.target) === outputKey(next.target)
+      && (!next.target.artifactId || next.target.artifactId === displayedVersionId)) {
+      if (middle.run !== next.run) setMiddle(next);
+      return true;
+    }
     if (!discardOutputEdit(dirty)) return false;
+    if (next.kind === "output") setReaderRevision((revision) => revision + 1);
     setMiddle(next);
     clearDetail();
     return true;
-  }, [clearDetail, dirty, middle]);
+  }, [clearDetail, dirty, displayedVersionId, middle]);
   const openOutput = (target: OutputTarget) => choose({ kind: "output", target });
+  const openStudioOutput = (target: OutputTarget, run?: StudioRun) => {
+    const result = target.conversationId ? directRuns.current.get(target.conversationId) : undefined;
+    choose({ kind: "output", target, run: target.artifactId && run ? { ...run, result } : undefined });
+  };
+  const followedActivity = middle.kind === "output" ? middle.run?.activity : undefined;
+  const finishedActivity = followedActivity && studio.activities.find((item) => item.id === followedActivity.id
+    && item.startedAt === followedActivity.startedAt && (item.state === "done" || item.state === "failed"));
+  const savedTarget = finishedActivity?.state === "done" ? finishedActivity.open : null;
+  const activityVersionId = savedTarget?.view === "library" && savedTarget.tab === "outputs" ? savedTarget.artifactId : null;
+  const activityComplete = finishedActivity && (!activityVersionId || studio.artifacts.some((item) => item.id === activityVersionId));
+  useEffect(() => {
+    if (middle.kind !== "output" || !middle.run || !displayedVersionId) return;
+    const { run, target } = middle;
+    let following = true;
+    const finish = (savedId: string | null | undefined) => {
+      if (!following) return;
+      const next = savedId && savedId !== target.artifactId && !dirty.current ? { ...target, artifactId: savedId } : target;
+      setMiddle((current) => current === middle ? { kind: "output", target: next } : current);
+    };
+    if (displayedVersionId !== target.artifactId) {
+      finish(null);
+    } else if (run.result) {
+      const finishFromResult = (done: OutputDone | null) => {
+        if (done) finish(isTurnResult(done) ? done.artifact?.id : done.id);
+        else if (!run.activity || activityComplete) finish(activityVersionId);
+      };
+      void run.result.then(finishFromResult, () => finishFromResult(null));
+    } else if (activityComplete) {
+      finish(activityVersionId);
+    }
+    return () => { following = false; };
+  }, [activityComplete, activityVersionId, dirty, displayedVersionId, middle]);
   const askFromReader = (question: string, submit: boolean) => {
     if (choose(chat)) chatActions.current?.ask(question, submit);
   };
@@ -123,7 +178,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   const chats = useLibraryChats(base.id, onNotify, clearDetail, returnToChat);
   const traces = useTraces();
   const contextKey = middle.kind === "chat" ? `chat:${chats.activeId ?? ""}:${chats.selectedMessageId ?? ""}`
-    : middle.kind === "source" ? `source:${middle.id}` : `output:${outputKey(middle.target)}:${artifact?.id ?? ""}`;
+    : middle.kind === "source" ? `source:${middle.id}` : `output:${readerKey}:${artifact?.id ?? ""}`;
   const selectedMessage = chats.activeSession?.id === chats.activeId
     ? chats.activeSession.messages.find((message) => message.id === chats.selectedMessageId && message.role === "assistant") ?? null : null;
   const selectTab = useCallback((tab: InspectorTab) => {
@@ -174,11 +229,10 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
   };
   const trashOutput = async (item: OutputTrashTarget, fromReader = false) => {
     if (!workspaceId) return;
-    const selected = target && studio.artifacts.find((version) => version.id === target.artifactId);
     const conversation = "conversation" in item;
     const affected = fromReader || (conversation
-      ? (selected?.conversationId ?? target?.conversationId) === item.id
-      : (selected?.lineageId ?? target?.lineageId) === item.lineageId);
+      ? (selectedOutput?.conversationId ?? target?.conversationId) === item.id
+      : activeLineageId === item.lineageId);
     // The editor clears its dirty state when the move succeeds and closes it.
     if (affected && !discardOutputEdit({ current: dirty.current })) return;
     try {
@@ -199,11 +253,13 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     return () => window.removeEventListener("resize", resize);
   }, []);
   useEscape(closeLibrary, screenWidth < 840 && !sourceColumn.collapsed);
+  const openActivityOutput = useEffectEvent((activity: OutputActivityOpen) => {
+    openOutput(activity);
+    onOutputActivity?.(activity);
+  });
   useEffect(() => {
-    if (!outputActivity || !workspaceId) return;
-    choose({ kind: "output", target: outputActivity });
-    onOutputActivity?.(outputActivity);
-  }, [choose, onOutputActivity, outputActivity, workspaceId]);
+    if (outputActivity && workspaceId) openActivityOutput(outputActivity);
+  }, [outputActivity, workspaceId]);
   useEffect(() => { persistentStorage.removeItem(`gunther:open-source:${base.id}`); }, [base.id]);
   const chatVisible = middle.kind === "chat";
   useEffect(() => { onChatVisible?.(chatVisible); }, [chatVisible, onChatVisible]);
@@ -252,8 +308,8 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
         {source && <SourceSummary key={source.id} source={source} onOpen={() => openFullSource(source.id)} onCite={openEvidence}
           onAsk={askFromReader} />}
         {middle.kind === "source" && !source && <p className="library-reading">{contents ? "Source unavailable." : "Loading source…"}</p>}
-        {target && workspaceId && <OpenOutput key={outputKey(target)} baseId={base.id} workspaceId={workspaceId}
-          target={target} studio={studio} scope={scope} scopeEmpty={scopeEmpty} webAvailable={web.available} dirty={dirty} onNotify={onNotify}
+        {target && workspaceId && <OpenOutput key={readerKey} baseId={base.id} workspaceId={workspaceId}
+          target={target} studio={{ ...studio, direct }} scope={scope} scopeEmpty={scopeEmpty} webAvailable={web.available} dirty={dirty} onNotify={onNotify}
           onCite={(version, index) => {
             onArtifactChange(version);
             openEvidence(version.citations, index, `output:${readerKey}:${version.id}`);
@@ -286,6 +342,7 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
       </AnswerCitationNavigation.Provider>}
       studio={<StudioColumn studio={studio} scope={scope} scopeEmpty={scopeEmpty} webAvailable={web.available} sourceCount={contents?.sources.length ?? null}
         sourceLoadFailed={sourceLoadFailed} selectedSourceCount={sourceIds.length} disabled={!workspaceId}
-        onOpen={openOutput} onTrash={(item) => void trashOutput(item)} />} />
+        activeOutput={target && workspaceId ? { lineageId: activeLineageId, conversationId: activeRunId } : null}
+        onOpen={openStudioOutput} onTrash={(item) => void trashOutput(item)} />} />
   </div>;
 }

@@ -37,7 +37,7 @@ Failed or stopped builds keep completed stages with the draft. The conversation 
 
 ## Progress and Activity
 
-Conversations can build at the same time, including two in the same library. Each conversation runs one turn at a time. Studio cards show recent outputs, their versions, progress and failures. Click a running card or its tile to follow that build. Runs continue while you use Chat or another library. Use Stop in the open output or its Activity row. A completed Activity row opens the version that run saved.
+Conversations can build at the same time, including two in the same library. Each conversation runs one turn at a time. Studio rows show the type icon and a compact version label for saved outputs. The current row stays marked while you view an earlier version. Click a running row or its tile to follow that build, or use Retry on a failed row. Runs continue while you use Chat or another library. Use Stop in the open output or its Activity row. A completed Activity row opens the version that run saved.
 
 ## Conversations and versions
 
@@ -61,9 +61,9 @@ The service checks the version's seal before resolving **In library** for its we
 
 ## Study a card set
 
-Click a flashcard or press Space on its flip button to reveal the answer. Use Previous, Next or the arrow keys while focused in the reader to change cards. Activate a citation number to open its passage in Evidence.
+Choose **Show answer** or tap the flashcard question to reveal the answer. With focus on the reader, Space also reveals or hides it. Use Previous, Next or the arrow keys to change cards. Activate a citation number to open its passage in Evidence.
 
-In a quiz, choose one answer to see the result, the correct choice and the explanation with citations. The score counts correct choices among the questions you have answered. Start again clears those choices. List view shows every question and answer so you can review the full set. Versions opens earlier saved sets, and Refine this card points the shared Refine box at that card.
+In a quiz, choose one answer to see the result, the correct choice and the explanation with citations. The score counts correct choices among the questions you have answered. Start again clears those choices. **All cards** shows every question and answer so you can review the full set. Versions opens earlier saved sets, and Refine this card points the shared Refine box at that card.
 
 Download Markdown saves the version's stored text. Export PDF opens the print dialog with all the cards, including the choices, marked correct answer and explanation for each quiz card. The printout includes numbered citations and a source list. [Cards format](STUDIO_FORMAT.md#3-cards-design-v1)
 
@@ -71,7 +71,7 @@ Download Markdown saves the version's stored text. Export PDF opens the print di
 
 The root and its first-level branches start expanded. Click a branch or its chevron to expand or collapse it. Use Tab to reach nodes and Enter on a branch control to toggle it. Scroll in either direction to reach the rest of the tree. Below 1200 px, Sources collapses to give the map room.
 
-Hover over or focus a node to reveal Ask. It opens Chat and asks about the node along its full path using the current Sources selection. A citation number opens its passage in Evidence. The Checker reads a cited node with its ancestor labels and uses that node's own citations. Refine rewrites the selected node and its descendants together. Rewriting an ancestor rechecks any cited descendants whose path changed.
+Select a node and choose **Ask** in its toolbar. It opens Chat and asks about the node along its full path using the current Sources selection. A citation number opens its passage in Evidence. The Checker reads a cited node with its ancestor labels and uses that node's own citations. Refine rewrites the selected node and its descendants together. Rewriting an ancestor rechecks any cited descendants whose path changed.
 
 Download Markdown saves the nested list. Export PDF prints the full indented outline with its citations and sources. [Mind map format](STUDIO_FORMAT.md#4-mind-maps-design-v1)
 
@@ -79,7 +79,7 @@ Download Markdown saves the nested list. Export PDF prints the full indented out
 
 Choose **Audio overview** in Studio to build with the default voices. Open its options to set focus, audience, length, language, or a voice for each speaker. The voices come from Settings → Read aloud. Studio defaults to the configured voice and a different listed voice when available. [Script format](STUDIO_FORMAT.md#5-audio-overview-script-design-v1)
 
-The reader shows the player above the script. The line being spoken is highlighted. Select a line to play from its start or select a citation to open Evidence. The script stays readable while Activity shows which line Studio is recording.
+The player stays above the transcript as you scroll. The line being spoken is highlighted. Select a timestamp to play from that line or select a citation to open Evidence. When the active line scrolls out of view, **Go to playing line** brings it back. The script stays readable while Activity shows which line Studio is recording.
 
 If Studio needs a voice provider, use **Open Read aloud settings** from the reader. If recording fails, the reader shows the reason and **Retry audio**. Use **Change voices** to record the same script with different speakers. The output actions offer Markdown, **Download WAV** when the recording is ready, and **Print script**.
 

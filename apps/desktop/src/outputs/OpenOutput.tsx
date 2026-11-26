@@ -10,6 +10,7 @@ import { AnswerBody, verificationNotice } from "../pages/AnswerBody";
 import { ArtifactMenu } from "./ArtifactMenu";
 import { ArtifactMessageList } from "./ArtifactMessages";
 import { artifactRequestId, EARLIER_WORK, libraryScope, scopeLabel } from "./artifactConversations";
+import { AudioDurationScope } from "./AudioOverview";
 import { withDeckMarker } from "./deck/marker";
 import { discardOutputEdit, EditPane } from "./EditPane";
 import { outputActivity } from "./liveOutput";
@@ -375,7 +376,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
     </div>}
     {job?.live.reply && <AnswerBody content={job.live.reply} numbers={[]} />}
     {!artifact && !job && !activity && !problem && <p>{conversation?.lastTurn?.error || (shownId ? "Loading version…" : "Waiting for the output…")}</p>}
-    {artifact && <>
+    {artifact && <AudioDurationScope artifact={artifact}>
       {panel === "versions" && <ul className="output-versions" aria-label="Versions">{versions.map((version) => <li key={version.id}>
         <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" aria-current={version.id === artifact.id ? "page" : undefined} onClick={() => switchVersion(version.id)}>Version {version.versionNumber}</button>
       </li>)}</ul>}
@@ -400,7 +401,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
           </div>
         </>}
       {printAction && <PrintRoot artifact={artifact} type={type} />}
-    </>}
+    </AudioDurationScope>}
     {conversation && conversation.messages.length > 0 && <details className="output-history">
       <summary>Change history</summary>
       <ArtifactMessageList messages={conversation.messages} pending={pending ?? null} history={studio.artifacts}
