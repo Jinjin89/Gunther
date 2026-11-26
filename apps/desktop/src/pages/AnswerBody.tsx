@@ -1,6 +1,6 @@
 import type { AgentStep, ConversationContext, OutputSection, ResearchUsed } from "@gunther/contracts";
 import { BookOpen, ChevronRight, CircleAlert, ClipboardCheck, Globe2, Library, ListChecks, LoaderCircle, PenLine } from "lucide-react";
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import { CitationButton } from "../components/evidence/CitationButton";
 import { MarkdownLink, markdownUrlTransform, richComponents } from "../components/markdown/rich/components";
@@ -41,7 +41,7 @@ export function verificationNotice(coverage: OutputSection["coverage"]): string 
 }
 
 /** An answer, as Markdown, with its [n] citations as buttons that open the evidence. */
-export function AnswerBody({ content, numbers, onCitation, supportNotes, coverage, hideCitations = false, tightCitations = false }: {
+export function AnswerBody({ content, numbers, onCitation, supportNotes, coverage, hideCitations = false, tightCitations = false, table }: {
   content: string;
   numbers: number[];
   onCitation?: ((index: number) => void) | undefined;
@@ -49,39 +49,47 @@ export function AnswerBody({ content, numbers, onCitation, supportNotes, coverag
   coverage?: ConversationContext["coverage"];
   hideCitations?: boolean;
   tightCitations?: boolean;
+  table?: Components["table"];
 }) {
   const current = useRef({ numbers, onCitation, supportNotes });
   current.current = { numbers, onCitation, supportNotes };
   // Keep the Markdown element types stable when the reader reports focus or scroll changes.
   const components = useMemo<Components>(() => {
-    const citation = (number: string, className?: string, note?: string) => {
+    const withTail = (mark: ReactNode, tail: string | undefined, key?: string) =>
+      tail ? <span className="gx-citation-tail" key={key}>{mark}{tail}</span> : mark;
+    const citation = (number: string, tail?: string, className?: string, note?: string) => {
       const label = `[${number}]`;
       const { onCitation, numbers } = current.current;
-      return <sup key={number}>{onCitation
+      return withTail(<sup key={number}>{onCitation
         ? <CitationButton number={number} index={numbers.indexOf(Number(number))} className={className} note={note} onCite={onCitation}>{label}</CitationButton>
-        : <span className={className} title={note}>{label}</span>}</sup>;
+        : <span className={className} title={note}>{label}</span>}</sup>, tail, number);
     };
+    const citationRun = (numbers: string, tail: string | undefined) =>
+      numbers.split("-").map((number, index, all) => citation(number, index === all.length - 1 ? tail : undefined));
     return {
       ...richComponents,
+      ...(table && { table }),
       a({ node, ...props }) {
         if (node?.properties.dataCitation !== true) return <MarkdownLink {...props} />;
         const { href } = props;
-        if (href === UNSOURCED_LINK) return <sup className="unverified-mark" title="From the model's own knowledge; no source was found for it">unverified</sup>;
+        const suffix = node.properties.dataCitationTail;
+        const tail = typeof suffix === "string" ? suffix : undefined;
+        if (href === UNSOURCED_LINK) return withTail(<sup className="unverified-mark" title="From the model's own knowledge; no source was found for it">unverified</sup>, tail);
         const infer = href ? INFER_LINK.exec(href) : null;
-        if (infer?.[1]) return <span className="inference-mark" title="Follows from these sources; they do not state it">inference · from {infer[1].split("-").map((n) => citation(n))}</span>;
+        if (infer?.[1]) return <span className="inference-mark" title="Follows from these sources; they do not state it">inference · from {citationRun(infer[1], tail)}</span>;
         const disputed = href ? DISPUTED_LINK.exec(href) : null;
-        if (disputed?.[1]) return <span className="inference-mark disputed-mark" title="Sources disagree with this statement from the model's own knowledge">disputed · by {disputed[1].split("-").map((n) => citation(n))}</span>;
+        if (disputed?.[1]) return <span className="inference-mark disputed-mark" title="Sources disagree with this statement from the model's own knowledge">disputed · by {citationRun(disputed[1], tail)}</span>;
         const partly = href ? PARTLY_LINK.exec(href) : null;
         if (partly?.[1] && partly[2]) {
           const note = current.current.supportNotes?.[Number(partly[2])];
-          return citation(partly[1], "is-partly", note ? `Partly supported: ${note}` : "Partly supported");
+          return citation(partly[1], tail, "is-partly", note ? `Partly supported: ${note}` : "Partly supported");
         }
         const cite = href ? CITE_LINK.exec(href) : null;
-        if (cite?.[1]) return citation(cite[1]);
+        if (cite?.[1]) return citation(cite[1], tail);
         return <MarkdownLink {...props} />;
       },
     };
-  }, []);
+  }, [table]);
   const notice = verificationNotice(coverage);
   return <div className="answer-markdown">
     <Markdown remarkPlugins={[...richRemarkPlugins, [remarkCitations, { numbers, hide: hideCitations, tight: tightCitations }]]} components={components} urlTransform={markdownUrlTransform}>{content}</Markdown>

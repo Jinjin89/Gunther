@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import { citationNumbers } from "../pages/AnswerBody";
 import { CitationDetails } from "../components/evidence/CitationButton";
 import { ArtifactMenu } from "./ArtifactMenu";
-import { SectionStatus } from "./ReportView";
+import { SectionStatus } from "./OutputParts";
 import { SlideFace } from "./SlideFace";
 import { SlideStylePicker } from "./SlideStylePicker";
 import { ACCENTS, THEMES, type DeckStyle, type DeckTheme, attrsOf, parseSlides, slideLayouts, splitDocument } from "./sections";

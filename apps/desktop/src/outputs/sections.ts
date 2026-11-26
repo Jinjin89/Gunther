@@ -17,9 +17,10 @@
  */
 import type { Artifact, OutputKind, OutputSection } from "@gunther/contracts";
 import { withoutMarks } from "../components/evidence/citationMarks";
+import { mapMarkdown } from "../components/markdown/rich/mapMarkdown";
+import { parseRichMarkdown, sourceForPositions } from "../components/markdown/rich/plugins";
 import { decodeScene, visibleMarkdown } from "./slides/scene";
 
-const FENCE = /^\s*(```|~~~)/;
 /** The colours a title slide's marker may name (the same list as ACCENTS in outputs.py). */
 export const ACCENTS = ["ink", "blue", "teal", "red", "amber", "violet"] as const;
 export const THEMES = ["classic", "briefing", "editorial", "keynote"] as const;
@@ -66,16 +67,61 @@ export function withDesignBlock(slide: string, html: string | null): string {
   return html ? `${text.replace(/\s+$/, "")}\n:::design\n${html.trim()}\n:::` : text;
 }
 
-/** Each line of a document, and whether it is inside a code fence. */
-function lines(content: string): Array<{ line: string; fenced: boolean }> {
-  let fenced = false;
-  return content.replace(/\r\n?/g, "\n").split("\n").map((line) => {
-    if (FENCE.test(line)) {
-      fenced = !fenced;
-      return { line, fenced: true };
-    }
-    return { line, fenced };
-  });
+const MATH_DELIMITER = /(?<!\\)(?:\\\\)*\$\$/;
+
+/** Match the service's dollar-math boundary within a block recognized by the decoder. */
+function mathClosingLine(lines: string[], first: number, column: number, last: number, value: string) {
+  const opening = lines[first - 1]!.slice(column + 1).trimEnd();
+  if (opening.includes("$$")) {
+    return opening.endsWith("$$") && !MATH_DELIMITER.test(opening.slice(0, -2)) ? first : undefined;
+  }
+  const body = value ? value.split("\n") : [];
+  for (let line = first + 1; line <= last; line += 1) {
+    const source = lines[line - 1]!;
+    const text = (body[line - first - 1] ?? source).trim();
+    if (!text || !source.trim()) return undefined;
+    const closing = text.endsWith("$$");
+    if (MATH_DELIMITER.test(closing ? text.slice(0, -2) : text)) return undefined;
+    if (closing) return line;
+  }
+}
+
+/** Source lines with code and display math protected at their saved boundaries. */
+export function markdownLines(content: string): Array<{ line: string; fenced: boolean }> {
+  const source = content.replace(/\r\n?/g, "\n");
+  const decodeLines = sourceForPositions(source).split("\n");
+  const resolvedMath = new Set<number>();
+  for (;;) {
+    const protectedLines = new Set(resolvedMath);
+    let retry = false;
+    mapMarkdown(parseRichMarkdown(decodeLines.join("\n")), (node) => {
+      if (retry || !node.position || (node.type !== "code" && node.type !== "math")) return;
+      const { start, end } = node.position;
+      if (node.type === "math") {
+        const closing = mathClosingLine(decodeLines, start.line, start.column, end.line, node.value);
+        if (closing !== end.line) {
+          const opening = decodeLines[start.line - 1]!;
+          const prefix = opening.slice(0, start.column - 1);
+          if (closing === undefined) {
+            // An incomplete equation is prose in the service decoder.
+            decodeLines[start.line - 1] = `${prefix}\\${opening.slice(start.column)}`;
+          } else {
+            // Keep the service's range opaque in the decoder copy, then decode any
+            // source Remark had absorbed past a delimiter at the end of a formula line.
+            for (let line = start.line; line <= closing; line += 1) {
+              resolvedMath.add(line);
+              decodeLines[line - 1] = "";
+            }
+            decodeLines[start.line - 1] = `${prefix}***`;
+          }
+          retry = true;
+          return;
+        }
+      }
+      for (let line = start.line; line <= end.line; line += 1) protectedLines.add(line);
+    });
+    if (!retry) return source.split("\n").map((line, index) => ({ line, fenced: protectedLines.has(index + 1) }));
+  }
 }
 
 const MAP_NODE = /^((?:  )*)- +(\S.*)$/;
@@ -117,7 +163,7 @@ export function splitDocument(content: string, kind: OutputKind): { preamble: st
   }
   const preamble: string[] = [];
   const parts: string[][] = [[]];
-  for (const { line, fenced } of lines(content)) {
+  for (const { line, fenced } of markdownLines(content)) {
     if (!fenced && startsUnit(line)) {
       parts.push(keepsPreamble ? [line] : []);
     } else if (keepsPreamble && parts.length === 1) {
@@ -269,7 +315,7 @@ export function headingOf(section: string): string {
 
 /** The first top-level heading outside code, at most 160 characters. */
 export function titleOf(content: string): string | null {
-  for (const { line, fenced } of lines(content)) {
+  for (const { line, fenced } of markdownLines(content)) {
     if (!fenced && line.startsWith("# ")) return line.slice(2).trim().slice(0, 160) || null;
   }
   return null;
@@ -277,7 +323,7 @@ export function titleOf(content: string): string | null {
 
 /** A slide as what it shows and what the presenter says. */
 export function splitNotes(slide: string): { body: string; notes: string } {
-  const all = lines(slide);
+  const all = markdownLines(slide);
   const at = all.findIndex(({ line, fenced }) => !fenced && line.startsWith("Note:"));
   if (at === -1) return { body: slide.trim(), notes: "" };
   const body = all.slice(0, at).map(({ line }) => line).join("\n").trim();
@@ -424,16 +470,4 @@ export function withDraft(artifact: Artifact, draft: string): Artifact {
   });
   // One id for every keystroke, so a deck is not rebuilt each time.
   return { ...artifact, id: `${artifact.id}:draft`, content: draft, sections };
-}
-
-/** The text without its first top-level title, which the page shows on its own. */
-export function withoutTitle(text: string): string {
-  let skipped = false;
-  return text.split("\n").filter((line) => {
-    if (!skipped && line.startsWith("# ")) {
-      skipped = true;
-      return false;
-    }
-    return true;
-  }).join("\n").trim();
 }

@@ -170,8 +170,10 @@ export function DesignedSlide({ html, style, brand = null, chart, numbers, sourc
 
   const highlighted = !!chart?.categories.some((category) => category.highlight) && chart.series.length === 1;
   useLayoutEffect(() => { if (slot) slot.dataset.highlight = String(highlighted); }, [slot, highlighted]);
-  return <div ref={host} className="dk-designed" data-design-style={style} data-layout={layout ?? undefined} data-drawn="designed" data-ready={fonts ? "true" : "false"} data-designed="true">
-    {slot && chart ? createPortal(<Chart data={chart} />, slot) : null}
+  const chartPortal = slot && chart ? createPortal(<Chart data={chart} />, slot) : null;
+  return <div ref={host} className="dk-designed" data-design-style={style} data-layout={layout ?? undefined} data-drawn="designed" data-ready={fonts ? "true" : "false"}
+    data-designed="true" data-expects-chart={chartPortal ? "true" : undefined}>
+    {chartPortal}
     {onCite && citationSlots.map(({ target, number, index }, at) => createPortal(
       <CitationButton number={number} index={index} onCite={onCite} title={sources?.[index]}>{number}</CitationButton>,
       target, at,

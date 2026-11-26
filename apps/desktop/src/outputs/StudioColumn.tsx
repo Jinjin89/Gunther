@@ -1,5 +1,5 @@
 import { artifactAudiences, type BuildTurnInput, type OutputScope, type OutputType } from "@gunther/contracts";
-import { AudioLines, BookOpen, CalendarDays, CircleHelp, ClipboardList, FileText, Layers, ListChecks, LoaderCircle, Network, Pencil, Presentation, Trash2, X } from "lucide-react";
+import { FileText, LoaderCircle, Pencil, Trash2, X } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { openSettings } from "../components/SettingsLayout";
 import { useModelMenu } from "../models/askModel";
@@ -7,11 +7,11 @@ import { useEscape } from "../shortcuts/shortcuts";
 import { ArtifactMenu } from "./ArtifactMenu";
 import { artifactRequestId } from "./artifactConversations";
 import { outputActivity } from "./liveOutput";
+import { outputIcon } from "./outputCatalog";
 import { StudioWebSwitch } from "./StudioWebSwitch";
 import { latestVersions, type OutputTarget, type OutputTrashTarget, type useStudio } from "./useStudio";
 import { readVoices, VoiceFields } from "./VoiceFields";
 
-const icons = { AudioLines, BookOpen, CalendarDays, CircleHelp, ClipboardList, FileText, Layers, ListChecks, Network, Presentation };
 type Card = {
   id: string; title: string; label: string; at: string; target: OutputTarget; status: "saved" | "running" | "failed";
   detail: string; retry?: BuildTurnInput | undefined;
@@ -138,7 +138,7 @@ export function StudioColumn({ studio, scope, scopeEmpty, webAvailable, sourceCo
     void studio.build(artifactRequestId(), { ...options, scope });
   };
   const tiles = <><div className="studio-tiles">{studio.types.map((type) => {
-      const Icon = icons[type.icon as keyof typeof icons] ?? FileText;
+      const Icon = outputIcon(type);
       const running = cards.find((card) => card.status === "running" && card.target.typeId === type.id && !card.target.lineageId);
       return <div key={type.id} className="studio-tile">
         <button type="button" title={type.description} disabled={tilesDisabled} onClick={() => running ? onOpen(running.target) : start({ type: type.id })}><Icon size={16} /><span>{type.label}</span></button>

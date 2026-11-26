@@ -23,6 +23,23 @@ describe("AnswerBody", () => {
     expect(onCitation).toHaveBeenCalledOnce();
   });
 
+  it("keeps punctuation adjacent to its citation outside the clickable control", () => {
+    const { container } = render(<AnswerBody content="Field use [1] . 另一项 [p:2]。” The literal `[1] .` is kept." numbers={[1, 2]} onCitation={vi.fn()} />);
+    const first = screen.getByRole("button", { name: "Inspect citation 1" });
+    const second = screen.getByRole("button", { name: "Inspect citation 2" });
+    expect(first.closest(".gx-citation-tail")?.textContent).toBe("[1].");
+    expect(second.closest(".gx-citation-tail")?.textContent).toBe("[2]。”");
+    expect(second).toHaveClass("is-partly");
+    expect(container.querySelector("code")?.textContent).toBe("[1] .");
+  });
+
+  it.each(["reader", "paper"])("preserves separators after citation marks in the %s", (mode) => {
+    const content = 'A [1] / B [2] "Quoted text" [1] . He said "field use [2]".';
+    const { container } = render(<AnswerBody content={content} numbers={[1, 2]} onCitation={mode === "reader" ? vi.fn() : undefined} />);
+    expect(container.querySelector("p")?.textContent).toBe(content.replace("[1] .", "[1]."));
+    expect([...container.querySelectorAll(".gx-citation-tail")].map((tail) => tail.textContent)).toEqual(["[1].", '[2]".']);
+  });
+
   it("keeps a focused citation clickable and uses the latest handler after its parent updates", async () => {
     const before = vi.fn();
     const after = vi.fn();

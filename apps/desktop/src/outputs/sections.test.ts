@@ -110,6 +110,14 @@ describe("a report's sections", () => {
     const { preamble, sections } = splitDocument("# Title\n\n## One\n\ntext\n\n## Two\n\nmore", "report");
     expect(joinDocument(preamble, sections, "report")).toBe("# Title\n\n## One\n\ntext\n\n## Two\n\nmore");
   });
+
+  it("keeps apparent headings inside Markdown code and display math in the original section", () => {
+    const first = ["## One", "", "````md", "~~~", "## Example", "```", "````", "", "$$", "## Symbols", "$$"].join("\n");
+    expect(splitDocument(`# Title\n\n${first}\n\n## Two\n\nText`, "report")).toEqual({
+      preamble: "# Title",
+      sections: [first, "## Two\n\nText"],
+    });
+  });
 });
 
 describe("a deck's slides", () => {

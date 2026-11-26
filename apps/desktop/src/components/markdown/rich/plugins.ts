@@ -25,7 +25,7 @@ function remarkLegacySvg() {
       } else {
         return;
       }
-      if (/^<svg(?=[\s/>])/.test(value) && hasSingleSvgRoot(value)) return { type: "code", lang: "svg", value };
+      if (/^<svg(?=[\s/>])/.test(value) && hasSingleSvgRoot(value)) return { type: "code", lang: "svg", value, position: node.position };
     });
   };
 }

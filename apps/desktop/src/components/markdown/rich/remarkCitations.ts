@@ -7,6 +7,9 @@ function citationLink(url: string, label: string): Link {
   return { type: "link", url, data: { hProperties: { dataCitation: true } }, children: [{ type: "text", value: label }] };
 }
 
+// Straight quotes can close an attached quotation, but a space before one may introduce a new quote.
+const citationTail = /^(?:[ \t]+(?!["']))?([\p{Pe}\p{Pf}\p{Terminal_Punctuation}"']+)/u;
+
 export function remarkCitations({ numbers, hide, tight }: { numbers: readonly number[]; hide: boolean; tight: boolean }) {
   return (tree: Root, file: { value: unknown }) => {
     const eligible = new Set(numbers);
@@ -59,7 +62,14 @@ export function remarkCitations({ numbers, hide, tight }: { numbers: readonly nu
             }
           }
         }
-        if (link) parts.push(link);
+        if (link) {
+          const tail = citationTail.exec(value.slice(cursor));
+          if (tail?.[1]) {
+            link.data = { hProperties: { ...link.data?.hProperties, dataCitationTail: tail[1] } };
+            cursor += tail[0].length;
+          }
+          parts.push(link);
+        }
         else {
           const literal = value.slice(mark.start, cursor);
           text(tight && cursor > mark.end ? literal.replace(/[ \t]+/g, "\u00a0") : literal);

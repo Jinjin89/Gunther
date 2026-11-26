@@ -1,8 +1,23 @@
 import type { Artifact, OutlineItem } from "@gunther/contracts";
-import { cleanup, render, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { act, cleanup, render, waitFor, within } from "@testing-library/react";
+import type { ComponentProps } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PrintRoot } from "./PrintRoot";
 import documentSections from "./fixtures/document-sections.json";
+import { prepareForPrint } from "./printReady";
+import { withDesignBlock } from "./sections";
+
+const loadEquationRenderer = vi.hoisted(() => vi.fn());
+vi.mock("katex", () => loadEquationRenderer());
+
+const printRenderer = vi.hoisted(() => ({ pending: undefined as Promise<void> | undefined }));
+vi.mock("./PrintSlides", async (load) => {
+  const { PrintSlides } = await load<typeof import("./PrintSlides")>();
+  return { PrintSlides: (props: ComponentProps<typeof PrintSlides>) => {
+    if (printRenderer.pending) throw printRenderer.pending;
+    return <PrintSlides {...props} />;
+  } };
+});
 
 const deck = (content: string, outline: OutlineItem[] = [], citations: unknown[] = []) => ({
   id: "art_1", kind: "slides", origin: "build", title: "Deck", versionNumber: 1, createdAt: "2026-10-15T09:00:00Z",
@@ -21,6 +36,60 @@ it("prints every line of long report code without a toolbar or fold control", ()
   const block = document.querySelector("#print-root .gx-md-code");
   expect(block?.querySelector("pre code")?.textContent).toBe(code);
   expect(block?.querySelector("figcaption, button")).toBeNull();
+});
+
+it("prints an unheaded report once on A4 with one numbered sources list", () => {
+  const quote = "The field notes preserve each recorded observation. ".repeat(6) + "The final observation is also retained.";
+  const artifact: Artifact = { ...deck("# Deck\n\nThe field record is bounded [1].", [], [
+    { sourceTitle: "Field record", quote },
+  ]), kind: "report" };
+  render(<PrintRoot artifact={artifact} />);
+  const paper = document.getElementById("print-root")!;
+  expect(paper.querySelector("style")).toHaveTextContent("@page { size: A4; margin: 18mm 16mm; }");
+  expect(paper.querySelectorAll("h1")).toHaveLength(1);
+  expect(within(paper).getAllByText(/The field record is bounded/)).toHaveLength(1);
+  expect(paper.querySelectorAll(".outputs-print-sources ol")).toHaveLength(1);
+  expect(paper.querySelectorAll(".outputs-print-sources li")).toHaveLength(1);
+  expect(paper.querySelector(".outputs-print-sources q")?.textContent).toBe(quote);
+  expect(paper.querySelector("sup")).toHaveTextContent("[1]");
+  expect(paper.querySelector("button")).toBeNull();
+});
+
+it("prepares ordinary inline code without loading the equation renderer", async () => {
+  const artifact: Artifact = { ...deck("# Deck\n\nRead the `total` field."), kind: "report" };
+  render(<PrintRoot artifact={artifact} />);
+  (await prepareForPrint(artifact.id))();
+  expect(document.querySelector("#print-root code")?.textContent).toBe("total");
+  expect(loadEquationRenderer).not.toHaveBeenCalled();
+});
+
+it("reports a failed equation load through print preparation", async () => {
+  loadEquationRenderer.mockRejectedValueOnce(new Error("The module could not load."));
+  const artifact: Artifact = { ...deck("# Deck\n\nA formula $$x^2$$."), kind: "report" };
+  render(<PrintRoot artifact={artifact} />);
+  await expect(prepareForPrint(artifact.id)).rejects.toThrow("Could not render an equation for printing.");
+  expect(document.querySelector('#print-root [data-equation-state="failed"]')?.textContent).toBe("x^2");
+  expect(document.documentElement).not.toHaveAttribute("data-print-prep");
+});
+
+it("waits for a saved print figure and releases the layout when an image fails", async () => {
+  const artifact: Artifact = { ...deck("# Deck\n\n## Measurements\n\n![Field diagram](gunther-asset:diagram)"), kind: "report" };
+  render(<PrintRoot artifact={artifact} />);
+  const image = document.querySelector<HTMLImageElement>("#print-root img")!;
+  let loaded!: () => void;
+  const decode = vi.fn(() => new Promise<void>((resolve) => { loaded = resolve; }));
+  Object.defineProperty(image, "decode", { value: decode });
+  const preparing = prepareForPrint(artifact.id);
+  await waitFor(() => expect(decode).toHaveBeenCalledOnce());
+  expect(image.loading).toBe("eager");
+  expect(document.documentElement).toHaveAttribute("data-print-prep");
+  loaded();
+  (await preparing)();
+  expect(document.documentElement).not.toHaveAttribute("data-print-prep");
+
+  decode.mockRejectedValueOnce(new Error("Missing asset"));
+  await expect(prepareForPrint(artifact.id)).rejects.toThrow("Could not load the print image “Field diagram”.");
+  expect(document.documentElement).not.toHaveAttribute("data-print-prep");
 });
 
 it("prints the audio script and static citations with no playback controls", () => {
@@ -64,6 +133,57 @@ it("prints every card with static citations, the correct choice and the explanat
 
 // The slides are drawn by a part of the app that is fetched when a deck is open, so they appear a moment after the root does.
 describe("printing a deck", () => {
+  const design = '<section class="slide"><h2>Field results</h2><gunther-chart></gunther-chart></section>';
+  const title = "<!-- layout: title; design: v2; theme: paper; style: light -->\n# Deck";
+
+  it("waits for the planned slides of a cold deck even when its Sources page has mounted", async () => {
+    const artifact = deck("# Deck\n\n---\n\n## Field results", [], [{ sourceTitle: "Field record", quote: "All observations were logged." }]);
+    let loaded!: () => void;
+    printRenderer.pending = new Promise<void>((resolve) => { loaded = resolve; });
+    render(<PrintRoot artifact={artifact} />);
+    const paper = document.getElementById("print-root")!;
+    expect(paper.querySelectorAll(".outputs-print-slide")).toHaveLength(1);
+    expect(paper.querySelector(".outputs-print-slide-sources")).toBeInTheDocument();
+
+    let prepared = false;
+    const preparing = prepareForPrint(artifact.id).then((done) => { prepared = true; done(); });
+    try {
+      // Let both paint phases pass while the slide renderer is suspended.
+      for (let frame = 0; frame < 5; frame++) await new Promise(requestAnimationFrame);
+      expect(prepared).toBe(false);
+    } finally {
+      await act(async () => { printRenderer.pending = undefined; loaded(); });
+      await preparing;
+    }
+    expect(paper.querySelectorAll(".outputs-print-slide")).toHaveLength(3);
+    expect(document.documentElement).not.toHaveAttribute("data-print-prep");
+  });
+
+  it("prepares a designed slide with an intentionally empty chart slot", async () => {
+    const artifact = deck(withDesignBlock(title, design));
+    render(<PrintRoot artifact={artifact} />);
+    const paper = document.getElementById("print-root")!;
+    await waitFor(() => expect(paper.querySelector("[data-designed]")?.shadowRoot?.querySelector("gunther-chart")).toBeInTheDocument());
+    expect(paper.querySelector("[data-designed]")?.shadowRoot?.querySelector("gunther-chart svg")).toBeNull();
+    (await prepareForPrint(artifact.id, 1_000))();
+  });
+
+  it("waits for a drawable designed chart to gain a layout box", async () => {
+    const content = withDesignBlock("<!-- layout: chart; chart: bar -->\n## Counts\n| Group | Count |\n| --- | --- |\n| A | 1 |\n| B | 3 |", design);
+    const artifact = deck(`${title}\n\n---\n\n${content}`);
+    render(<PrintRoot artifact={artifact} />);
+    const paper = document.getElementById("print-root")!;
+    const plot = () => paper.querySelector("[data-designed]")?.shadowRoot?.querySelector("gunther-chart .dk-plot svg");
+    await waitFor(() => expect(plot()).toBeInTheDocument());
+    const bounds = vi.spyOn(plot()!, "getBoundingClientRect").mockReturnValue(new DOMRect());
+    let prepared = false;
+    const preparing = prepareForPrint(artifact.id).then((done) => { prepared = true; return done; });
+    await waitFor(() => expect(bounds).toHaveBeenCalled());
+    expect(prepared).toBe(false);
+    bounds.mockReturnValue(new DOMRect(0, 0, 600, 300));
+    (await preparing)();
+  });
+
   it("prints each slide without its marker, drawn as the layout it has", async () => {
     const content = [
       "<!-- layout: title; accent: blue -->\n# Deck\n\nOne line",
@@ -73,6 +193,7 @@ describe("printing a deck", () => {
     const paper = document.getElementById("print-root")!;
     await waitFor(() => expect(faces()).toEqual(["title", "flow"]));
     expect(drawn()).toEqual(["title", "flow"]);
+    expect(paper.querySelector("style")).toHaveTextContent("@page { size: 13.333in 7.5in; margin: 0; }");
     expect(paper.textContent).not.toContain("layout:");
     expect(paper.textContent).not.toContain("Say a.");
     expect(paper.querySelectorAll(".outputs-print-slide")).toHaveLength(2);

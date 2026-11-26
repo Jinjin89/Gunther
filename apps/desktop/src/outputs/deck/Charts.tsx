@@ -60,7 +60,7 @@ function Bars({ data, w, h }: { data: ChartData; w: number; h: number }) {
       const group = m * bt + (m - 1) * 3;
       return <g key={row}>
         {c.highlight && <rect x={0} y={row * rh + 2} width={w} height={rh - 4} fill="var(--dk-soft)" />}
-        <text x={0} y={cy - ((lines[row]!.length - 1) * (labelSize * 1.15)) / 2} fontSize={labelSize} fontWeight={c.highlight ? 700 : 500} fill="var(--dk-ink)" dominantBaseline="central">
+        <text data-category={row} x={0} y={cy - ((lines[row]!.length - 1) * (labelSize * 1.15)) / 2} fontSize={labelSize} fontWeight={c.highlight ? 700 : 500} fill="var(--dk-ink)" dominantBaseline="central">
           {lines[row]!.map((line, at) => <tspan key={at} x={0} dy={at === 0 ? 0 : labelSize * 1.15}>{line}</tspan>)}
         </text>
         {data.series.map((s, k) => {
@@ -70,7 +70,7 @@ function Bars({ data, w, h }: { data: ChartData; w: number; h: number }) {
           const colour = m === 1 ? (c.highlight || !data.categories.some((cc) => cc.highlight) ? "var(--dk-accent)" : "var(--dk-bar)") : seriesColour(k, m);
           return <g key={k}>
             <rect x={x0 + Math.min(zero, zero + len)} y={y} width={Math.max(2, Math.abs(len))} height={bt} fill={colour} />
-            <text x={x0 + (len >= 0 ? zero + len + 10 : zero + len - 10)} y={y + bt / 2} fontSize={valueSize} fontWeight={700} fill="var(--dk-ink)" dominantBaseline="central" textAnchor={len >= 0 ? "start" : "end"}>{v.label}</text>
+            <text data-category={row} data-series={k} x={x0 + (len >= 0 ? zero + len + 10 : zero + len - 10)} y={y + bt / 2} fontSize={valueSize} fontWeight={700} fill="var(--dk-ink)" dominantBaseline="central" textAnchor={len >= 0 ? "start" : "end"}>{v.label}</text>
           </g>;
         })}
       </g>;
@@ -109,10 +109,10 @@ function Columns({ data, w, h }: { data: ChartData; w: number; h: number }) {
           const colour = m === 1 ? (c.highlight || !data.categories.some((cc) => cc.highlight) ? "var(--dk-accent)" : "var(--dk-bar)") : seriesColour(k, m);
           return <g key={k}>
             <rect x={bx} y={v.n >= 0 ? top1 : base} width={bw} height={hh} fill={colour} />
-            <text x={bx + bw / 2} y={v.n >= 0 ? top1 - 8 : base + hh + 20} fontSize={valueSize} fontWeight={700} fill="var(--dk-ink)" textAnchor="middle">{v.label}</text>
+            <text data-category={col} data-series={k} x={bx + bw / 2} y={v.n >= 0 ? top1 - 8 : base + hh + 20} fontSize={valueSize} fontWeight={700} fill="var(--dk-ink)" textAnchor="middle">{v.label}</text>
           </g>;
         })}
-        <text x={cx} y={top + plotH + 26} fontSize={labelSize} fontWeight={c.highlight ? 700 : 500} fill="var(--dk-ink)" textAnchor="middle">
+        <text data-category={col} x={cx} y={top + plotH + 26} fontSize={labelSize} fontWeight={c.highlight ? 700 : 500} fill="var(--dk-ink)" textAnchor="middle">
           {lines[col]!.map((line, at) => <tspan key={at} x={cx} dy={at === 0 ? 0 : labelSize * 1.2}>{line}</tspan>)}
         </text>
       </g>;
@@ -161,11 +161,11 @@ function Lines({ data, w, h }: { data: ChartData; w: number; h: number }) {
         const rank = vals.filter((q) => q > v.n).length;
         const below = m > 1 && rank === m - 1 && m > 1;
         if (below && at < n - 1 && Math.abs(y(Math.max(...vals)) - y(v.n)) < 44) return null;
-        return <text key={`l${at}`} x={px(at)} y={y(v.n) + (below ? 30 : -14)} fontSize={20} fontWeight={700} fill="var(--dk-ink)" textAnchor="middle">{v.label}</text>;
+        return <text key={`l${at}`} data-category={at} data-series={k} x={px(at)} y={y(v.n) + (below ? 30 : -14)} fontSize={20} fontWeight={700} fill="var(--dk-ink)" textAnchor="middle">{v.label}</text>;
       })}
-      <text x={px(n - 1) + 16} y={endY.get(k)!} fontSize={22} fontWeight={700} fill="var(--dk-ink)" dominantBaseline="central">{s.values.at(-1)!.label}</text>
+      <text data-category={n - 1} data-series={k} x={px(n - 1) + 16} y={endY.get(k)!} fontSize={22} fontWeight={700} fill="var(--dk-ink)" dominantBaseline="central">{s.values.at(-1)!.label}</text>
     </g>)}
-    {data.categories.map((c, at) => at % every === 0 || at === n - 1 ? <text key={at} x={px(at)} y={h - 10} fontSize={labelSize} fontWeight={c.highlight ? 700 : 500} fill="var(--dk-muted)" textAnchor="middle">{visible(c.label)}</text> : null)}
+    {data.categories.map((c, at) => at % every === 0 || at === n - 1 ? <text key={at} data-category={at} x={px(at)} y={h - 10} fontSize={labelSize} fontWeight={c.highlight ? 700 : 500} fill="var(--dk-muted)" textAnchor="middle">{visible(c.label)}</text> : null)}
     <line x1={left} x2={w - right} y1={h - bottom + 6} y2={h - bottom + 6} stroke="var(--dk-ink)" strokeWidth={2} />
   </svg>;
 }

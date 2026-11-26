@@ -1,17 +1,20 @@
-import type { Artifact, ConversationCitation, OutputExport, OutputKind, OutputType } from "@gunther/contracts";
+import type { Artifact, OutputExport, OutputKind, OutputVoices } from "@gunther/contracts";
 import { lazy, Suspense, type ComponentProps, type ComponentType, type ReactNode } from "react";
-import { AnswerBody, citationNumbers } from "../pages/AnswerBody";
 import { audioFile, AudioOverview, AudioScript } from "./AudioOverview";
 import { CardsList, CardsView } from "./CardsView";
 import { LazySlidesView } from "./LazySlides";
 import { MindMapOutline, MindMapView } from "./MindMapView";
+import type { OutputContentProps } from "./OutputParts";
 import { ReportView } from "./ReportView";
 import { SlideReviewPanel } from "./SlideReviewPanel";
 import { isDeckV2, isReportV2 } from "./deck/detect";
 import { downloadDocx, downloadPptx } from "./deck/download";
-import { ReportV2Section } from "./deck/ReportV2";
-import { splitDocument, withoutTitle } from "./sections";
+import { splitDocument } from "./sections";
 import type { OutputListener } from "./useStudio";
+import "@fontsource/inter/latin-400.css";
+import "@fontsource/inter/latin-600.css";
+import "@fontsource/source-serif-4/latin-400.css";
+import "@fontsource/source-serif-4/latin-600.css";
 
 // Load the slide renderer and its charts only for a deck.
 const PrintSlides = lazy(() => import("./PrintSlides").then((module) => ({ default: module.PrintSlides })));
@@ -19,24 +22,18 @@ const PrintSlides = lazy(() => import("./PrintSlides").then((module) => ({ defau
 type SlideDesignControls = Pick<ComponentProps<typeof LazySlidesView>,
   "onAccent" | "onTheme" | "onDeckTheme" | "onDeckStyle" | "accentDisabled" | "deckStyleDisabled" | "pendingDeckStyle">;
 
-export type ReaderProps = {
-  artifact: Artifact;
-  onCite: (citation: ConversationCitation, index: number) => void;
-  onAsk?: ((index: number, quote?: string) => void) | undefined;
-  onAskChat?: ((question: string) => void) | undefined;
-  onPart?: ((index: number | null) => void) | undefined;
-  goTo?: { index: number; nonce: number } | null | undefined;
-  changed?: readonly number[] | undefined;
+export type ReaderProps = OutputContentProps & {
+  onCite: NonNullable<OutputContentProps["onCite"]>;
   onNotice?: ((text: string) => void) | undefined;
   design?: SlideDesignControls | undefined;
-  compact?: boolean;
-  type?: OutputType | undefined;
-  work?: { working: boolean; disabled: boolean; run: (title: string, listen: OutputListener) => void };
+  work?: { working: boolean; disabled: boolean; run: (title: string, listen: OutputListener) => void; voices?: OutputVoices | null | undefined };
 };
+
+type PrintProps = Pick<OutputContentProps, "artifact" | "type"> & { presentation: "print"; from: number; to: number };
 
 type OutputView = {
   Reader: ComponentType<ReaderProps>;
-  Print: ComponentType<{ artifact: Artifact; from: number; to: number }>;
+  Print: ComponentType<PrintProps>;
   wide?: boolean;
   pageRule?: string;
   printLabel?: string;
@@ -50,16 +47,16 @@ type OutputView = {
   Review?: typeof SlideReviewPanel;
 };
 
-function SlideReader({ onPart, design, ...props }: ReaderProps) {
-  return <LazySlidesView {...props} {...design} onSlide={onPart} />;
+function SlideReader({ onPart, design, presentation, ...props }: ReaderProps) {
+  return <LazySlidesView {...props} {...design} onSlide={onPart} compact={presentation === "preview"} />;
 }
 
-function CardReader({ compact, ...props }: ReaderProps) {
-  return compact ? <CardsList {...props} /> : <CardsView key={props.artifact.id} {...props} />;
+function CardReader(props: ReaderProps) {
+  return props.presentation === "preview" ? <CardsList {...props} /> : <CardsView key={props.artifact.id} {...props} />;
 }
 
-function MapReader({ compact, ...props }: ReaderProps) {
-  return compact ? <MindMapOutline {...props} /> : <MindMapView key={props.artifact.id} {...props} />;
+function MapReader(props: ReaderProps) {
+  return props.presentation === "preview" ? <MindMapOutline {...props} /> : <MindMapView key={props.artifact.id} {...props} />;
 }
 
 function PrintSources({ artifact }: { artifact: Artifact }) {
@@ -67,26 +64,22 @@ function PrintSources({ artifact }: { artifact: Artifact }) {
   return <section className="outputs-print-sources">
     <h2>Sources</h2>
     <ol>
-      {artifact.citations.map((citation, index) => {
-        const quote = citation.quote.replace(/\s+/g, " ").trim();
-        return <li key={index}>
+      {artifact.citations.map((citation, index) => (
+        <li key={index}>
           <strong>{citation.sourceTitle}</strong>
           {citation.locator && <span> · {citation.locator}</span>}
-          <q>{quote.length > 220 ? `${quote.slice(0, 219).trimEnd()}…` : quote}</q>
-        </li>;
-      })}
+          <q>{citation.quote}</q>
+        </li>
+      ))}
     </ol>
   </section>;
 }
 
-function PrintDocument({ artifact, brief, styled = false, children }: {
-  artifact: Artifact; brief?: string; styled?: boolean; children: ReactNode;
-}) {
+function PrintDocument({ artifact, children }: { artifact: Artifact; children: ReactNode }) {
   const date = new Date(artifact.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
-  return <article className={`outputs-print-report${styled ? " is-studio" : ""}`}>
+  return <article className="outputs-print-report">
     <header>
       <h1>{artifact.title}</h1>
-      {brief && <div className="outputs-print-brief"><AnswerBody content={brief} numbers={[]} /></div>}
       <p className="outputs-print-meta">Gunther · version {artifact.versionNumber} · {date}</p>
     </header>
     {children}
@@ -94,37 +87,30 @@ function PrintDocument({ artifact, brief, styled = false, children }: {
   </article>;
 }
 
-function PrintReport({ artifact }: { artifact: Artifact }) {
-  const numbers = citationNumbers(artifact.citations);
-  const { preamble, sections } = splitDocument(artifact.content, "report");
-  const v2 = isReportV2(artifact.content);
-  const brief = withoutTitle(preamble).replace(/^\s*<!--\s*report:\s*v2\s*-->\s*/, "");
-  return <PrintDocument artifact={artifact} brief={brief} styled={v2}>
-    {artifact.origin === "legacy" || sections.length === 0
-      ? <section><AnswerBody content={withoutTitle(artifact.content)} numbers={artifact.origin === "legacy" ? [] : numbers} /></section>
-      : sections.map((text, index) => <section key={index}>{v2 ? <ReportV2Section text={text} numbers={numbers} /> : <AnswerBody content={text} numbers={numbers} />}</section>)}
-  </PrintDocument>;
+function PrintReport(props: PrintProps) {
+  return <PrintDocument artifact={props.artifact}><ReportView {...props} /></PrintDocument>;
 }
 
 function PrintDeck({ artifact, from, to }: { artifact: Artifact; from: number; to: number }) {
-  const count = splitDocument(artifact.content, "slides").sections.length;
+  const { sections } = splitDocument(artifact.content, "slides");
+  const count = sections.length;
   const end = Math.min(to, count);
-  return <div className="outputs-print-deck">
+  return <div className="outputs-print-deck" data-slide-count={sections.slice(from, end).length}>
     <Suspense fallback={null}><PrintSlides artifact={artifact} from={from} to={end} /></Suspense>
     {artifact.citations.length > 0 && end >= count && <section className="outputs-print-slide outputs-print-slide-sources"><PrintSources artifact={artifact} /></section>}
   </div>;
 }
 
-function PrintCards({ artifact }: { artifact: Artifact }) {
-  return <PrintDocument artifact={artifact}><CardsList artifact={artifact} /></PrintDocument>;
+function PrintCards(props: PrintProps) {
+  return <PrintDocument artifact={props.artifact}><CardsList {...props} /></PrintDocument>;
 }
 
-function PrintMap({ artifact }: { artifact: Artifact }) {
-  return <PrintDocument artifact={artifact}><MindMapOutline artifact={artifact} /></PrintDocument>;
+function PrintMap(props: PrintProps) {
+  return <PrintDocument artifact={props.artifact}><MindMapOutline {...props} /></PrintDocument>;
 }
 
-function PrintAudio({ artifact }: { artifact: Artifact }) {
-  return <PrintDocument artifact={artifact}><AudioScript artifact={artifact} /></PrintDocument>;
+function PrintAudio(props: PrintProps) {
+  return <PrintDocument artifact={props.artifact}><AudioScript {...props} /></PrintDocument>;
 }
 
 export const outputViews: Record<OutputKind, OutputView> = {

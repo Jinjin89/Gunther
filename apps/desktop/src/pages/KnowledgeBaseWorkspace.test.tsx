@@ -19,8 +19,12 @@ vi.mock("../components/markdown/MarkdownEditor", () => ({
   MarkdownEditor: ({ value, onChange, ariaLabel }: { value: string; onChange: (value: string) => void; ariaLabel: string }) =>
     <textarea value={value} aria-label={ariaLabel} onChange={(event) => onChange(event.target.value)} />,
 }));
-vi.mock("../outputs/LazySlides", () => ({ LazySlidesView: ({ onSlide }: { onSlide?: (index: number) => void }) => <>
-  <p>Slide reader</p><button type="button" onClick={() => onSlide?.(1)}>Show second slide</button>
+vi.mock("../outputs/LazySlides", () => ({ LazySlidesView: ({ onSlide, onAsk }: {
+  onSlide?: (index: number) => void; onAsk?: (index: number) => void;
+}) => <>
+  <p>Slide reader</p>
+  <button type="button" onClick={() => { onSlide?.(0); onAsk?.(0); }}>Ask about this slide</button>
+  <button type="button" onClick={() => onSlide?.(1)}>Show second slide</button>
 </> }));
 
 const ws = "workspace";
@@ -751,11 +755,13 @@ it("asks about a map path in Chat using the current source selection", async () 
   await user.click(await screen.findByRole("button", { name: /Field map Mind map Version 1/ }));
   const reader = within(await screen.findByRole("region", { name: "Mind map" }));
   expect(screen.getByRole("button", { name: "Expand Library" })).toBeVisible();
-  await user.click(reader.getByRole("button", { name: "Inspect citation 1" }));
+  await user.click(await reader.findByRole("button", { name: "Expand Weather" }));
+  await user.click(await reader.findByRole("button", { name: "Inspect citation 1" }));
   const evidence = within(screen.getByRole("tabpanel", { name: "Evidence" }));
   expect(evidence.getByText("Observations were recorded at noon.")).toBeVisible();
   expect(send).not.toHaveBeenCalled();
   await user.click(evidence.getByRole("button", { name: "All 1 source" }));
+  await user.click(within(reader.getByRole("treeitem", { name: "Midday observations" })).getByText("Midday observations"));
   await user.click(reader.getByRole("button", { name: "Ask about Midday observations" }));
   expect(screen.queryByRole("region", { name: "Mind map" })).not.toBeInTheDocument();
   expect(await screen.findByRole("textbox", { name: "Message Gunther" })).toBeVisible();
@@ -1368,6 +1374,14 @@ it("follows the open slide when filtering output Evidence", async () => {
     content: "# First slide\n[1]\n\n---\n\n# Second slide\n[13]", citations });
   setup({ artifacts: [deck] });
   await user.click(await screen.findByRole("button", { name: /Field deck Slides Version 1/ }));
+  const reader = within(await screen.findByRole("article", { name: "Open output" }));
+  expect(reader.getByRole("heading", { name: "Field deck", level: 1 })).toBeVisible();
+  expect(reader.getByRole("textbox", { name: "Refine" })).toBeVisible();
+  const actions = reader.getByRole("button", { name: "Output actions" });
+  await user.click(actions);
+  expect(screen.getByRole("menuitem", { name: "Style" })).toBeVisible();
+  await user.keyboard("{Escape}");
+  expect(actions).toHaveFocus();
   await user.click(await screen.findByRole("tab", { name: "Evidence (13)" }));
   const pane = within(screen.getByRole("tabpanel", { name: "Evidence" }));
   await user.click(pane.getByRole("button", { name: "This slide" }));
@@ -1475,6 +1489,7 @@ it("keeps an unsaved document edit until leaving is confirmed", async () => {
   await user.click(await screen.findByRole("button", { name: "Output actions" }));
   await user.click(screen.getByRole("menuitem", { name: "Edit" }));
   const editor = screen.getByRole("textbox", { name: "Report, as Markdown" });
+  expect(screen.getByRole("region", { name: "Preview" })).toBeVisible();
   await user.type(editor, " A new detail.");
   await user.click(screen.getByRole("button", { name: "Back to chat" }));
   expect((editor as HTMLTextAreaElement).value).toContain("A new detail.");
@@ -1501,7 +1516,10 @@ it("moves the whole output to Trash from the menu on an older open version", asy
   await user.click(screen.getByRole("menuitem", { name: "Versions" }));
   await user.click(screen.getByRole("button", { name: "Version 1" }));
   await screen.findByRole("button", { name: "Output actions" });
+  const reader = within(screen.getByRole("article", { name: "Open output" }));
+  expect(reader.getByRole("button", { name: "Version 1" })).toHaveAttribute("aria-current", "page");
   await openMenu();
+  expect(screen.getByRole("menuitem", { name: "Edit" })).toBeDisabled();
   await user.click(screen.getByRole("menuitem", { name: "Move to Trash" }));
   expect(move).toHaveBeenCalledExactlyOnceWith(base.id, older.id, ws);
   expect(onTrashed).toHaveBeenCalledExactlyOnceWith(entry);
@@ -1534,10 +1552,25 @@ it("refines the open lineage and updates its scope only on request", async () =>
   const { create, patch, turn } = setup({ artifacts: [saved], conversations: [conversation("earlier", { scope: selected("s3") })] });
   await user.click(await screen.findByRole("checkbox", { name: "Select Review notes" }));
   await user.click(await screen.findByRole("button", { name: /Field findings Report Version 1/ }));
+  const reader = within(await screen.findByRole("article", { name: "Open output" }));
+  expect(reader.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+  expect(reader.getByText("Version 1")).toBeVisible();
+  const trigger = await reader.findByRole("button", { name: "Refine output" });
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(reader.queryByRole("textbox", { name: "Refine" })).not.toBeInTheDocument();
+  await user.click(trigger);
   const input = await screen.findByRole("textbox", { name: "Refine" });
   const refine = screen.getByRole("button", { name: "Refine" });
+  expect(input).toHaveFocus();
   expect(screen.getByText("Using this output’s 1 source")).toBeVisible();
   await user.type(input, "Make the conclusion clearer");
+  await user.keyboard("{Escape}");
+  expect(trigger).toHaveFocus();
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await user.keyboard("{Enter}");
+  expect(input).toHaveFocus();
+  expect(input).toHaveValue("Make the conclusion clearer");
+  expect(screen.getByText("Using this output’s 1 source")).toBeVisible();
   await user.click(refine);
   expect(turn).toHaveBeenLastCalledWith(base.id, "earlier", expect.objectContaining({ kind: "message", text: "Make the conclusion clearer", targetLineageId: saved.lineageId }), ws, expect.any(Function), expect.any(AbortSignal));
   expect(turn.mock.calls[0]![2]).not.toHaveProperty("build");
@@ -1547,6 +1580,83 @@ it("refines the open lineage and updates its scope only on request", async () =>
   expect(patch).toHaveBeenCalledExactlyOnceWith(base.id, "earlier", { targetLineageId: saved.lineageId, scope: selected("s1", "s2") }, ws);
   expect(create).not.toHaveBeenCalled();
   await waitFor(() => expect(screen.queryByRole("button", { name: "Update to current 2" })).toBeNull());
+});
+
+it("opens the shared refinement form for an outstanding question", async () => {
+  setup({ artifacts: [version()], conversations: [conversation("earlier", {
+    waiting: true, pending: { messageId: "question", question: "Which period?", options: ["The first week"] },
+  })] });
+  await userEvent.click(await screen.findByRole("button", { name: /Field findings Report Version 1/ }));
+  const form = within(await screen.findByRole("form", { name: "Refine output" }));
+  expect(form.getByText("Which period?")).toBeVisible();
+  expect(form.getByRole("button", { name: "The first week" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Refine output" })).toHaveAttribute("aria-expanded", "true");
+});
+
+it.each([
+  { entry: "header", explicitlySelected: false },
+  { entry: "section", explicitlySelected: true },
+])("keeps the $entry Refine target when focusing a form below a long report", async ({ explicitlySelected }) => {
+  const user = userEvent.setup();
+  const outline = ["Start", "Methods", "Observations", "Limits", "Conclusion"].map((heading) => ({ heading, goal: "" }));
+  const content = "# Field findings\n\n" + outline.map(({ heading }) =>
+    `## ${heading}\n\n${("Field observations support this section. ".repeat(24)).trim()}`).join("\n\n");
+  const saved = version({ content, outline });
+  const { turn } = setup({ artifacts: [saved], conversations: [conversation("earlier")] });
+
+  await user.click(await screen.findByRole("button", { name: /Field findings Report Version 1/ }));
+  const reader = await screen.findByRole("article", { name: "Open output" });
+  await within(reader).findByRole("heading", { name: "Methods" });
+  const scroller = reader.closest<HTMLElement>(".library-middle-page")!;
+  const sections = [...reader.querySelectorAll<HTMLElement>("[data-section]")];
+  let firstVisible = 1;
+  vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
+  sections.forEach((section, index) => {
+    vi.spyOn(section, "getBoundingClientRect").mockImplementation(() => ({ bottom: (index - firstVisible + 1) * 1000 }) as DOMRect);
+  });
+  const showPart = (index: number) => {
+    firstVisible = index;
+    fireEvent.scroll(scroller);
+  };
+  const trigger = explicitlySelected
+    ? within(sections[1]!).getByRole("button", { name: "Refine section" })
+    : within(reader).getByRole("button", { name: "Refine output" });
+
+  showPart(1);
+  await user.click(trigger);
+  const input = screen.getByRole("textbox", { name: "Refine" });
+  expect(input).toHaveFocus();
+  showPart(sections.length - 1);
+  await user.keyboard("{Escape}");
+  expect(trigger).toHaveFocus();
+
+  showPart(1);
+  await user.keyboard("{Enter}");
+  expect(input).toHaveFocus();
+  showPart(sections.length - 1);
+  await user.type(input, "Clarify the sampling method.");
+  await user.click(within(screen.getByRole("form", { name: "Refine output" })).getByRole("button", { name: "Refine" }));
+  expect(turn).toHaveBeenLastCalledWith(base.id, "earlier", expect.objectContaining({
+    focus: { section: 2, selected: explicitlySelected }, targetLineageId: saved.lineageId,
+  }), ws, expect.any(Function), expect.any(AbortSignal));
+});
+
+it("uses the open slide after clearing an explicit Refine target", async () => {
+  const user = userEvent.setup();
+  const deck = version({ kind: "slides", format: "slides", style: "slides", outputType: "Slides", title: "Field deck",
+    content: "# First slide\n\n---\n\n# Second slide" });
+  const { turn } = setup({ artifacts: [deck], conversations: [conversation("earlier")] });
+  await user.click(await screen.findByRole("button", { name: /Field deck Slides Version 1/ }));
+  const reader = within(await screen.findByRole("article", { name: "Open output" }));
+  await user.click(await reader.findByRole("button", { name: "Ask about this slide" }));
+  expect(reader.getByText("About slide 1")).toBeVisible();
+  await user.click(reader.getByRole("button", { name: "Clear" }));
+  await user.click(reader.getByRole("button", { name: "Show second slide" }));
+  await user.type(reader.getByRole("textbox", { name: "Refine" }), "Explain the result more clearly.");
+  await user.click(reader.getByRole("button", { name: "Refine" }));
+  expect(turn).toHaveBeenCalledExactlyOnceWith(base.id, "earlier", expect.objectContaining({
+    focus: { section: 2, selected: false }, targetLineageId: deck.lineageId,
+  }), ws, expect.any(Function), expect.any(AbortSignal));
 });
 
 it("opens card evidence and shows a refined card in the new version", async () => {
@@ -1579,9 +1689,16 @@ it("opens card evidence and shows a refined card in the new version", async () =
   const evidence = within(screen.getByRole("tabpanel", { name: "Evidence" }));
   expect(evidence.getByText("Readings were recorded at noon.")).toBeVisible();
   await user.click(evidence.getByRole("button", { name: "All 1 source" }));
-  await user.click(reader().getByRole("button", { name: "Refine this card" }));
+  const cardAction = reader().getByRole("button", { name: "Refine this card" });
+  await user.click(cardAction);
   expect(screen.getByText("About card 2", { exact: false })).toBeVisible();
-  await user.type(screen.getByRole("textbox", { name: "Refine" }), "Ask about the time recorded in the log");
+  const refine = screen.getByRole("textbox", { name: "Refine" });
+  expect(refine).toHaveFocus();
+  await user.keyboard("{Escape}");
+  expect(cardAction).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(refine).toHaveFocus();
+  await user.type(refine, "Ask about the time recorded in the log");
   await user.click(screen.getByRole("button", { name: "Refine" }));
   expect(turn).toHaveBeenLastCalledWith(base.id, "earlier", expect.objectContaining({
     focus: { section: 2, selected: true }, targetLineageId: saved.lineageId,
@@ -1619,6 +1736,49 @@ it("offers the card export formats from the catalog and prints the answer sheet"
   expect(paper).toContain("Why: The end time was 12:00.");
 });
 
+it("clears an image error when the same saved version prints successfully on retry", async () => {
+  const user = userEvent.setup();
+  const saved = version({ content: "# Field findings\n\n## Measurements\n\n![Field diagram](gunther-asset:diagram)" });
+  setup({ artifacts: [saved] });
+  const print = vi.spyOn(window, "print").mockImplementation(() => {});
+  await user.click(await screen.findByRole("button", { name: /Field findings Report Version 1/ }));
+  const reader = within(await screen.findByRole("article", { name: "Open output" }));
+  const actions = await reader.findByRole("button", { name: "Output actions" });
+  const image = document.querySelector<HTMLImageElement>("#print-root img")!;
+  const decode = vi.fn().mockRejectedValueOnce(new Error("The image is unavailable.")).mockResolvedValue(undefined);
+  Object.defineProperty(image, "decode", { value: decode });
+  const exportPdf = async () => {
+    await user.click(actions);
+    await user.click(screen.getByRole("menuitem", { name: "Export PDF" }));
+  };
+
+  await exportPdf();
+  expect(await reader.findByRole("alert")).toHaveTextContent("Could not load the print image “Field diagram”.");
+  expect(print).not.toHaveBeenCalled();
+
+  await exportPdf();
+  await waitFor(() => expect(print).toHaveBeenCalledOnce());
+  expect(decode).toHaveBeenCalledTimes(2);
+  expect(knowledgeApi.artifact).toHaveBeenLastCalledWith(base.id, saved.id, ws);
+  expect(reader.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it.each([
+  { type: mindMap, glyph: "lucide-network", saved: version({
+    kind: "map", format: "map", style: null, outputType: "Saved outline", content: "- Field notes",
+  }) },
+  { type: audioOverview, glyph: "lucide-audio-lines", saved: {
+    ...audioVersion(), style: null, outputType: "Saved narration",
+  } },
+])("uses the $type.shape catalog glyph and saved label for an unstyled version", async ({ type, glyph, saved }) => {
+  vi.mocked(knowledgeApi.outputTypes).mockResolvedValue([report, type]);
+  setup({ artifacts: [saved] });
+  await userEvent.click(await screen.findByRole("button", { name: `${saved.title} ${saved.outputType} Version 1` }));
+  const reader = await screen.findByRole("article", { name: "Open output" });
+  expect(await within(reader).findByText(saved.outputType)).toBeVisible();
+  expect(reader.querySelector(".output-reader-meta svg")).toHaveClass(glyph);
+});
+
 it.each([
   { scope: { ...selected(), sessionIds: ["chat-1"] }, label: "1 discussion" },
   { scope: { ...selected(), unitIds: ["answer-1"] }, label: "1 saved answer" },
@@ -1627,6 +1787,7 @@ it.each([
 ])("describes the saved scope as $label", async ({ scope, label }) => {
   setup({ artifacts: [version({ scope })] });
   await userEvent.click(await screen.findByRole("button", { name: /Field findings Report Version 1/ }));
+  await userEvent.click(await screen.findByRole("button", { name: "Refine output" }));
   expect(await screen.findByText(`Using this output’s ${label}`)).toBeVisible();
 });
 
@@ -1827,9 +1988,14 @@ it("uses the shared Tavily availability and sends Web only for opted-in Studio f
 
   await user.click(await screen.findByRole("button", { name: /Field findings Report Version 1/ }));
   const reader = within(screen.getByRole("article", { name: "Open output" }));
+  const refineTrigger = await reader.findByRole("button", { name: "Refine output" });
+  await user.click(refineTrigger);
   const refineWeb = await reader.findByRole("switch", { name: "Search the web" });
   expect(refineWeb).not.toBeChecked();
   await user.click(refineWeb);
+  await user.click(refineTrigger);
+  await user.click(refineTrigger);
+  expect(refineWeb).toBeChecked();
   await user.type(reader.getByRole("textbox", { name: "Refine" }), "Look for newer records");
   await user.click(reader.getByRole("button", { name: "Refine" }));
   await waitFor(() => expect(turn.mock.calls[1]?.[2]).toMatchObject({ text: "Look for newer records", web: true }));

@@ -60,9 +60,9 @@ function box(children: Paragraph[], edge: "top" | "left"): Table {
   });
 }
 
-function markdown(text: string): Array<Paragraph | Table> {
+function markdown(text: string, paragraphs = false): Array<Paragraph | Table> {
   const out: Array<Paragraph | Table> = [];
-  for (const block of scan(text)) {
+  for (const block of scan(text, { paragraphs })) {
     if (block.t === "line") out.push(para(block.text));
     else if (block.t === "h3") out.push(new Paragraph({ heading: HeadingLevel.HEADING_3, children: runs(block.text, { font: SANS, size: 24, bold: true, color: "111317" }), spacing: { before: 240, after: 100 } }));
     else if (block.t === "items") block.items.forEach((item, at) => out.push(new Paragraph(block.ordered ? { children: [...runs(`${at + 1}. `), ...runs(item)], indent: { left: 360, hanging: 360 }, spacing: { after: 80, line: 330 } } : { children: runs(item), bullet: { level: 0 }, spacing: { after: 80, line: 330 } })));
@@ -108,16 +108,17 @@ function exhibitTable(table: ExhibitTable): Table {
   return grid(table.head, table.rows.map((row) => ({ cells: row.cells, hi: row.highlight })), table.align.map((a) => a === "right"));
 }
 
-function blocks(list: ReportBlock[]): Array<Paragraph | Table> {
+function blocks(list: ReportBlock[], paragraphs = false): Array<Paragraph | Table> {
   const out: Array<Paragraph | Table> = [];
   for (const block of list) {
-    if (block.t === "md") out.push(...markdown(block.text));
+    if (block.t === "md") out.push(...markdown(block.text, paragraphs));
     else if (block.t === "callout") {
       out.push(box([new Paragraph({ spacing: { after: 60 }, children: runs(visible(block.title).toUpperCase(), { font: SANS, size: 18, bold: true }) }), ...markdown(block.text).filter((p): p is Paragraph => p instanceof Paragraph)], "left"), new Paragraph({ spacing: { after: 120 }, children: [] }));
+    } else if (!block.table) {
+      out.push(...markdown(block.raw));
     } else {
       out.push(new Paragraph({ keepNext: true, spacing: { before: 200, after: 100 }, children: runs(block.caption, { font: SANS, size: 20, bold: true }) }));
-      if (block.table) out.push(exhibitTable(block.table));
-      else if (block.raw) out.push(...markdown(block.raw));
+      out.push(exhibitTable(block.table));
       if (block.source) out.push(new Paragraph({ spacing: { before: 80, after: 200 }, children: runs(`Source: ${block.source}`, { font: SANS, size: 16, color: "545A63" }) }));
     }
   }
@@ -132,7 +133,8 @@ export function buildDocx(content: string, options: DocxOptions = {}): Document 
   const body: Array<Paragraph | Table> = [];
   const title = doc.title ?? options.title ?? "Report";
   body.push(new Paragraph({ heading: HeadingLevel.TITLE, spacing: { after: 120 }, children: runs(title, { font: SANS, size: 52, bold: true, color: "111317" }) }));
-  if (doc.subtitle) body.push(new Paragraph({ spacing: { after: 320 }, children: runs(doc.subtitle, { size: 26, italics: true, color: "545A63" }) }));
+  if (doc.sections.length === 0) body.push(...blocks(doc.preamble, true));
+  else if (doc.subtitle) body.push(new Paragraph({ spacing: { after: 320 }, children: runs(doc.subtitle, { size: 26, italics: true, color: "545A63" }) }));
   for (const section of doc.sections) {
     if (section.summary) {
       body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { before: 200, after: 120 }, keepNext: true, children: runs(section.heading, { font: SANS, size: 32, bold: true, color: "111317" }) }));

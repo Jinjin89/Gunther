@@ -1,0 +1,147 @@
+.mind-map-reader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-inline-size: 0;
+  font-family: var(--outputs-sans, var(--gx-font-sans));
+}
+.mind-map-reader > :not(.mind-map-modes, .mind-map-zoom) { grid-column: 1 / -1; min-inline-size: 0; }
+.mind-map-modes, .mind-map-zoom {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.mind-map-zoom { justify-content: flex-end; font-variant-numeric: tabular-nums; }
+.mind-map-reader :is(.mind-map-modes, .mind-map-zoom, .mind-map-selection-bar) button { min-block-size: 32px; }
+.mind-map-modes [aria-pressed="true"] { background: var(--gx-active); }
+.mind-map-zoom [aria-label="Actual size"] { min-inline-size: 4em; }
+.mind-map-zoom button:disabled { opacity: 0.55; }
+
+.mind-map-scroll {
+  position: relative;
+  block-size: var(--map-available-height, 56vh);
+  min-block-size: 12rem;
+  overflow: hidden;
+  overflow: clip;
+  border: 1px solid var(--gx-line-2);
+  border-radius: var(--gx-radius-lg);
+  background: var(--gx-canvas);
+  cursor: grab;
+  touch-action: none;
+}
+.mind-map-scroll:active { cursor: grabbing; }
+.mind-map-scene, .mind-map-links { position: absolute; left: 0; top: 0; }
+.mind-map-scene { transform-origin: 0 0; }
+.mind-map-scene[data-layout-ready="false"] { visibility: hidden; }
+.mind-map-links {
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: visible;
+  fill: none;
+  stroke: var(--gx-faint);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+.mind-map-links path { vector-effect: non-scaling-stroke; }
+.mind-map-node {
+  position: absolute;
+  box-sizing: border-box;
+  inline-size: max-content;
+  border-radius: var(--gx-radius-sm);
+  color: var(--gx-ink);
+  background: var(--gx-canvas);
+  font-size: var(--gx-text-md);
+  line-height: 1.45;
+  cursor: default;
+}
+.mind-map-node .mind-map-node-row { padding: 2px 4px; }
+.mind-map-node .mind-map-node-label { max-inline-size: 24ch; }
+.mind-map-node[data-depth="0"] {
+  border: 1px solid var(--gx-ink);
+  font: 600 var(--gx-text-xl)/1.25 var(--outputs-serif, var(--gx-font-display));
+}
+.mind-map-node[data-depth="0"] .mind-map-node-row { padding: 12px; }
+.mind-map-node[data-depth="1"] { font-size: var(--gx-text-lg); font-weight: 600; }
+.mind-map-node:hover, .mind-map-outline-item > .mind-map-node-row:hover { background: var(--gx-hover); }
+.mind-map-node[aria-selected="true"], .mind-map-outline-item[aria-selected="true"] > .mind-map-node-row { background: var(--gx-active); }
+.mind-map-reader :is(.mind-map-node, .mind-map-selection):focus-visible,
+.mind-map-outline-item:focus-visible > .mind-map-node-row { outline: 2px solid var(--gx-ink); outline-offset: 2px; }
+.mind-map-reader .mind-map-outline .mind-map-outline-item:focus-visible { outline: none; }
+.mind-map-node-row { display: flex; align-items: start; gap: 4px; }
+.mind-map-node-label, .mind-map-selection-bar strong { min-inline-size: 0; overflow-wrap: anywhere; }
+.mind-map-node-row .answer-markdown, .mind-map-outline .answer-markdown { font: inherit; }
+.mind-map-node-row .answer-markdown p, .mind-map-outline .answer-markdown p { margin: 0; }
+.mind-map-node-row .answer-markdown a { color: inherit; }
+.mind-map-node-row .answer-markdown img { max-inline-size: 100%; block-size: auto; }
+.mind-map-node-row .answer-markdown :is(pre, table) { max-inline-size: 100%; overflow: auto; }
+.mind-map-node-row .answer-markdown sup { font-family: var(--outputs-sans, var(--gx-font-sans)); }
+.mind-map-node-row .answer-markdown sup button {
+  padding: 0 2px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.mind-map-node-row .answer-markdown sup button:hover { text-decoration: underline; }
+.mind-map-node-row :is(.mind-map-toggle, .mind-map-node-status) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  inline-size: auto;
+  min-inline-size: 32px;
+  block-size: 32px;
+  padding-inline: 3px;
+  font: 500 var(--gx-text-xs)/1 var(--outputs-sans, var(--gx-font-sans));
+  font-variant-numeric: tabular-nums;
+}
+
+.mind-map-selection { padding-block: 4px; border-block-start: 1px solid var(--gx-line-2); }
+:is(.mind-map-selection, .library-middle-page:has(.mind-map-reader > .mind-map-outline)) {
+  scrollbar-color: var(--gx-line-3) var(--gx-canvas);
+}
+.mind-map-outline + .mind-map-selection {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: 1;
+  max-block-size: 40vh;
+  overflow: auto;
+  background: var(--gx-canvas);
+}
+.mind-map-selection-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.mind-map-selection-bar strong { flex: 1 1 10ch; font-size: var(--gx-text-md); }
+.mind-map-selection .outputs-status { max-inline-size: var(--outputs-reading-width, 66ch); }
+.mind-map-unreadable { overflow-wrap: anywhere; color: var(--gx-muted); font-size: var(--gx-text-sm); }
+
+.mind-map-outline { --map-indent: 16px; min-inline-size: 0; }
+.mind-map-outline-level { margin: 0; padding: 0; list-style: none; }
+.mind-map-outline-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-inline-start: min(26%, calc(var(--map-indent-level) * var(--map-indent)));
+  padding-block: 3px;
+  font-size: var(--gx-text-md);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.mind-map-outline-label .answer-markdown { min-inline-size: 0; }
+.mind-map-outline-label[data-depth="0"] {
+  font: 600 var(--gx-text-xl)/1.25 var(--outputs-serif, var(--gx-font-display));
+}
+.mind-map-outline-label[data-depth="1"] { font-size: var(--gx-text-lg); font-weight: 600; }
+.mind-map-outline-label small { flex: none; color: var(--gx-muted); font-size: var(--gx-text-2xs); }
+.mind-map-outline-item > .mind-map-node-row { border-radius: var(--gx-radius-sm); }
+.mind-map-outline-item > .mind-map-node-row > .mind-map-node-label { flex: 1; }
+
+@media print {
+  .mind-map-outline { --map-indent: 12pt; }
+  .mind-map-outline .mind-map-outline-label { font-size: 11pt; line-height: 1.55; }
+  .mind-map-outline .mind-map-outline-label[data-depth="0"] { font-size: 15pt; break-after: avoid; }
+  .mind-map-outline .mind-map-outline-label[data-depth="1"] { font-size: 12pt; break-after: avoid; }
+  .mind-map-outline .mind-map-outline-label small { font-size: 8.5pt; }
+  #print-root .mind-map-outline .answer-markdown p { margin: 0; }
+}

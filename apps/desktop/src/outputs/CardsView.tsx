@@ -1,32 +1,14 @@
-import type { Artifact, ConversationCitation } from "@gunther/contracts";
-import { ChevronLeft, ChevronRight, MessageSquarePlus } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { CitationDetails } from "../components/evidence/CitationButton";
-import { AnswerBody, citationNumbers, withoutMarks } from "../pages/AnswerBody";
-import { SectionStatus } from "./ReportView";
+import { AnswerBody, withoutMarks } from "../pages/AnswerBody";
 import { readCards, type StudyCard } from "./cards";
-
-type CardReaderProps = {
-  artifact: Artifact;
-  onCite?: ((citation: ConversationCitation, index: number) => void) | undefined;
-  onAsk?: ((index: number) => void) | undefined;
-  changed?: readonly number[] | undefined;
-};
-
-function cardCitations(artifact: Artifact, onCite: CardReaderProps["onCite"]) {
-  return {
-    numbers: citationNumbers(artifact.citations),
-    onCitation: onCite ? (index: number) => {
-      const citation = artifact.citations[index];
-      if (citation) onCite(citation, index);
-    } : undefined,
-  };
-}
+import { OutputPartTools, SectionStatus, outputCitations, type OutputContentProps } from "./OutputParts";
 
 function CardAnswer({ card, selected, citations }: {
   card: StudyCard;
   selected?: number | undefined;
-  citations: ReturnType<typeof cardCitations>;
+  citations: ReturnType<typeof outputCitations>;
 }) {
   if (card.kind === "flashcard") return <AnswerBody content={card.answer} {...citations} />;
   return <div className="cards-answer">
@@ -42,35 +24,22 @@ function CardAnswer({ card, selected, citations }: {
   </div>;
 }
 
-function CardTools({ position, onAsk, changed }: { position: number } & Pick<CardReaderProps, "onAsk" | "changed">) {
-  if (!onAsk && !changed?.includes(position)) return null;
-  return <div className="outputs-section-tools">
-    {changed?.includes(position) && <em className="outputs-changed">Changed</em>}
-    {onAsk && <button type="button" className="outputs-ask-section" onClick={() => onAsk(position)}>
-      <MessageSquarePlus size={12} aria-hidden="true" /> Refine this card
-    </button>}
-  </div>;
-}
-
 /** The answer sheet, also used for print with static source numbers. */
-export function CardsList({ artifact, onCite, onAsk, changed }: CardReaderProps) {
+export function CardsList({ artifact, onCite, onAsk, changed, presentation }: OutputContentProps) {
   const cards = useMemo(() => readCards(artifact.content), [artifact.content]);
-  const citations = cardCitations(artifact, onCite);
+  const citations = outputCitations({ artifact, onCite, presentation });
   if (!cards.length) return <p>No readable cards.</p>;
   return <CitationDetails.Provider value={artifact.citations}><ol className="cards-list" aria-label="All cards">
     {cards.map((card) => <li key={artifact.outline[card.position]?.id ?? card.position} className="cards-list-item">
-      <CardTools position={card.position} onAsk={onAsk} changed={changed} />
+      {presentation !== "print" && <OutputPartTools position={card.position} onAsk={onAsk} changed={changed} label="Refine this card" />}
       <AnswerBody content={`## ${card.question}`} {...citations} />
       <CardAnswer card={card} citations={citations} />
-      {onCite && <SectionStatus info={artifact.sections[card.position]} />}
+      {presentation !== "print" && onCite && <SectionStatus info={artifact.sections[card.position]} />}
     </li>)}
   </ol></CitationDetails.Provider>;
 }
 
-export function CardsView({ artifact, onCite, onAsk, changed, onPart, goTo }: CardReaderProps & {
-  onPart?: ((index: number | null) => void) | undefined;
-  goTo?: { index: number; nonce: number } | null | undefined;
-}) {
+export function CardsView({ artifact, onCite, onAsk, changed, onPart, goTo, presentation }: OutputContentProps) {
   const cards = useMemo(() => readCards(artifact.content), [artifact.content]);
   const [page, setPage] = useState(0);
   const [list, setList] = useState(false);
@@ -92,7 +61,7 @@ export function CardsView({ artifact, onCite, onAsk, changed, onPart, goTo }: Ca
   useEffect(() => { onPart?.(list ? null : position); }, [list, onPart, position]);
 
   if (!card) return <p>No readable cards.</p>;
-  const citations = cardCitations(artifact, onCite);
+  const citations = outputCitations({ artifact, onCite, presentation });
   const quizzes = cards.filter((item) => item.kind === "quiz");
   const answered = quizzes.filter((item) => answers[item.position] !== undefined);
   const correct = answered.filter((item) => answers[item.position] === item.correct).length;
@@ -124,9 +93,9 @@ export function CardsView({ artifact, onCite, onAsk, changed, onPart, goTo }: Ca
           onClick={() => { setAnswers({}); setList(false); move(0); }}>Start again</button>
       </div>}
     </div>
-    {list ? <CardsList artifact={artifact} onCite={onCite} onAsk={onAsk} changed={changed} /> : <>
+    {list ? <CardsList artifact={artifact} onCite={onCite} onAsk={onAsk} changed={changed} presentation={presentation} /> : <>
       <div className="cards-practice">
-        <CardTools position={card.position} onAsk={onAsk} changed={changed} />
+        <OutputPartTools position={card.position} onAsk={onAsk} changed={changed} label="Refine this card" />
         <div className="cards-question">
           <AnswerBody content={`## ${card.question}`} {...citations} hideCitations={!revealed} />
           {card.kind === "flashcard" && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm cards-flip"

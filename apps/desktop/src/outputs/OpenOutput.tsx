@@ -1,12 +1,12 @@
 import type { Artifact, ArtifactConversationMessage, ArtifactTurnInput, ConversationCitation, OutputKind, OutputScope } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
-import { Trash2 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { MessageSquarePlus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ApiRequestError, isTurnResult, knowledgeApi } from "../api";
 import { CitationDetails } from "../components/evidence/CitationButton";
 import { isWebCitation } from "../components/evidence/citationKind";
 import { KeyResultsStatus } from "../keyResults/KeyResultsStatus";
-import { AnswerBody, citationNumbers, verificationNotice } from "../pages/AnswerBody";
+import { AnswerBody, verificationNotice } from "../pages/AnswerBody";
 import { ArtifactMenu } from "./ArtifactMenu";
 import { ArtifactMessageList } from "./ArtifactMessages";
 import { artifactRequestId, EARLIER_WORK, libraryScope, scopeLabel } from "./artifactConversations";
@@ -14,6 +14,8 @@ import { withDeckMarker } from "./deck/marker";
 import { discardOutputEdit, EditPane } from "./EditPane";
 import { outputActivity } from "./liveOutput";
 import { OutlineEditor } from "./OutlineEditor";
+import { outputIcon, resolveOutputType } from "./outputCatalog";
+import { outputCitations } from "./OutputParts";
 import { outputViews } from "./OutputViews";
 import { prepareForPrint } from "./printReady";
 import { PrintRoot } from "./PrintRoot";
@@ -48,11 +50,16 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState("");
+  const [refineOpen, setRefineOpen] = useState(false);
   const [web, setWeb] = useState(false);
   const [focus, setFocus] = useState<ArtifactTurnInput["focus"]>();
   const [jump, setJump] = useState<{ index: number; nonce: number } | null>(null);
   const partInView = useRef<number | null>(null);
   const refine = useRef<HTMLTextAreaElement>(null);
+  const refineTrigger = useRef<HTMLButtonElement>(null);
+  const refineOrigin = useRef<{ part: number | null; trigger: HTMLButtonElement | undefined } | undefined>(undefined);
+  const focusRefineOnOpen = useRef(false);
+  const refineId = useId();
   const styleRun = useRef<{ running: DeckStyle; pending: DeckStyle | null } | null>(null);
   const [pendingStyle, setPendingStyle] = useState<DeckStyle | null>(null);
   const [restyling, setRestyling] = useState(false);
@@ -79,12 +86,24 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const busy = Boolean(job) || checking || saving || updating || restyling;
   const useScope = (lineageId && conversation?.refinementScopes?.[lineageId]) || artifact?.scope || conversation?.scope || libraryScope();
   const pending = conversation?.pending;
+  const pendingId = pending?.messageId;
   const last = conversation?.messages.at(-1);
   const onDirtyChange = useCallback((value: boolean) => { dirty.current = value; }, [dirty]);
   const onPart = useCallback((index: number | null) => { partInView.current = index; onPartChange(index); }, [onPartChange]);
 
-  useLayoutEffect(() => { partInView.current = null; onPartChange(null); }, [baseId, shownId, workspaceId, onPartChange]);
+  useLayoutEffect(() => {
+    partInView.current = null;
+    refineOrigin.current = undefined;
+    onPartChange(null);
+  }, [baseId, shownId, workspaceId, onPartChange]);
+  useLayoutEffect(() => {
+    if (refineOpen && focusRefineOnOpen.current && refine.current) {
+      focusRefineOnOpen.current = false;
+      refine.current.focus();
+    }
+  }, [refineOpen]);
   useEffect(() => { setError(""); setFocus(undefined); }, [baseId, shownId, workspaceId]);
+  useEffect(() => { if (pendingId) setRefineOpen(true); }, [pendingId]);
   useEffect(() => { onArtifactChange(artifact); }, [artifact, onArtifactChange]);
   const { read, follow, reload } = studio;
   useEffect(() => {
@@ -109,13 +128,14 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
       pickVersion(null);
     }
   };
-  const refineOutput = (text: string) => {
+  const refineOutput = (text: string, visiblePart = partInView.current) => {
     if (!text.trim() || !artifact || !changeable || busy || editing) return;
-    const part = latest ? focus ?? (partInView.current !== null ? { section: partInView.current + 1, selected: false } : undefined) : undefined;
+    const part = latest ? focus ?? (visiblePart !== null ? { section: visiblePart + 1, selected: false } : undefined) : undefined;
     void send({ kind: pending ? "answer" : "message", text, ...(part ? { focus: part } : {}),
       ...(webAvailable && web ? { web: true } : {}) });
     setDraft(""); setFocus(undefined);
   };
+  const refineFromForm = (text: string) => refineOutput(text, artifact?.kind === "slides" ? undefined : refineOrigin.current?.part);
   const retry = (answer: ArtifactConversationMessage) => {
     if (conversation?.lastTurn?.build && conversationId) { void studio.retry(conversationId, conversation.lastTurn.build); return; }
     const earlier = conversation?.messages.slice(0, conversation.messages.indexOf(answer)).reverse().find((item) => item.role === "user");
@@ -212,12 +232,10 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   };
   const exportFile = (make: (version: Artifact) => Promise<string>) =>
     void withSavedVersion(async (version) => onNotify(`Downloaded ${await make(version)}.`));
-  const print = async () => {
-    try {
-      const done = await prepareForPrint();
-      try { if ("__TAURI_INTERNALS__" in window && /Mac/i.test(navigator.userAgent)) await invoke("print_output"); else window.print(); }
-      finally { done(); }
-    } catch (reason) { setError(message(reason)); }
+  const print = async (version: Artifact) => {
+    const done = await prepareForPrint(version.id);
+    try { if ("__TAURI_INTERNALS__" in window && /Mac/i.test(navigator.userAgent)) await invoke("print_output"); else window.print(); }
+    finally { done(); }
   };
   const download = (version: Artifact) => {
     const url = URL.createObjectURL(new Blob([version.content], { type: "text/markdown;charset=utf-8" }));
@@ -225,9 +243,23 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
     link.href = url; link.download = `${baseId}-${version.kind}-v${version.versionNumber}.md`; link.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
+  const openRefine = (trigger?: HTMLButtonElement) => {
+    refineOrigin.current = { part: partInView.current, trigger };
+    if (refine.current?.form?.hidden) {
+      focusRefineOnOpen.current = true;
+      setRefineOpen(true);
+    } else refine.current?.focus();
+  };
+  const closeRefine = (trigger?: HTMLButtonElement) => {
+    setRefineOpen(false);
+    refineOrigin.current = undefined;
+    (trigger?.isConnected ? trigger : refineTrigger.current)?.focus();
+  };
   const point = (index: number, quote?: string) => {
+    const active = document.activeElement;
+    const trigger = !quote && active instanceof HTMLButtonElement && active.matches(".outputs-ask-section") ? active : undefined;
     setFocus({ section: index + 1, selected: true, ...(quote ? { quote } : {}) });
-    refine.current?.focus();
+    openRefine(trigger);
   };
   const problem = error || failure?.message || (unavailable ? "This output is unavailable." : "");
   const targetType = studio.types.find((item) => item.id === target.typeId);
@@ -247,10 +279,12 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
     return true;
   };
   const choosePanel = (next: typeof panel) => setPanel((current) => current === next ? null : next);
-  const type = artifact && (studio.types.find((item) => item.shape === artifact.kind
-    && (item.id === artifact.style || item.legacyStyles?.includes(artifact.style ?? "")))
-    ?? studio.types.find((item) => item.shape === artifact.kind));
-  const { Reader, Review, wide = false, printLabel, savedStage, file } = outputViews[artifact?.kind ?? targetType?.shape ?? conversation?.shape ?? "report"];
+  const kind = artifact?.kind ?? targetType?.shape ?? conversation?.shape ?? "report";
+  const type = artifact ? resolveOutputType(studio.types, artifact) : undefined;
+  const controls = type ?? studio.types.find((item) => item.shape === kind);
+  const studioReader = kind !== "slides";
+  const Icon = outputIcon(artifact ? controls : targetType);
+  const { Reader, Review, wide = false, printLabel, savedStage, file } = outputViews[kind];
   const writingAttachment = Boolean(savedStage && (!runVersion || workingOnVersion)
     && job?.live.running.some((step) => step.kind === "stage" && step.id === savedStage));
   const working = workingOnVersion || writingAttachment;
@@ -283,7 +317,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
     window.addEventListener("gunther:sources-updated", refresh);
     return () => { ++generation; window.removeEventListener("gunther:sources-updated", refresh); };
   }, [baseId, hasWebEvidence, shownId, workspaceId]);
-  const capabilities = type?.capabilities;
+  const capabilities = controls?.capabilities;
   const unitLabel = (kind: OutputKind | null) => studio.types.find((item) => item.shape === kind)?.capabilities?.unitLabel ?? "part";
   const unit = capabilities?.unitLabel ?? "part";
   const outline = capabilities?.outline && Boolean(artifact?.outline.length);
@@ -291,18 +325,15 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const printAction = formats.includes("pdf") ? "Export PDF" : printLabel;
   const styling = capabilities?.design && panel === "style" && changeable;
   useLayoutEffect(() => onWideReader(wide), [wide, onWideReader]);
-  const allowPoint = changeable && latest && !editing;
-
-  return <CitationDetails.Provider value={artifact?.citations ?? []}><article className="library-reading output-reader" aria-label="Open output">
-    <header className="library-reading-heading">
-      <h1>{title}</h1>
-      {artifact && <ArtifactMenu label="Output actions" items={[
+  const canRefine = changeable && !editing;
+  const allowPoint = canRefine && latest;
+  const actions = artifact && <ArtifactMenu label="Output actions" items={[
         { label: "Versions", onSelect: () => choosePanel("versions") },
         ...(outline ? [{ label: "Outline", onSelect: () => choosePanel("outline") }] : []),
         { label: "Edit", disabled: busy || !latest || !changeable, onSelect: () => { pickVersion(artifact.id); setEditing(true); setPanel(null); } },
         { label: "Check again", disabled: busy || !latest || !changeable, onSelect: () => void check() },
         ...(capabilities?.design ? [{ label: "Style", disabled: editing, onSelect: () => choosePanel("style") }] : []),
-        ...(printAction ? [{ label: printAction, divider: true, disabled: editing, onSelect: () => void withSavedVersion(print) }] : []),
+        ...(printAction ? [{ label: printAction, divider: true, disabled: editing, onSelect: () => { setError(""); void withSavedVersion(print); } }] : []),
         ...(formats.includes("markdown") ? [
           { label: "Copy Markdown", onSelect: () => void withSavedVersion(async (version) => {
             await navigator.clipboard.writeText(version.content);
@@ -314,7 +345,27 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
           ? [{ label: file.label, onSelect: () => exportFile(file.download) }] : []),
         { label: "Move to Trash", icon: Trash2, divider: true, danger: true, disabled: saving,
           onSelect: () => onTrash({ id: artifact.id, lineageId: artifact.lineageId }) },
-      ]} />}
+      ]} />;
+
+  return <CitationDetails.Provider value={artifact?.citations ?? []}><article
+    className={`library-reading output-reader${studioReader ? " is-studio-reader" : ""}`} data-kind={kind} aria-label="Open output">
+    <header className={studioReader ? "output-reader-heading" : "library-reading-heading"}>
+      {studioReader && (artifact || targetType) && <div className="output-reader-meta">
+        <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
+        <span>{artifact?.outputType || targetType?.label}</span>
+        {artifact && <span>Version {artifact.versionNumber}</span>}
+      </div>}
+      <h1>{title}</h1>
+      {studioReader ? <div className="output-reader-actions">
+        {canRefine && <button ref={refineTrigger} type="button" className="gx-btn gx-btn-quiet gx-btn-sm" aria-label="Refine output"
+          aria-controls={refineId} aria-expanded={refineOpen} onClick={(event) => {
+            if (refineOpen) closeRefine(event.currentTarget);
+            else openRefine(event.currentTarget);
+          }}>
+          <MessageSquarePlus size={16} strokeWidth={1.75} aria-hidden="true" />Refine
+        </button>}
+        {actions}
+      </div> : actions}
     </header>
     {problem && <p role="alert" className="output-error">{problem}</p>}
     {artifact?.keyResults && <KeyResultsStatus key={artifact.keyResults.id} baseId={baseId} initial={artifact.keyResults} />}
@@ -328,25 +379,27 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
       {panel === "versions" && <ul className="output-versions" aria-label="Versions">{versions.map((version) => <li key={version.id}>
         <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" aria-current={version.id === artifact.id ? "page" : undefined} onClick={() => switchVersion(version.id)}>Version {version.versionNumber}</button>
       </li>)}</ul>}
-      {panel === "outline" && outline && <OutlineEditor outline={artifact.outline} label={`${unit}s`} max={type?.partLimit}
+      {panel === "outline" && outline && <OutlineEditor outline={artifact.outline} label={`${unit}s`} max={controls?.partLimit}
         review={artifact.provenance.skill?.outlineReview} busy={busy || !changeable || !latest || editing}
         onRebuild={(outline) => void send({ kind: "rebuild", rebuild: { artifactId: artifact.id, outline } })} />}
-      {editing ? <EditPane key={artifact.id} artifact={artifact} saving={saving} onSave={(content) => void save(content)}
+      {editing ? <EditPane key={artifact.id} artifact={artifact} type={type} saving={saving} onSave={(content) => void save(content)}
         onCancel={() => { if (discardOutputEdit(dirty)) { setEditing(false); pickVersion(null); } }} onCite={cite} onDirtyChange={onDirtyChange} />
         : <>
           {Review && capabilities?.design && <Review artifact={artifact} baseId={baseId} workspaceId={workspaceId} disabled={busy || !latest || !changeable} onReview={() => void reviewSlides()} onFollowUp={refineOutput} />}
-          <Reader artifact={artifact} onCite={cite} onPart={onPart} onAskChat={onAskChat}
-            onAsk={allowPoint ? point : undefined} goTo={jump} changed={changed} onNotice={onNotify}
-            type={type || undefined} work={{ working, disabled: busy || Boolean(activity), run: runReaderAction }}
-            design={styling ? {
-              onAccent: (accent) => void save(withAccent(artifact.content, accent)),
-              onTheme: (theme) => void save(withTheme(artifact.content, theme)),
-              onDeckTheme: (theme: DeckTheme) => void save(withDeckMarker(artifact.content, { theme })),
-              onDeckStyle: (style) => void restyle(style),
-              accentDisabled: busy || !latest, deckStyleDisabled: (!restyling && busy) || !latest, pendingDeckStyle: pendingStyle,
-            } : undefined} />
+          <div className="output-content">
+            <Reader artifact={artifact} onCite={cite} onPart={onPart} onAskChat={onAskChat}
+              onAsk={allowPoint ? point : undefined} goTo={jump} changed={changed} onNotice={onNotify}
+              type={type} presentation="read" work={{ working, disabled: busy || Boolean(activity), run: runReaderAction, voices: controls?.voices }}
+              design={styling ? {
+                onAccent: (accent) => void save(withAccent(artifact.content, accent)),
+                onTheme: (theme) => void save(withTheme(artifact.content, theme)),
+                onDeckTheme: (theme: DeckTheme) => void save(withDeckMarker(artifact.content, { theme })),
+                onDeckStyle: (style) => void restyle(style),
+                accentDisabled: busy || !latest, deckStyleDisabled: (!restyling && busy) || !latest, pendingDeckStyle: pendingStyle,
+              } : undefined} />
+          </div>
         </>}
-      {printAction && <PrintRoot artifact={artifact} />}
+      {printAction && <PrintRoot artifact={artifact} type={type} />}
     </>}
     {conversation && conversation.messages.length > 0 && <details className="output-history">
       <summary>Change history</summary>
@@ -361,17 +414,20 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
           if (position) setJump({ index: position - 1, nonce: Date.now() });
         }} onCite={(index) => { const citation = artifact?.citations[index]; if (citation) cite(citation, index); }} earlier={conversationId === EARLIER_WORK} />
     </details>}
-    {!job && last && (last.kind === "reply" || last.kind === "answer") && <AnswerBody content={last.text} numbers={citationNumbers(artifact?.citations ?? [])}
-      onCitation={(index) => { const citation = artifact?.citations[index]; if (citation) cite(citation, index); }} />}
+    {!job && last && (last.kind === "reply" || last.kind === "answer") && <AnswerBody content={last.text}
+      {...(artifact ? outputCitations({ artifact, onCite: cite }) : { numbers: [] })} />}
     {!job && last?.kind === "paused" && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => void send({ kind: "continue" })}>Continue</button>}
-    {changeable && !editing && <form className="output-refine" onSubmit={(event) => { event.preventDefault(); refineOutput(draft); }}>
+    {canRefine && <form className="output-refine" id={refineId} aria-label={studioReader ? "Refine output" : undefined} hidden={studioReader && !refineOpen}
+      onKeyDown={studioReader ? (event) => {
+        if (event.key === "Escape") { event.stopPropagation(); closeRefine(refineOrigin.current?.trigger); }
+      } : undefined} onSubmit={(event) => { event.preventDefault(); refineFromForm(draft); }}>
       {latest && !sameScope(useScope, scope) && <div className="output-scope">
         <span>Using {useScope.mode === "selection" ? "this output’s " : ""}{scopeLabel(useScope)}</span>
         <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={busy || scopeEmpty} onClick={() => void updateScope()}>
           {scope.mode === "library" ? "Update to all sources" : `Update to current ${scope.sourceIds.length}`}
         </button>
       </div>}
-      {pending && <div className="output-question"><p>{pending.question}</p>{pending.options.map((option) => <button key={option} type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={busy} onClick={() => refineOutput(option)}>{option}</button>)}</div>}
+      {pending && <div className="output-question"><p>{pending.question}</p>{pending.options.map((option) => <button key={option} type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={busy} onClick={() => refineFromForm(option)}>{option}</button>)}</div>}
       {focus && <small>About {focus.quote ? `“${focus.quote}”` : `${unit} ${focus.section}`}
         <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => setFocus(undefined)}>Clear</button></small>}
       <label>Refine<textarea ref={refine} value={draft} maxLength={20_000} rows={2} onChange={(event) => setDraft(event.target.value)} /></label>

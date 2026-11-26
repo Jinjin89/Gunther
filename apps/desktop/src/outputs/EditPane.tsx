@@ -1,4 +1,4 @@
-import type { Artifact, ConversationCitation } from "@gunther/contracts";
+import type { Artifact, ConversationCitation, OutputType } from "@gunther/contracts";
 import { Check, LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { MarkdownEditor } from "../components/markdown/MarkdownEditor";
@@ -16,8 +16,9 @@ export function discardOutputEdit(dirty: { current: boolean }): boolean {
  * version exactly as typed; nothing is renumbered or rewritten, and the sections that were
  * typed are marked "not re-checked" until the Checker looks at them again.
  */
-export function EditPane({ artifact, saving, onSave, onCancel, onCite, onDirtyChange }: {
+export function EditPane({ artifact, type, saving, onSave, onCancel, onCite, onDirtyChange }: {
   artifact: Artifact;
+  type?: OutputType | undefined;
   saving: boolean;
   onSave: (content: string) => void;
   onCancel: () => void;
@@ -58,9 +59,9 @@ export function EditPane({ artifact, saving, onSave, onCancel, onCite, onDirtyCh
         <MarkdownEditor value={draft} onChange={(next) => { setDraft(next); onDirtyChange(next !== editableOriginal); }} ariaLabel={`${artifact.outputType}, as Markdown`} autoFocus maxLength={2_500_000} onEscape={onCancel} onSubmit={() => { if (changed && draft.trim()) saveDraft(); }} />
         {artifact.kind === "slides" && <p className="outputs-edit-hint">A line with only <code>---</code> starts the next slide. A line starting with <code>Note:</code> begins the speaker notes. The comment on a slide's first line, <code>{"<!-- layout: … -->"}</code>, says how it is drawn; keep it with the slide. Scene metadata and a designed slide's drawing are hidden and retained for slides whose source text stays unchanged; a slide whose words you change is drawn by its template again.</p>}
       </div>
-      <div className="outputs-edit-preview" aria-label="Preview">
-        <Reader artifact={preview} onCite={onCite} compact />
-      </div>
+      <section className="outputs-edit-preview" aria-label="Preview">
+        <Reader artifact={preview} onCite={onCite} type={type} presentation="preview" />
+      </section>
     </div>
   </section>;
 }

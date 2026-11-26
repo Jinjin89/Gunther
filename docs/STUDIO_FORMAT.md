@@ -230,6 +230,11 @@ A report is Markdown: `# Title`, an optional italic line, then `## ` sections. A
 design starts with a line `<!-- report: v2 -->` before the title. It supports a summary,
 exhibits and callouts.
 
+The saved style selects the recipe from the Studio catalog, including its legacy aliases.
+An unknown style uses the general report reader. Reading, Edit preview and A4 print use the
+same report body. Print includes the complete text and shows citation numbers beside the relevant
+text, with the saved sources listed after the body.
+
 **Executive summary for Report and Briefing doc.** The first section is `## <heading>` immediately followed by the marker
 line `<!-- block: summary -->`. The renderer draws it as a summary box. It holds 1 short
 paragraph (the answer) and 3–5 bullets `**finding**: detail [n]`.

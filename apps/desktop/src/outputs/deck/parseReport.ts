@@ -1,41 +1,47 @@
 /**
- * A studio report (design v2, docs/STUDIO_FORMAT.md section 2) read into blocks: ordinary
- * Markdown, the executive summary box, numbered exhibits (a chart or a table with a source line)
- * and callouts. Old reports have none of these and are not read here.
+ * A report's original Markdown, split into its preamble, headed sections and optional
+ * Studio blocks (docs/STUDIO_FORMAT.md section 2).
  */
-import { splitDocument } from "../sections";
+import { markdownLines, splitDocument } from "../sections";
 import { parseDeckSlide, type ChartKind, type DeckData } from "./parseDeck";
 
 export type ExhibitTable = Extract<DeckData, { layout: "chart" | "table" }>;
+type ExhibitGrid = Extract<ExhibitTable, { layout: "table" }>;
 
 export type ReportBlock =
   | { t: "md"; text: string }
-  | { t: "exhibit"; caption: string; source: string | null; table: ExhibitTable | null; raw: string }
+  | { t: "exhibit"; caption: string; source: string | null; table: ExhibitTable | null; grid: ExhibitGrid | null; raw: string }
   | { t: "callout"; title: string; text: string };
 
 export interface ReportSection { heading: string; summary: boolean; blocks: ReportBlock[]; text: string }
-export interface ReportDoc { title: string | null; subtitle: string | null; sections: ReportSection[] }
+export interface ReportDoc { title: string | null; subtitle: string | null; preamble: ReportBlock[]; sections: ReportSection[] }
 
+const REPORT_MARK = /^\s*<!--\s*report:\s*v2\s*-->[ \t]*(?:\n|$)/;
 const SUMMARY_MARK = /^\s*<!--\s*block:\s*summary\s*-->\s*$/;
 
 /** The blocks of a stretch of Markdown that holds `:::exhibit` and `:::callout` fences. */
 export function readBlocks(text: string): ReportBlock[] {
+  if (!text.trim()) return [];
+  if (!text.includes(":::")) return [{ t: "md", text }];
   const blocks: ReportBlock[] = [];
   let plain: string[] = [];
-  const flush = () => { const joined = plain.join("\n").trim(); if (joined) blocks.push({ t: "md", text: joined }); plain = []; };
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const flush = () => {
+    const joined = plain.join("\n");
+    if (joined.trim()) blocks.push({ t: "md", text: joined });
+    plain = [];
+  };
+  const lines = markdownLines(text);
   for (let at = 0; at < lines.length; at += 1) {
-    const line = lines[at] ?? "";
-    const open = /^:::(exhibit|callout)\b(.*)$/.exec(line.trim());
+    const { line, fenced } = lines[at]!;
+    const open = !fenced && /^:::(exhibit|callout)(?=\s|$)(.*)$/.exec(line.trim());
     if (!open) { plain.push(line); continue; }
-    let end = lines.findIndex((candidate, index) => index > at && candidate.trim() === ":::");
-    const closed = end >= 0;
-    if (!closed) end = lines.length;
+    let end = at + 1;
+    while (end < lines.length && (lines[end]!.fenced || lines[end]!.line.trim() !== ":::")) end += 1;
     flush();
-    const inside = lines.slice(at + 1, end);
+    const inside = lines.slice(at + 1, end).map(({ line }) => line);
     if (open[1] === "callout") blocks.push({ t: "callout", title: (open[2] ?? "").trim(), text: inside.join("\n").trim() });
     else blocks.push(exhibit(open[2] ?? "", inside));
-    at = closed ? end : lines.length;
+    at = end;
   }
   flush();
   return blocks;
@@ -43,29 +49,33 @@ export function readBlocks(text: string): ReportBlock[] {
 
 function exhibit(options: string, inside: string[]): ReportBlock {
   const kind = /\bchart\s*=\s*(bar|column|line)\b/.exec(options)?.[1] as ChartKind | undefined;
-  const rows = inside.filter((line) => line.trim().startsWith("|"));
-  const rest = inside.filter((line) => !line.trim().startsWith("|") && line.trim());
-  let sourceAt = -1;
-  rest.forEach((line, index) => { if (/^Source:/i.test(line.trim())) sourceAt = index; });
-  const source = sourceAt >= 0 ? rest[sourceAt]!.trim().replace(/^Source:\s*/i, "") : null;
-  const caption = rest.find((_, index) => index !== sourceAt) ?? "";
-  const body = rows.join("\n");
-  const parsed = body ? parseDeckSlide(kind ? "chart" : "table", `## x\n${body}`, kind ? { chart: kind } : {}) : null;
+  const lines = inside.map((line) => line.trim()).filter(Boolean);
+  const source = /^Source:\s*(.*)$/i.exec(lines.at(-1) ?? "")?.[1] ?? null;
+  if (source !== null) lines.pop();
+  const caption = lines[0]?.startsWith("|") ? "" : lines.shift() ?? "";
+  const body = lines.length && lines.every((line) => line.startsWith("|")) ? `## Exhibit\n${lines.join("\n")}` : "";
+  const parsed = body ? parseDeckSlide(kind ? "chart" : "table", body, kind ? { chart: kind } : {}) : null;
   const table = parsed && (parsed.layout === "chart" || parsed.layout === "table") ? parsed : null;
-  return { t: "exhibit", caption: caption.trim(), source, table, raw: inside.join("\n") };
+  // Chart data formats values and series labels. Keep the original table cells for reading.
+  const original = table?.layout === "chart" ? parseDeckSlide("table", body) : table;
+  const grid = original?.layout === "table" ? original : null;
+  return { t: "exhibit", caption, source, table, grid, raw: inside.join("\n") };
 }
 
 export function parseReport(content: string): ReportDoc {
   const { preamble, sections } = splitDocument(content, "report");
-  const lines = preamble.split("\n").map((line) => line.trim()).filter((line) => line && !/^<!--\s*report:\s*v2\s*-->$/.test(line));
-  const title = lines.find((line) => line.startsWith("# "))?.slice(2).trim() ?? null;
-  const subtitle = lines.find((line) => !line.startsWith("#"))?.replace(/^[*_](.*)[*_]$/, "$1").trim() ?? null;
+  const lines = markdownLines(preamble.replace(REPORT_MARK, ""));
+  const titleAt = lines.findIndex(({ line, fenced }) => !fenced && line.startsWith("# "));
+  const title = lines[titleAt]?.line.slice(2).trim() ?? null;
+  const subtitle = lines.find(({ line, fenced }) => !fenced && line.trim() && !line.startsWith("#"))?.line.trim()
+    .replace(/^[*_](.*)[*_]$/, "$1").trim() ?? null;
   return {
-    title, subtitle,
+    title, subtitle, preamble: readBlocks(lines.filter((_, index) => index !== titleAt).map(({ line }) => line).join("\n")),
     sections: sections.map((text) => {
       const [first = "", ...rest] = text.split("\n");
-      const summary = SUMMARY_MARK.test(rest.find((line) => line.trim()) ?? "");
-      const body = (summary ? rest.slice(rest.findIndex((line) => line.trim()) + 1) : rest).join("\n");
+      const firstBodyLine = rest.findIndex((line) => line.trim());
+      const summary = SUMMARY_MARK.test(rest[firstBodyLine] ?? "");
+      const body = (summary ? rest.slice(firstBodyLine + 1) : rest).join("\n");
       return { heading: first.replace(/^##\s*/, "").trim(), summary, blocks: readBlocks(body), text };
     }),
   };

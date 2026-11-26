@@ -1,3 +1,6 @@
+.gx-citation-tail { white-space: nowrap; }
+.answer-markdown .gx-citation-tail sup button[data-opens-evidence] { padding-inline-end: 0; }
+
 .gx-citation-preview {
   position: fixed;
   z-index: 190;

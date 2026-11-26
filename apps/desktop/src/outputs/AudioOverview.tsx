@@ -2,8 +2,9 @@ import type { Artifact, AudioTiming, VoicePair } from "@gunther/contracts";
 import { useEffect, useRef, useState } from "react";
 import { knowledgeApi, sourceAssetUrl } from "../api";
 import { openSettings } from "../components/SettingsLayout";
-import { AnswerBody, citationNumbers } from "../pages/AnswerBody";
+import { AnswerBody } from "../pages/AnswerBody";
 import { saveBlob } from "../saveBlob";
+import { outputCitations, type OutputContentProps } from "./OutputParts";
 import type { ReaderProps } from "./OutputViews";
 import { splitDocument } from "./sections";
 import { readVoices, VoiceFields } from "./VoiceFields";
@@ -32,23 +33,18 @@ export const audioFile = {
   },
 } as const;
 
-type ScriptProps = Pick<ReaderProps, "artifact" | "onPart" | "goTo"> & {
-  onCite?: ReaderProps["onCite"];
+type ScriptProps = Pick<OutputContentProps, "artifact" | "onCite" | "onPart" | "goTo" | "presentation"> & {
   timings?: AudioTiming[] | undefined;
   active?: number | undefined;
   onSeek?: ((start: number) => void) | undefined;
 };
 
-export function AudioScript({ artifact, onCite, onPart, goTo, timings, active, onSeek }: ScriptProps) {
+export function AudioScript({ artifact, onCite, onPart, goTo, presentation, timings, active, onSeek }: ScriptProps) {
   const list = useRef<HTMLOListElement>(null);
   useEffect(() => {
     if (goTo) list.current?.children.item(goTo.index)?.scrollIntoView?.({ block: "nearest" });
   }, [goTo, artifact.id]);
-  const numbers = citationNumbers(artifact.citations);
-  const onCitation = onCite ? (index: number) => {
-    const citation = artifact.citations[index];
-    if (citation) onCite(citation, index);
-  } : undefined;
+  const citations = outputCitations({ artifact, onCite, presentation });
   const byLine = new Map(timings?.map((timing) => [timing.line, timing]));
   return <ol ref={list} className="audio-script" aria-label="Script">
     {splitDocument(artifact.content, artifact.kind).sections.map((line, index) => {
@@ -65,13 +61,13 @@ export function AudioScript({ artifact, onCite, onPart, goTo, timings, active, o
         {seek
           ? <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" aria-label={`Play line ${index + 1}, Speaker ${speaker}`} onClick={seek}>{speaker}</button>
           : <strong>{speaker}</strong>}
-        <AnswerBody content={speaker ? line.slice(2).trimStart() : line} numbers={numbers} onCitation={onCitation} />
+        <AnswerBody content={speaker ? line.slice(2).trimStart() : line} {...citations} />
       </li>;
     })}
   </ol>;
 }
 
-export function AudioOverview({ artifact, onCite, onPart, goTo, onNotice, type, work, compact }: ReaderProps) {
+export function AudioOverview({ artifact, onCite, onPart, goTo, onNotice, type, work, presentation }: ReaderProps) {
   const player = useRef<HTMLAudioElement>(null);
   const [clock, setClock] = useState<{ asset: string; seconds: number } | null>(null);
   const [failedAsset, setFailedAsset] = useState<string | null>(null);
@@ -95,10 +91,10 @@ export function AudioOverview({ artifact, onCite, onPart, goTo, onNotice, type, 
       artifact.knowledgeBaseId, artifact.id, voices ? { voices } : {}, artifact.workspaceId, hear, signal,
     ));
   };
-  const options = type?.voices;
+  const options = type?.voices ?? work?.voices;
   const needsSetup = audio?.status === "needs_tts";
   const problem = playbackFailed ? "The recording could not be played." : audio?.error;
-  if (compact) return <AudioScript artifact={artifact} onCite={onCite} />;
+  if (presentation === "preview") return <AudioScript artifact={artifact} onCite={onCite} presentation={presentation} />;
 
   return <section className="audio-overview" aria-label="Audio overview">
     {playingAsset && <audio key={playingAsset} ref={player} src={sourceAssetUrl(playingAsset)} controls preload="metadata"

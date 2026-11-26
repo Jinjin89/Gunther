@@ -11,6 +11,41 @@
     "joined": "# Field report\n\n## Results\n\nObserved results.\n\n```md\n## Example inside code\n```\n\n## Limits\n\nMore evidence is needed."
   },
   {
+    "name": "report sections after unclosed math still respect later fences",
+    "shape": "report",
+    "content": "# Field report\n\n## Results\n\n$$\nx + 1\n\n## Methods\n\n```md\n## Code example\n```\n\n$$\n## Math example\n$$\n\n## Limits\n\nMore evidence is needed.",
+    "preamble": "# Field report",
+    "sections": [
+      "## Results\n\n$$\nx + 1",
+      "## Methods\n\n```md\n## Code example\n```\n\n$$\n## Math example\n$$",
+      "## Limits\n\nMore evidence is needed."
+    ],
+    "joined": "# Field report\n\n## Results\n\n$$\nx + 1\n\n## Methods\n\n```md\n## Code example\n```\n\n$$\n## Math example\n$$\n\n## Limits\n\nMore evidence is needed."
+  },
+  {
+    "name": "report math closes at the end of a formula line before the next section",
+    "shape": "report",
+    "content": "# Field report\n\n## Results\n$$\nx$$\n## Methods\n$$\ny\n$$\n## Limits\nMore evidence is needed.",
+    "preamble": "# Field report",
+    "sections": [
+      "## Results\n$$\nx$$",
+      "## Methods\n$$\ny\n$$",
+      "## Limits\nMore evidence is needed."
+    ],
+    "joined": "# Field report\n\n## Results\n$$\nx$$\n\n## Methods\n$$\ny\n$$\n\n## Limits\nMore evidence is needed."
+  },
+  {
+    "name": "report headings inside a multiline legacy SVG are protected",
+    "shape": "report",
+    "content": "# Field report\n\n## Diagram\n\n<svg xmlns=\"http://www.w3.org/2000/svg\">\n<desc>\n## Diagram description\n</desc>\n</svg>\n\n## Limits\n\nMore evidence is needed.",
+    "preamble": "# Field report",
+    "sections": [
+      "## Diagram\n\n<svg xmlns=\"http://www.w3.org/2000/svg\">\n<desc>\n## Diagram description\n</desc>\n</svg>",
+      "## Limits\n\nMore evidence is needed."
+    ],
+    "joined": "# Field report\n\n## Diagram\n\n<svg xmlns=\"http://www.w3.org/2000/svg\">\n<desc>\n## Diagram description\n</desc>\n</svg>\n\n## Limits\n\nMore evidence is needed."
+  },
+  {
     "name": "slides use separators outside fences",
     "shape": "slides",
     "content": "# Evidence\r\n\r\n---\r\n\r\n## Claim\r\n\r\n~~~\r\n---\r\n~~~\r\n\r\n---",

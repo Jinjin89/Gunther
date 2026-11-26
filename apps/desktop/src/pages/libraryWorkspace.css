@@ -82,7 +82,7 @@
 .library-workspace :is(button, input, select, textarea, summary, [tabindex]):focus-visible { outline: 2px solid var(--gx-ink); outline-offset: 2px; box-shadow: none; }
 .library-middle > * { height: 100%; min-height: 0; }
 .library-chat[hidden] { display: none; }
-.library-middle-page { overflow: auto; scrollbar-width: thin; }
+.library-middle-page { container: library-reader / inline-size; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--gx-faint) var(--gx-canvas); }
 .library-middle-bar {
   position: sticky;
   top: 0;
