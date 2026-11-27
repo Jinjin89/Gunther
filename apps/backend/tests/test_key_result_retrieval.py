@@ -5,7 +5,16 @@ import pytest
 from fake_models import FakeProvider, agent_replies, output_replies, studio_task
 from test_artifact_agent import turn
 from test_key_results import checks, create_session, list_results, old_answer, setup
-from test_outputs import SIDECAR, app_for, body, build, built, saved_output, workspace
+from test_outputs import (
+    SIDECAR,
+    app_for,
+    body,
+    build,
+    built,
+    plan_and_approve,
+    saved_output,
+    workspace,
+)
 
 from evals.sse import ask_turn
 from gunther.documents import text_document
@@ -151,9 +160,9 @@ def test_studio_seeds_the_pinned_reading_and_renders_the_result_as_orientation(t
             f"/api/knowledge-bases/{base_id}/artifact-conversations", headers=workspace(client),
             json={"id": "checked_passage"},
         ).raise_for_status().json()
-        artifact = built(turn(
-            client, base_id, conversation["id"], "", "build",
-            build={"type": "report", "focus": QUERY},
+        artifact = built(plan_and_approve(
+            client, base_id, {"type": "report", "focus": QUERY},
+            conversation_id=conversation["id"],
         ))["artifact"]
         [citation] = artifact["citations"]
         assert citation["ref"] == 1 and citation["quote"] == PASSAGE

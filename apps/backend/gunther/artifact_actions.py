@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-import re
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, StrictInt, model_validator
 
 from gunther import usage
 from gunther.agent import AskAgent
-from gunther.artifact_turn_result import Outcome
+from gunther.artifact_turn_result import Outcome, matches_parent
 from gunther.artifact_view import AgentLimits, _one_line, part_lines, ranges
 from gunther.artifact_workspace import (
     BriefUpdate,
     ConversationBrief,
-    Line,
     Work,
     Workspace,
     WorkSpec,
@@ -26,7 +24,6 @@ from gunther.artifact_workspace import (
     locate,
     outline_state,
     ready,
-    spec_of,
     status,
 )
 from gunther.citations import check_citations, citation_numbers
@@ -34,12 +31,13 @@ from gunther.evidence import Tool
 from gunther.library_lookup import SearchHit
 from gunther.llm import Turn
 from gunther.output_shapes import SHAPES
-from gunther.outputs import ACCENTS, BuiltOutput, Planned, Pool, Spec, _marked
+from gunther.outputs import ACCENTS, Planned, WriteAuthority, _marked
 from gunther.studio import design as studio_design
 from gunther.studio import format as studio_format
-from gunther.studio.work import load_built
 
 # The decision --------------------------------------------------------------------------------
+
+_QUERY_LENGTH = 300
 
 
 class Act(BaseModel):
@@ -66,7 +64,8 @@ class Act(BaseModel):
     question: str = Field(default="", max_length=300)
     options: list[str] = Field(default_factory=list, max_length=4)
     about: str = Field(default="", max_length=300)
-    query: str = Field(default="", max_length=300)
+    query: str = Field(default="", max_length=_QUERY_LENGTH)
+    source: StrictInt | None = None  # numbered source as shown in the decision view
     focus: str = Field(default="", max_length=300)
     change: Literal["", "whole", "insert", "delete", "move", "item", "title"] = ""
     item: int | None = None
@@ -79,16 +78,30 @@ class Act(BaseModel):
     parts: list[int] = Field(default_factory=list, max_length=16)
     instruction: str = Field(default="", max_length=1000)
     passage: str = Field(default="", max_length=1500)
-    artifact: str = ""  # select: a number from the list, "new:report" or "new:slides"
+    artifact: str = Field(default="", max_length=40)  # a number, "new:report" or "new:slides"
     text: str = Field(default="", max_length=600)
 
     @model_validator(mode="before")
     @classmethod
-    def without_nulls(cls, data: Any) -> Any:
+    def decode_arguments(cls, data: Any) -> Any:
         # A model that writes null for what it does not need means "not given".
-        if isinstance(data, dict):
-            return {key: value for key, value in data.items() if value is not None}
-        return data
+        if not isinstance(data, dict):
+            return data
+        args = {key: value for key, value in data.items() if value is not None}
+        if (
+            args.get("do") == "read_source"
+            and "source" not in args
+            and isinstance(query := args.get("query"), str)
+            and len(query) <= _QUERY_LENGTH
+        ):
+            # Earlier decisions used query for a literal number or a displayed citation.
+            number = query.strip()
+            if number.startswith("[") and number.endswith("]"):
+                number = number[1:-1]
+            if number.isdecimal():
+                args["source"] = int(number)
+                del args["query"]
+        return args
 
 
 class Decision(BaseModel):
@@ -127,6 +140,9 @@ class Gate:
     web_reason: str
     numbers: int  # how many numbers the view gives sources
     limits: AgentLimits
+    authority: WriteAuthority | None = None
+    plan_key: str | None = None
+    can_propose: bool = False
 
     @property
     def work(self) -> Work | None:
@@ -144,13 +160,59 @@ def _positions(positions: Sequence[int | None], size: int, unit: str) -> str | N
     return None
 
 
+def _selected_work(workspace: Workspace, wanted: str) -> Work | None:
+    if wanted.isdecimal() and 1 <= int(wanted) <= len(workspace.works):
+        return workspace.works[int(wanted) - 1]
+    return None
+
+
+def phase_problem(act: Act, g: Gate) -> str | None:
+    """Check the server's authority for the resolved work before an action can run."""
+
+    work = g.work
+    if act.do == "select":
+        wanted = act.artifact.strip()
+        target = _selected_work(g.workspace, wanted)
+        if target is not None:
+            if matches_parent(g.authority, target) or (
+                g.authority is None and target.version_id is None
+                and g.plan_key in (None, target.key)
+            ):
+                return None
+            return "Open that artifact from Studio to work on it."
+        if wanted in ("new:report", "new:slides"):
+            if g.authority is None and g.plan_key is None:
+                return None
+            return "Start a separate plan from Studio."
+        return None  # validate reports an unknown selection
+    if (
+        act.do in ("ask", "understand", "plan")
+        and work is not None
+        and work.plan is not None
+        and work.version_id is None
+        and work.plan.id in g.workspace.pending_by_target
+    ):
+        return "Answer the pending planning question or choose Use current settings in Studio."
+    if act.do in ("ask", "answer", "search_library", "search_web", "read_source", "reply"):
+        return None
+    if matches_parent(g.authority, work):
+        return None
+    if act.do in ("understand", "plan") and not act.accent:
+        if g.authority is None and (work is None or work.version_id is None):
+            return None
+        return "Open that artifact from Studio to change its plan."
+    return "This action requires the verified current version. Generate it from Studio."
+
+
 def validate(act: Act, g: Gate) -> str | None:
     """Why an action cannot be done, in plain words, or None when it can."""
 
     do, work = act.do, g.work
+    if problem := phase_problem(act, g):
+        return problem
     if do == "ask":
         if g.kind == "start":
-            return 'The user said "just start": no more questions; go on with your best reading.'
+            return "The user chose to use current settings. Continue with those settings."
         if g.workspace.asked_in_a_row >= g.limits.questions_in_a_row:
             return (
                 f"{g.workspace.asked_in_a_row} questions in a row is enough: act on your best "
@@ -168,9 +230,10 @@ def validate(act: Act, g: Gate) -> str | None:
             return f"The web is not available: {g.web_reason}."
         return None
     if do == "read_source":
-        number = re.search(r"\d+", act.query)
-        if number is None or not 1 <= int(number.group()) <= g.numbers:
-            return f"There is no source {act.query or '(none)'} to read."
+        if act.source is None:
+            return "Choose a source by its number (source)."
+        if not 1 <= act.source <= g.numbers:
+            return f"There is no source {act.source} to read."
         return None
     if do == "reply":
         return None if act.text.strip() else "A reply needs words."
@@ -178,7 +241,7 @@ def validate(act: Act, g: Gate) -> str | None:
         wanted = act.artifact.strip()
         if wanted in ("new:report", "new:slides"):
             return None
-        if wanted.isdigit() and 1 <= int(wanted) <= len(g.workspace.works):
+        if _selected_work(g.workspace, wanted) is not None:
             return None
         return 'Choose an artifact by its number, or "new:report" or "new:slides".'
     if work is None:
@@ -279,6 +342,8 @@ def _validate_plan(
         return None
 
     if change == "whole":
+        if g.authority is None and g.can_propose:
+            return None
         state = approach_state(work, g.brief)
         if state.state == "not_written":
             return "The approach is not written yet; understand first."
@@ -327,17 +392,13 @@ class Mapped:
     view_ids: list[str] = field(default_factory=list)
 
 
-def _fold_use(work: Work) -> str | None:
-    line = work.spec.use
-    text = (line.text or "").strip().casefold() if line else ""
-    return text if text in ("talk", "read") else None
-
-
 class ArtifactActions:
     # Actions ---------------------------------------------------------------------------------
 
     def _run(self, m: Mapped) -> Outcome:
         act = m.act
+        if problem := phase_problem(act, self._gate(m.view_ids)):
+            raise ValueError(problem)
         runner = getattr(self, f"_do_{act.do}")
         work = active_work(self.workspace)
         with usage.job(detail=work.spec.kind if work else None):
@@ -374,8 +435,9 @@ class ArtifactActions:
         the deck's approach."""
 
         ws, wanted = self.workspace, act.artifact.strip()
-        if wanted.isdigit() and 1 <= int(wanted) <= len(ws.works):
-            work = ws.works[int(wanted) - 1]
+        if problem := validate(act, self._gate([])):
+            return "Choosing the artifact", problem, "failed"
+        if (work := _selected_work(ws, wanted)) is not None:
             ws.active = work.key
             name = SHAPES[work.spec.kind].name
             return (
@@ -416,6 +478,8 @@ class ArtifactActions:
             )
         results = tool.run(query)
         found = results
+        if c.evidence_allowed is not None and tool is not c.web_tool:
+            found = [item for item in found if c.evidence_allowed(item)]
         if tool.grade and found:
             found = AskAgent(c.gateway).relevant(c.model, c.text, query, found[:40])
         kept: list[int] = []
@@ -436,7 +500,8 @@ class ArtifactActions:
 
     def _do_read_source(self, m: Mapped) -> Outcome:
         c = self.ctx
-        number = int(re.search(r"\d+", m.act.query).group())  # type: ignore[union-attr]
+        number = m.act.source
+        assert number is not None  # validated against the numbered sources before dispatch
         pool_number = self._numbering().pool(number)
         item = self.pool.by_ref().get(pool_number or 0)
         if item is None or c.reader is None:
@@ -458,89 +523,20 @@ class ArtifactActions:
     def _do_make(self, m: Mapped) -> Outcome:
         work = active_work(self.workspace)
         assert work is not None
-        self._make(work)
+        outline = [
+            Planned(item.heading, item.goal, item.layout, id=item.id, notes=item.notes)
+            for item in work.outline
+        ] if (
+            SHAPES[work.spec.kind].outline
+            and approach_state(work, self.brief).state != "out_of_date"
+            and outline_state(work).state == "ok"
+        ) else []
+        self._write_rebuild(work, outline)
         name = SHAPES[work.spec.kind].name
         return Outcome(
             f"Made the {name}",
             f"Made the {name} as a whole: {len(work.outline)} {_unit(work)}s, each checked "
             "against its sources.",
-        )
-
-    def _make(
-        self, work: Work, approved: Sequence[Planned] | None = None, *,
-        request: Spec | None = None, progress: Work | None = None, reuse_plan: bool = False,
-    ) -> BuiltOutput:
-        c = self.ctx
-        spec = request or spec_of(self.brief, work)
-        scoped = request is not None or approved is not None
-        made = Pool(1_000_000)
-        made.restore([
-            item for item in self.pool.items
-            if not scoped or c.evidence_allowed is None or c.evidence_allowed(item)
-        ])
-        approach = work.approach or {}
-        use = _fold_use(work) or (approach.get("use") if approved is not None else None)
-        current = approach_state(work, self.brief).state
-        outline = approved
-        keep_outline = reuse_plan if request else (
-            current != "out_of_date" and outline_state(work).state == "ok"
-        )
-        if outline is None and keep_outline and SHAPES[spec.kind].pipeline == "planned":
-            outline = [Planned(item.heading, item.goal, id=item.id) for item in work.outline]
-        if work.outline and spec.kind == "slides":
-            cover = work.parts.get(work.outline[0].id)
-            if cover:
-                attrs = studio_format.parse_slide(cover.text).attrs
-                theme = attrs.get("theme")
-                if request is not None:
-                    spec = replace(spec, deck_style=attrs.get("style"))
-                else:
-                    spec = replace(
-                        spec, theme=theme if theme in studio_format.THEMES else spec.theme,
-                        deck_style=attrs.get("style"),
-                    )
-                    if approved is not None:
-                        spec = replace(
-                            spec, theme=spec.theme or "classic",
-                            design_version=_marked(cover.text).design_version,
-                        )
-        checkpoint_work = progress if progress is not None else work
-        resume = (checkpoint_work.approach or {}).get("studio_progress")
-        if resume is None and approach.get("purpose") == "explain_study":
-            resume = {
-                "previous_purpose": {
-                    "purpose": "explain_study",
-                    "reason": approach.get("purpose_reason") or "Kept from this deck",
-                },
-                "brief": spec.brief,
-                "passages": len(made),
-            }
-
-        def keep(state: dict[str, Any]) -> None:
-            checkpoint_work.approach = {
-                **(checkpoint_work.approach or {}), "studio_progress": state,
-            }
-
-        keep_purpose = reuse_plan if request else current == "ok"
-        built = c.studio(
-            spec, made, use, resume, keep,
-            purpose=approach.get("purpose") if approved is not None or keep_purpose else None,
-            fixed_outline=outline,
-        )
-        if scoped and spec.kind == "slides":
-            work.spec.theme, work.spec.design_version = spec.theme, spec.design_version
-            used = (built.approach or {}).get("use")
-            if work.spec.use is None and used in ("talk", "read"):
-                work.spec.use = Line(text=used, mark="guessed")
-        if spec.title:
-            built = replace(built, title=spec.title)
-        load_built(work, built, made, self.pool, self.brief)
-        return replace(
-            built,
-            outline=[
-                {**plan, "id": item.id}
-                for plan, item in zip(built.outline, work.outline, strict=True)
-            ],
         )
 
     def _do_understand(self, m: Mapped) -> Outcome:
@@ -558,6 +554,10 @@ class ArtifactActions:
         assert work is not None
         unit = _unit(work)
         change = act.change
+        if change == "whole" and self.ctx.authority is None and self.ctx.propose_plan is not None:
+            draft = self._propose(work, self.ctx.text)
+            reply = draft.proposal.summary or draft.proposal.title
+            return Outcome("Planned the output", reply, self._finish("planned", reply, draft=draft))
         steps = self._steps(work, planning=change == "whole")
         if change == "whole":
             was = {i.id: i for i in work.outline}
@@ -726,7 +726,7 @@ class ArtifactActions:
         kind = "sources"
         lines = [f"The question: {c.text}", f"What to answer: {act.about}"]
         cited: list[int] = []
-        if work is not None:
+        if work is not None and matches_parent(c.authority, work):
             shape = SHAPES[work.spec.kind]
             kind = shape.name
             lines += ["", f"The {kind}:", *part_lines(work, self.brief, numbering)]
@@ -764,7 +764,7 @@ class ArtifactActions:
                     refs = citation_numbers(shape.markup(work.parts[item.id].text))
                     cited += [n for n in refs if n not in cited]
         else:
-            cited = [i.ref for i in self.pool.items if i.ref and i.ref > self.pool_top][:30]
+            cited = list(reversed(self._eligible_pool().by_ref()))[:30]
         by_ref = self.pool.by_ref()
         lines += ["", "The sources:"]
         valid: set[int] = set()
@@ -778,7 +778,8 @@ class ArtifactActions:
             lines.append("(none)")
         completion = c.gateway.complete(
             c.model,
-            system=ANSWERER.format(what="their work" if work else "the sources", kind=kind),
+            system=ANSWERER.format(what="their work" if kind != "sources" else "the sources",
+                                   kind=kind),
             messages=[Turn("user", "\n".join(lines))],
             effort=c.effort,
             on_text=lambda piece: c.emit({"type": "reply", "text": piece}),

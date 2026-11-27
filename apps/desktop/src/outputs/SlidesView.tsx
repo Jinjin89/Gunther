@@ -173,9 +173,10 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
     return () => watcher.disconnect();
   }, [hasSlides]);
 
-  if (!hasSlides) return <p className="outputs-noslides">This deck has no slides yet.</p>;
+  const track = compact ? "full" : "deck";
+  if (!hasSlides) return <p className="outputs-noslides reader-track" data-track={track}>This deck has no slides yet.</p>;
   const here = slides[Math.min(current, slides.length - 1)];
-  return <CitationDetails.Provider value={artifact.citations}><div className="outputs-slides">
+  return <CitationDetails.Provider value={artifact.citations}><div className="outputs-slides reader-track" data-track={track}>
     <div className="outputs-slides-bar">
       <span aria-live="polite">Slide {Math.min(current, slides.length - 1) + 1} of {slides.length}{changed?.includes(Math.min(current, slides.length - 1)) && <em className="outputs-changed"> · Changed</em>}</span>
       <span className="outputs-slides-tools">

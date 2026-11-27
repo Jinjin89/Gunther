@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from fake_models import FakeProvider, is_sentence_checking, orchestrator_replies, studio_task
 from test_artifact_agent import done, turn
-from test_outputs import app_for, library, route, workspace
+from test_outputs import app_for, library, plan_and_approve, route, workspace
 
 from gunther.output_types import OUTPUT_TYPES, SHAPES
 from gunther.outputs import join_document, split_document
@@ -21,6 +21,13 @@ QUIZ = (
 EVIDENCE = (
     "Factor T steered cells to the red-cell branch. Loss of T expanded the white-cell branch."
 )
+
+
+def coverage_reply():
+    return json.dumps({
+        "title": "Cell fates", "summary": EVIDENCE, "angle": "How Factor T steers cells",
+        "coverage": [{"text": "Factor T and the red- and white-cell branches"}],
+    })
 
 
 def document(type_id, *units):
@@ -92,6 +99,8 @@ def studio_reply(draft, *, repair=None):
         system = request["messages"][0]["content"]
         if "lead analyst" in task:
             return json.dumps({"title": "Cell fates", "answer": EVIDENCE})
+        if task.startswith("Propose the direction"):
+            return coverage_reply()
         if "Fix these format problems" in task:
             assert repair is not None, task
             return repair
@@ -124,9 +133,9 @@ def conversation(client):
 
 
 def build_cards(client, base_id, cid, type_id):
-    return turn(
-        client, base_id, cid, "", "build",
-        build={"type": type_id, "focus": "Lineage results", "length": "short"},
+    return plan_and_approve(
+        client, base_id, {"type": type_id, "focus": "Lineage results", "length": "short"},
+        conversation_id=cid,
     )
 
 
@@ -157,6 +166,7 @@ def test_direct_builds_run_the_shared_stages_and_cite_the_source(tmp_path, type_
         assert completed == [
             ("read", "Reading the material"),
             ("memo", "Finding what is worth saying"),
+            ("story", "Planning the coverage"),
             ("write", f"Writing {OUTPUT_TYPES[type_id].label.lower()}"),
             ("format", "Checking the card set format"),
             ("verify", "Checking every claim against its source"),
@@ -222,8 +232,9 @@ def test_direct_format_tries_one_repair(tmp_path, repaired):
     else:
         name, error = events[-1]
         assert name == "error" and '"Why:"' in error["detail"]
-        assert any(name == "stage" and event["id"] == "format" and event["state"] == "failed"
-                   for name, event in events)
+        states = [event["state"] for name, event in events[:-1]
+                  if name == "stage" and event["id"] == "format"]
+        assert states == ["running", "failed"]
         assert not any(is_sentence_checking(r) for r in fake.requests)
 
 

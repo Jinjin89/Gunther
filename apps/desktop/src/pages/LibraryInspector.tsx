@@ -1,72 +1,62 @@
 import { BookOpen, PanelRight, X } from "lucide-react";
-import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
-import { useDragWidth } from "../hooks/useDragWidth";
-import { useEscape } from "../shortcuts/shortcuts";
-import { useSlideOverOutside } from "./useSlideOverOutside";
+import type { ReactNode, RefObject } from "react";
+import { ColumnResize, type ColumnLayout } from "./LibraryColumn";
 
 export type InspectorTab = "evidence" | "studio";
 
-export function LibraryInspector({ workspace, screenWidth, collapsed, onCollapse, tab, onTab, evidenceCount,
-  briefUpdating, running, detailOpen, onBack, originalPdf, evidence, studio }: {
-  workspace: RefObject<HTMLDivElement | null>;
-  screenWidth: number;
-  collapsed: boolean;
-  onCollapse: () => void;
+const tabs = [
+  { id: "evidence", label: "Evidence", Icon: BookOpen },
+  { id: "studio", label: "Studio", Icon: PanelRight },
+] as const;
+
+export function InspectorRail({ panelId, expanded, running, onToggle }: {
+  panelId: string; expanded: InspectorTab | null; running: boolean; onToggle: (tab: InspectorTab) => void;
+}) {
+  return <div className="inspector-rail">
+    {tabs.map(({ id, label, Icon }) => <button key={id} type="button" className="gx-icon-button" data-panel-focus={id}
+      aria-label={expanded === id ? "Collapse Inspector" : `Expand ${label}`} aria-expanded={expanded === id}
+      aria-controls={panelId} title={expanded === id ? "Collapse Inspector" : label} onClick={() => onToggle(id)}>
+      <Icon size={16} />{id === "studio" && running && <i className="inspector-running" />}
+    </button>)}
+  </div>;
+}
+
+export function LibraryInspector({ columnRef, panelId, layout, rail, onCollapse, tab, onTab, evidenceCount,
+  briefUpdating, running, evidence, studio }: {
+  columnRef: RefObject<HTMLElement | null>;
+  panelId: string;
+  layout: ColumnLayout;
+  rail: ReactNode;
+  onCollapse: (() => void) | undefined;
   tab: InspectorTab;
   onTab: (tab: InspectorTab) => void;
   evidenceCount: number;
   briefUpdating: boolean;
   running: boolean;
-  detailOpen: boolean;
-  onBack: () => void;
-  originalPdf: boolean;
   evidence: ReactNode;
   studio: ReactNode;
 }) {
-  const narrow = screenWidth < 1_080;
-  const root = useRef<HTMLElement>(null);
-  const panelId = useId();
-  const viewingPdf = tab === "evidence" && detailOpen && originalPdf;
-  const [manualPdfWidth, setManualPdfWidth] = useState(false);
-  useEffect(() => { if (!viewingPdf) setManualPdfWidth(false); }, [viewingPdf]);
-  const max = () => viewingPdf ? Math.max(280, Math.floor((workspace.current?.clientWidth || window.innerWidth) * 0.5)) : 440;
-  const fallback = Math.round(Math.max(336, Math.min(380, 336 + (screenWidth - 1_280) * 44 / 448)));
-  const { width, handle } = useDragWidth({ storageKey: "gunther:library-studio-width", min: 280, max, fallback,
-    visibleMin: viewingPdf && !manualPdfWidth ? 460 : undefined, side: "right", observe: () => workspace.current });
-
-  useSlideOverOutside(workspace, root, narrow && !collapsed, onCollapse);
-  useEscape(() => {
-    if (tab === "evidence" && detailOpen) onBack();
-    else onCollapse();
-  }, !collapsed && ((tab === "evidence" && detailOpen) || narrow));
-
-  return <aside ref={root} aria-label="Inspector" className={`library-column library-inspector${collapsed ? " is-collapsed" : ""}${narrow ? " is-narrow" : ""}`}
-    style={collapsed || narrow ? undefined : { width }}>
-    <div className="inspector-rail" hidden={!collapsed}>
-      <button type="button" className="gx-icon-button" aria-label="Expand Evidence" aria-expanded={false} aria-controls={panelId} title="Evidence" onClick={() => onTab("evidence")}><BookOpen size={16} /></button>
-      <button type="button" className="gx-icon-button" aria-label="Expand Studio" aria-expanded={false} aria-controls={panelId} title="Studio" onClick={() => onTab("studio")}><PanelRight size={16} />{running && <i className="inspector-running" />}</button>
-    </div>
+  const { collapsed, slideOver, track, size } = layout;
+  return <aside ref={columnRef} aria-label="Inspector" data-panel-focus={tab}
+    className={`library-column library-inspector${collapsed ? " is-collapsed" : ""}${slideOver ? " is-overlay" : ""}`} style={{ width: track }}>
+    {collapsed && rail}
     <div className="inspector-panel" id={panelId} hidden={collapsed}>
       <header className="inspector-heading">
         <div className="inspector-tabs" role="tablist" aria-label="Inspector">
-          <button type="button" role="tab" aria-selected={tab === "evidence"} aria-label={`Evidence (${evidenceCount})`}
+          <button type="button" role="tab" data-panel-focus="evidence" aria-selected={tab === "evidence"} aria-label={`Evidence (${evidenceCount})`}
             aria-describedby={briefUpdating ? `${panelId}-brief-update` : undefined} onClick={() => onTab("evidence")}>
             Evidence <span className="inspector-tab-count">{evidenceCount}</span>
             {briefUpdating && <span className="inspector-brief-updating" title="Brief updating" aria-hidden="true" />}
           </button>
-          <button type="button" role="tab" aria-selected={tab === "studio"} onClick={() => onTab("studio")}>Studio{running && <i className="inspector-running" title="Build running" />}</button>
+          <button type="button" role="tab" data-panel-focus="studio" aria-selected={tab === "studio"} onClick={() => onTab("studio")}>Studio{running && <i className="inspector-running" title="Build running" />}</button>
         </div>
         {briefUpdating && <span className="gx-sr-only" id={`${panelId}-brief-update`}>Brief updating</span>}
-        <button type="button" className="gx-icon-button" aria-label="Collapse Inspector" aria-expanded={true} aria-controls={panelId} title="Collapse Inspector" onClick={onCollapse}><X size={16} /></button>
+        {onCollapse && <button type="button" className="gx-icon-button" aria-label="Collapse Inspector" aria-expanded={true}
+          aria-controls={panelId} title="Collapse Inspector" onClick={onCollapse}><X size={16} /></button>}
       </header>
       <div className="inspector-content" role="tabpanel" aria-label="Evidence" hidden={tab !== "evidence"}>{evidence}</div>
       <div className="inspector-content" role="tabpanel" aria-label="Studio" hidden={tab !== "studio"}>{studio}</div>
-      {!narrow && <div className="library-column-resize" role="separator" tabIndex={0} aria-orientation="vertical"
-        aria-label="Resize Inspector" aria-valuemin={280} aria-valuemax={max()} aria-valuenow={width}
-        title="Drag to resize. Double-click to reset." {...handle}
-        onPointerMove={(event) => { if (viewingPdf && event.buttons) setManualPdfWidth(true); handle.onPointerMove(event); }}
-        onKeyDown={(event) => { if (viewingPdf && (event.key === "ArrowLeft" || event.key === "ArrowRight")) setManualPdfWidth(true); handle.onKeyDown(event); }}
-        onDoubleClick={() => { setManualPdfWidth(false); handle.onDoubleClick(); }} />}
+      {!collapsed && !slideOver && <ColumnResize name="Inspector" size={size} />}
     </div>
   </aside>;
 }

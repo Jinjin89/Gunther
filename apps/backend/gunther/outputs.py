@@ -470,6 +470,8 @@ class Spec:
     deck_style: str | None = None
     length: OutputLength | None = None
     language: str | None = None
+    emphasize: tuple[str, ...] = ()
+    avoid: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -502,6 +504,32 @@ class Planned:
     layout: str = ""
     refs: tuple[int, ...] = ()
     id: str = ""
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class FirstWrite:
+    workspace_id: str
+    library_id: str
+    conversation_id: str
+    work_key: str
+    revision: str
+    request_id: str
+    server_boot_id: str
+    attempt_id: str
+
+
+@dataclass(frozen=True)
+class ParentWrite:
+    workspace_id: str
+    library_id: str
+    conversation_id: str | None
+    lineage_id: str
+    parent_id: str
+
+
+WriteAuthority = FirstWrite | ParentWrite
+
 
 @dataclass(frozen=True)
 class BuiltOutput:

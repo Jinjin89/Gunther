@@ -1,17 +1,18 @@
-import contextlib
 import json
 import re
 from dataclasses import replace
 
 import pytest
-from fake_models import FakeProvider, gateway, model, output_replies
+from fake_models import FakeProvider, gateway, model
 
 from gunther.answer_runs import Stopped
+from gunther.citations import citation_numbers
 from gunther.evidence import Evidence, Tool
 from gunther.llm import ModelError
 from gunther.output_shapes import lend_refs
-from gunther.outputs import Issue, Notes, Planned, Pool, Spec, split_document
-from gunther.schemas import ConversationCitationOut
+from gunther.output_types import output_type_for
+from gunther.outputs import FirstWrite, Issue, Notes, Pool, Spec, split_document
+from gunther.schemas import ConversationCitationOut, OutputScope, PlanOptionsOut
 from gunther.studio import format as fmt
 from gunther.studio.pipeline import StudioAgents
 from gunther.studio.state import Run
@@ -46,6 +47,7 @@ Plan with the adjusted figure [2]
 Note: The bars.
 """
 UNSUPPORTED_DECK = DECK.replace("9 [2] |", "7 [2] |")
+REPORT_SUMMARY = "## The trial has an outcome\nThe trial establishes the outcome [1]."
 
 
 def pool() -> Pool:
@@ -113,9 +115,17 @@ def router(request, deck=DECK):
     if "knowledge assertions" in system:
         return '{"assertions": []}'
     if "planning a written report" in system:
-        return json.dumps({"title": "Findings", "sections": [{"heading": "Results"}]})
+        return json.dumps({
+            "title": "Findings", "summary_heading": "The trial has an outcome",
+            "summary_job": "Lead with the outcome", "summary_refs": [1],
+            "sections": [{"heading": "Results", "refs": [1]}],
+        })
     if "Write the report" in system:
-        return "# Findings\n\n## Results\nThe trial establishes the outcome [1]."
+        marker = "Use exactly these approved section headings in order."
+        rows, _ = json.JSONDecoder().raw_decode(system.split(marker, 1)[1].lstrip())
+        return "# Findings\n\n" + "\n\n".join(
+            f"## {row['heading']}\nThe trial establishes the outcome [1]." for row in rows
+        )
     if "You own the presentation purpose decision" in system:
         return json.dumps({"purpose": "general", "reason": "A general briefing"})
     if "Choose the visual style" in system:
@@ -135,19 +145,18 @@ def router(request, deck=DECK):
             }
         )
     if "presentation strategist" in system:
+        slides = fmt.split_slides(deck)
         return json.dumps(
             {
-                "title": "Cool roofs work, but at half the headline saving",
+                "title": fmt.parse_slide(slides[0]).title,
                 "subtitle": "s",
                 "slides": [
-                    {"title": "Cool roofs work", "layout": "title", "job": "", "refs": []},
-                    {"title": "The trial was large", "layout": "stats", "job": "", "refs": [1]},
                     {
-                        "title": "Weather adjustment halves the saving",
-                        "layout": "chart",
-                        "job": "",
-                        "refs": [2],
-                    },
+                        "title": fmt.parse_slide(slide).title,
+                        "layout": "title" if i == 0 else None,
+                        "refs": list(dict.fromkeys(citation_numbers(slide, bare_only=True))),
+                    }
+                    for i, slide in enumerate(slides)
                 ],
             }
         )
@@ -168,11 +177,41 @@ def router(request, deck=DECK):
     raise AssertionError(system[:200])
 
 
+def build_studio(
+    agents, writer, effort, spec, material, notes, events=None, *, resume=None, checkpoint=None,
+):
+    """Exercise the same stages as the creation route with an explicit test approval."""
+
+    def discard(_event):
+        pass
+
+    emit = events or discard
+    keep = checkpoint or discard
+    options = PlanOptionsOut(
+        type=output_type_for(spec.kind, spec.output_type).id, scope=OutputScope(),
+        use=agents.use if spec.kind == "slides" else None, language=spec.language,
+    )
+    prepared = agents.prepare(
+        writer, effort, spec, material, notes, manifest={}, resume=resume, emit=emit,
+        checkpoint=keep,
+    )
+    plan = agents.propose(
+        prepared, model=writer, effort=effort, options=options, previous=None, feedback="",
+        fixed_rows=(), order_fixed=False, emit=emit, checkpoint=keep,
+    )
+    permit = FirstWrite("w", "lib", "conv", "plan", "p1", "approve", "boot", "attempt")
+    return agents.generate(
+        prepared, model=writer, effort=effort, options=options, plan=plan, revision=permit.revision,
+        authority=permit, emit=emit, checkpoint=keep,
+    )
+
+
 def test_a_deck_is_made_in_the_new_format_and_an_unstated_chart_value_becomes_a_table():
     fake = FakeProvider(lambda request: router(request, UNSUPPORTED_DECK))
     agents = StudioAgents(gateway(fake), use="talk")
     events = []
-    built = agents.make(
+    built = build_studio(
+        agents,
         model(),
         "high",
         Spec("slides", "collaborator", brief="A 10-minute talk"),
@@ -221,7 +260,8 @@ def test_direct_build_draws_a_chart_only_when_each_cited_row_is_supported(tmp_pa
         proposed = f"{opening}{table}\n{row}\nNote: Rates."
     else:
         proposed = (
-            "# Findings\n\n## Results\n\n:::exhibit chart=column\nCooling savings by estimate\n"
+            f"# Findings\n\n{REPORT_SUMMARY}\n\n"
+            "## Results\n\n:::exhibit chart=column\nCooling savings by estimate\n"
             f"{table}\n{row}\nSource: Field trial [1]\n:::"
         )
     seen = []
@@ -369,12 +409,15 @@ def test_styled_deck_reopens_with_the_cover_format_repair_error(tmp_path):
     )
 
 
-def test_direct_report_keeps_the_supported_exhibit_when_its_rows_are_repeated(tmp_path):
+@pytest.mark.parametrize("attribution", ["参照資料：", "来源："])
+def test_direct_report_keeps_the_supported_exhibit_when_its_rows_are_repeated(
+    tmp_path, attribution,
+):
     from test_outputs import app_for, body, build, built, library
 
     exhibit = (
         ":::exhibit chart=column\nSavings by estimate\n| Measure | Saving (%) |\n"
-        "| --- | --- |\n| Raw | 18 [1] |\n| Adjusted | 9 [1] |\nSource: Trial [1]\n:::"
+        f"| --- | --- |\n| Raw | 18 |\n| Adjusted | 9 [1] |\n{attribution}Trial [1]\n:::"
     )
     section = "## Results\n\n" + exhibit + "\n\n" + exhibit.replace("(%)", "(points)")
 
@@ -382,8 +425,18 @@ def test_direct_report_keeps_the_supported_exhibit_when_its_rows_are_repeated(tm
         prompt = request["messages"][-1]["content"]
         return [int(n) for n in re.findall(r"^\((\d+)\) \| Raw .+Saving \(points\)", prompt, re.M)]
 
-    outline = {"title": "Findings", "sections": [{"heading": "Results"}]}
-    fake = FakeProvider(output_replies(outline, [section], unsupported=unsupported))
+    def reply(request):
+        if "Write the report" in request_text(request):
+            return f"# Findings\n\n{REPORT_SUMMARY}\n\n{section}"
+        if "checking step" in request_text(request):
+            flagged = unsupported(request)
+            return json.dumps({"sentences": [
+                {"n": int(n), "verdict": "not" if int(n) in flagged else "supported"}
+                for n in re.findall(r"^\((\d+)\) ", request_text(request), re.M)
+            ]})
+        return router(request)
+
+    fake = FakeProvider(reply)
     with app_for(tmp_path, fake) as client:
         base, _ = library(client, notes={"Trial": "The raw saving was 18%, adjusted saving 9%."})
         version = built(build(client, base, body()))
@@ -403,6 +456,26 @@ def test_report_verification_repairs_prose_tables_and_preserves_code(monkeypatch
     run = Run(Spec("report", ""), "")
     [draft] = agents.verify(agents.gateway.models[0], run, [source], Pool(10), lambda _: None)
     assert draft.text == prefix + "| Name | Status |\n| --- | --- |\n| Trial | Done |"
+
+
+@pytest.mark.parametrize("attribution", ["参照資料：", "来源："])
+def test_only_structured_exhibit_source_metadata_is_exempt_from_numeric_findings(
+    monkeypatch, attribution,
+):
+    agents = StudioAgents(gateway(FakeProvider("unused")))
+    monkeypatch.setattr("gunther.studio.verification.check_part", lambda *args, **kwargs: {})
+    evidence = {1: Evidence("library", "Thermal survey 2024", "The survey has three locations.")}
+    text = (
+        "## Findings\nSource: The average was 90%.\n\n"
+        ":::exhibit\nResults by district\n| District | Finding |\n| --- | --- |\n"
+        f"| Central | Lower use |\n{attribution}Thermal survey 2024\n:::\n\n"
+        ":::exhibit\nOther results\n| District | Finding |\n| --- | --- |\n"
+        "| North | Similar use |\nSource: The average was 80%.\n:::"
+    )
+    checked = agents._claims(model(), text, evidence)
+    assert {row["issue"]["claim"] for row in checked.values()} == {
+        "Source: The average was 90%.", "Source: The average was 80%.",
+    }
 
 
 @pytest.mark.parametrize(("heading", "needs_format_repair"), [
@@ -437,6 +510,7 @@ def test_a_direct_deck_rebuild_keeps_approved_headings_through_repairs(
         first = built(build(client, base, body(kind="slides", use="talk")))
         approved = first["outline"]
         approved[1]["heading"] = heading
+        approved[2]["layout"] = None
         fake.replies[:] = [repair]
         rebuilt = built(build(client, base, body(
             kind="slides", use="talk", outline=approved, supersedesArtifactId=first["id"],
@@ -461,11 +535,8 @@ def test_report_repair_cannot_add_a_section_or_displace_the_existing_work(monkey
         agents, "_fix_claims", lambda *a, **k: ["## Results\nA repair.\n\n## Added\nExtra."]
     )
     made = pool()
-    built = agents.make(
-        model(), "high", Spec("report", "scientist"), made, Notes(),
-        fixed_outline=[Planned("Results", id="results")],
-    )
-    assert len(split_document(built.content, "report")[1]) == 1
+    built = build_studio(agents, model(), "high", Spec("report", "scientist"), made, Notes())
+    assert len(split_document(built.content, "report")[1]) == 2
     assert "The trial establishes the outcome" in built.content
 
     work = Work(key="work", spec=WorkSpec(kind="report"))
@@ -492,7 +563,8 @@ def test_studio_build_checks_the_written_count_against_the_storyline():
 
     agents = StudioAgents(gateway(FakeProvider(wrong_count)), use="talk")
     with pytest.raises(ModelError, match="written deck has 3 slides. The brief asks for 2"):
-        agents.make(model(), "low", Spec("slides", "Everyone", brief="Two pages"), pool(), Notes())
+        build_studio(agents, model(), "low", Spec("slides", "Everyone", brief="Two pages"),
+                     pool(), Notes())
 
 
 @pytest.mark.parametrize("drops_part", [False, True], ids=["keeps-limitation", "wrong-count"])
@@ -538,10 +610,10 @@ def test_storyline_repair_keeps_the_requested_count_and_evidence_context(drops_p
     assert len(changes) == 1
 
 
-def test_making_a_draft_after_replan_still_requires_saving(tmp_path):
+def test_planning_a_deck_waits_for_approval_and_keeps_its_target_minutes(tmp_path):
     from fake_models import orchestrator_replies
-    from test_artifact_agent import conversations, done, turn, versions_of
-    from test_outputs import app_for, library, workspace
+    from test_artifact_agent import conversations, done, versions_of
+    from test_outputs import app_for, approve_output, library, output_turn, workspace
 
     def inner(request):
         prompt = request_text(request)
@@ -562,44 +634,39 @@ def test_making_a_draft_after_replan_still_requires_saving(tmp_path):
 
     fake = FakeProvider(orchestrator_replies([
         {
-            "brief": [{
-                "field": "length", "text": "3 slides for an 8-minute talk",
-                "quote": "3 slides for an 8-minute talk",
-            }],
             "actions": [
-                {"do": "select", "artifact": "new:slides"},
                 {"do": "understand"},
                 {"do": "plan", "change": "whole"},
-                {"do": "make"},
-                {"do": "reply", "text": "The deck is ready."},
             ],
         },
-        {"actions": [{"do": "save", "text": "Saved the deck."}]},
     ], inner))
     with app_for(tmp_path, fake) as client:
         base, _ = library(client, notes={"Size": PASSAGES[0], "Trial": PASSAGES[1]})
         client.post(conversations(base), headers=workspace(client), json={
             "id": "planned-deck",
         }).raise_for_status()
-        events = turn(
-            client, base, "planned-deck", "Plan, then write 3 slides for an 8-minute talk.",
-        )
-        assert any(
-            event == "action" and data["state"] == "failed"
-            and "changed in this turn and is not saved" in data["note"]
-            for event, data in events
-        )
-        result = done(events)
-        assert result["outcome"] == "saved" and result["reply"] == "Saved the deck."
+        planned = done(output_turn(client, base, "planned-deck", {
+            "kind": "plan", "clientRequestId": "plan_timed_deck", "planId": "timed_deck",
+            "setup": {"type": "slides", "focus": "3 slides for an 8-minute talk",
+                      "scope": {"mode": "library"}},
+        }))
+        assert planned["outcome"] == "planned" and versions_of(client) == []
+        assert planned["plan"]["proposal"]["targetMinutes"] == 8
+        assert sum("lead analyst" in request_text(r) for r in fake.requests) == 1
+        assert not any("presentation writer" in request_text(r) for r in fake.requests)
+        result = done(approve_output(
+            client, base, "planned-deck", "timed_deck", "approve_timed_deck", planned,
+        ))
+        assert result["outcome"] == "saved"
         content = result["artifact"]["content"]
         assert len(split_document(content, "slides")[1]) == 3
         assert len(versions_of(client)) == 1
 
 
-def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_slide(tmp_path):
+def test_a_conversation_can_rebuild_a_saved_deck_and_rewrite_one_slide(tmp_path):
     from fake_models import orchestrator_replies
     from test_artifact_agent import done, kept, turn
-    from test_outputs import app_for, library, route, workspace
+    from test_outputs import app_for, library, plan_and_approve, route, workspace
 
 
     notes = {f"Source {n}": text for n, text in enumerate(PASSAGES, 1)}
@@ -616,16 +683,7 @@ def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_sl
             return json.dumps({"assertions": []})
         return router(request)
 
-    decisions = [
-        {
-            "actions": [
-                {"do": "select", "artifact": "new:slides"},
-                {"do": "make"},
-                {"do": "save", "text": "Made the deck."},
-            ]
-        },
-    ]
-    fake = FakeProvider(orchestrator_replies(decisions, inner))
+    fake = FakeProvider(inner)
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client, notes=notes)
         client.post(
@@ -633,7 +691,9 @@ def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_sl
             headers=workspace(client),
             json={"id": "talk", "title": "Trial"},
         )
-        result = done(turn(client, base_id, "talk", "A 10-minute deck on the trial"))
+        result = done(plan_and_approve(client, base_id, {
+            "type": "slides", "focus": "A 10-minute deck on the trial", "use": "talk",
+        }, conversation_id="talk"))
         assert result["outcome"] == "saved", result
         content = result["artifact"]["content"]
         assert "design: v2" in content and "## The trial was large" in content
@@ -656,7 +716,8 @@ def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_sl
         replanned = done(turn(client, base_id, "talk", goal))
         assert replanned["outcome"] == "saved", replanned["reply"]
         tasks = [request_text(r) for r in fake.requests[before:]]
-        assert any("presentation strategist" in task for task in tasks)
+        assert any("presentation writer" in task for task in tasks)
+        assert not any("presentation strategist" in task for task in tasks)
         assert not any("Choose the visual style" in task for task in tasks)
         cover = fmt.parse_slide(fmt.split_slides(replanned["artifact"]["content"])[0])
         assert cover.attrs["theme"] == "ink" and cover.attrs["style"] == "dark"
@@ -678,10 +739,9 @@ def test_a_conversation_makes_a_studio_deck_in_one_action_and_can_rewrite_one_sl
         assert "Three summers and 412 buildings" in again["artifact"]["content"]
 
 
-def test_a_failed_build_ends_the_turn_instead_of_building_or_saving_again(tmp_path):
-    from fake_models import is_orchestrating, orchestrator_replies
-    from test_artifact_agent import done, kept, turn, versions_of
-    from test_outputs import app_for, library, workspace
+def test_a_failed_approved_build_retries_without_writing_an_extra_version(tmp_path):
+    from test_artifact_agent import done, kept, versions_of
+    from test_outputs import app_for, approve_output, library, send_plan
 
     fail_writer = True
 
@@ -693,43 +753,26 @@ def test_a_failed_build_ends_the_turn_instead_of_building_or_saving_again(tmp_pa
             return json.dumps({"assertions": []})
         return router(request)
 
-    decisions = [
-        {
-            "actions": [
-                {"do": "select", "artifact": "new:slides"},
-                {"do": "make"},
-                {"do": "save", "text": "Made the deck."},
-            ]
-        },
-        {"actions": [{"do": "make"}]},
-    ]
-    fake = FakeProvider(orchestrator_replies(decisions, inner))
+    fake = FakeProvider(inner)
     with app_for(tmp_path, fake) as client:
         notes = {f"Source {n}": text for n, text in enumerate(PASSAGES, 1)}
         base_id, _ = library(client, notes=notes)
-        client.post(
-            f"/api/knowledge-bases/{base_id}/artifact-conversations",
-            headers=workspace(client),
-            json={"id": "talk", "title": "Trial"},
-        )
-        events = turn(client, base_id, "talk", "A 10-minute deck on the trial")
-        result = done(events)
-        assert result["outcome"] == "paused", result
-        assert "Making it stopped: The connection broke." in result["reply"]
-        assert "continue" in result["reply"]
-        actions = [body for kind, body in events if kind == "action"]
-        assert any(a["state"] == "skipped" and "turn ended" in a["note"] for a in actions)
-        assert sum(is_orchestrating(r) for r in fake.requests) == 1
-        progress = kept(client, "talk")[0].works[0].approach["studio_progress"]
+        plan_id, events = send_plan(client, base_id, "talk", "trial_deck", {
+            "type": "slides", "focus": "A 10-minute deck on the trial", "use": "talk",
+            "scope": {"mode": "library"},
+        })
+        planned = done(events)
+        failed = approve_output(client, base_id, "talk", plan_id, "approval_failed", planned)[-1]
+        assert failed[0] == "error" and "The connection broke" in failed[1]["detail"]
+        assert sum("presentation writer" in request_text(r) for r in fake.requests) == 1
+        progress = kept(client, "talk")[0].works[0].studio_progress
         assert progress["memo"] and progress["storyline"] and versions_of(client) == []
 
         fail_writer = False
         before = len(fake.requests)
-        fake.replies[:] = [orchestrator_replies([{"actions": [
-            {"do": "make"},
-            {"do": "save", "text": "Resumed the deck."},
-        ]}], inner)]
-        resumed = done(turn(client, base_id, "talk", "", kind="continue"))
+        resumed = done(approve_output(
+            client, base_id, "talk", plan_id, "approval_retried", planned,
+        ))
         assert resumed["outcome"] == "saved" and resumed["artifact"]["versionNumber"] == 1
         tasks = [request_text(request) for request in fake.requests[before:]]
         assert any("presentation writer" in task for task in tasks)
@@ -754,12 +797,15 @@ def test_a_failed_build_resumes_after_its_memo_and_storyline():
     saved = {}
     spec = Spec("slides", "collaborator", brief="A 10-minute talk")
     agents = StudioAgents(gateway(fake), use="talk")
-    with contextlib.suppress(ModelError):
-        agents.make(model(), "high", spec, pool(), Notes(), checkpoint=saved.update)
+    with pytest.raises(ModelError, match="The connection broke"):
+        build_studio(agents, model(), "high", spec, pool(), Notes(), checkpoint=saved.update)
     assert saved["memo"] and saved["storyline"]
+    assert all(saved.get(key) for key in ("material_key", "prepare_key", "story_key", "write_key"))
+    assert "request_key" not in saved
     before = len(fake.requests)
-    built = StudioAgents(gateway(fake), use="talk").make(
-        model(), "high", spec, pool(), Notes(), resume=dict(saved)
+    built = build_studio(
+        StudioAgents(gateway(fake), use="talk"), model(), "high", spec, pool(), Notes(),
+        resume=dict(saved),
     )
     again = [request_text(r) for r in fake.requests[before:]]
     assert not any("lead analyst" in s or "presentation strategist" in s for s in again)
@@ -779,8 +825,9 @@ def test_stopping_at_story_completion_keeps_only_a_matching_checkpoint(changed):
             raise Stopped
 
     with pytest.raises(Stopped):
-        StudioAgents(gateway(fake), use="talk").make(
-            model(), "high", spec, evidence, Notes(), stop, checkpoint=checkpoint.update,
+        build_studio(
+            StudioAgents(gateway(fake), use="talk"), model(), "high", spec, evidence, Notes(),
+            stop, checkpoint=checkpoint.update,
         )
     assert not any("presentation writer" in request_text(r) for r in fake.requests)
     if changed == "brief":
@@ -794,8 +841,9 @@ def test_stopping_at_story_completion_keeps_only_a_matching_checkpoint(changed):
         evidence.restore([replace(first, payload=(citation, None)), *others])
 
     before = len(fake.requests)
-    StudioAgents(gateway(fake), use="talk").make(
-        model(), "high", spec, evidence, Notes(), resume=checkpoint,
+    build_studio(
+        StudioAgents(gateway(fake), use="talk"), model(), "high", spec, evidence, Notes(),
+        resume=checkpoint,
     )
     tasks = [request_text(r) for r in fake.requests[before:]]
     assert any("presentation writer" in task for task in tasks)
@@ -815,22 +863,28 @@ def test_report_rebuild_fingerprints_style_intent_and_replays_legacy(tmp_path, m
         web = Tool("search_web", "Public web", lambda query: queries.append(query) or [], "web")
         monkeypatch.setattr(service, "_web_tool", lambda wanted: (web if wanted else None, None))
         base, _ = library(client)
-        outline = [{"heading": "Results", "id": "results", "goal": "Explain the result",
-                    "layout": "points", "layoutLocked": True, "requires": ["older"]}]
-        first = built(build(client, base, body(style="decision_brief", outline=outline)))
+        first = built(build(client, base, body(style="decision_brief")))
+        summary, result = first["outline"]
+        result = {**result, "goal": "Explain the result"}
+        outline = [summary, result]
         request = body(supersedesArtifactId=first["id"], outline=outline, brief="Budget", web=True)
         inherited = built(build(client, base, request))
         assert inherited["style"] == "briefing" and queries == ["Budget"]
-        assert inherited["outline"] == [{"heading": "Results", "id": "results",
-                                         "goal": "Explain the result"}]
+        assert [(row["heading"], row["id"], row["goal"]) for row in inherited["outline"]] == [
+            (summary["heading"], summary["id"], summary["goal"]),
+            ("Results", result["id"], "Explain the result"),
+        ]
         assert built(build(client, base, request))["id"] == inherited["id"]
         assert build(client, base, dict(request, style="auto"))[-1][1]["status"] == 409
 
         reset = body(style="auto", supersedesArtifactId=inherited["id"], outline=outline)
-        assert built(build(client, base, reset))["style"] == "report"
-        assert build(client, base, {k: v for k, v in reset.items() if k != "style"})[-1][1][
-            "status"
-        ] == 409
+        assert build(client, base, reset)[-1][1]["code"] == "plan_changed"
+        explicit = body(
+            style="decision_brief", supersedesArtifactId=inherited["id"], outline=outline,
+        )
+        assert built(build(client, base, explicit))["style"] == "briefing"
+        omitted = {key: value for key, value in explicit.items() if key != "style"}
+        assert build(client, base, omitted)[-1][1]["status"] == 409
         with service.sessions() as session:
             row = session.get(Artifact, inherited["id"])
             row.request_fingerprint = service._output_fingerprint(
@@ -902,14 +956,14 @@ def looking_router(rewrite=POINTS, findings=None):
 def make_with_look(fake, renderer, *models, design=False):
     # Plain (template) slides by default: this is the look step's older path.
     agents = StudioAgents(gateway(fake, *models), use="talk", renderer=renderer, design=design)
-    built = agents.make(
-        models[0] if models else model(), "high",
+    built = build_studio(
+        agents, models[0] if models else model(), "high",
         Spec("slides", "collaborator", brief="A 10-minute talk"), pool(), Notes(),
     )  # fmt: skip
     return agents, built
 
 
-def test_a_slide_the_renderer_measures_as_overflowing_is_redrawn_once_and_checked(tmp_path):
+def test_a_slide_the_renderer_measures_as_overflowing_is_redrawn_once(tmp_path):
     renderer = FakeRenderer(tmp_path)
     fake = FakeProvider(looking_router())
     agents, built = make_with_look(fake, renderer)
@@ -966,6 +1020,38 @@ def test_what_the_eye_finds_is_fixed_by_the_layout_it_names(tmp_path):
     agents, built = make_with_look(FakeProvider(looking_router(findings=[finding])), renderer)
     assert fmt.parse_slide(fmt.split_slides(built.content)[1]).layout == "points"
     assert built.skill["look"]["findings"][0]["slide"] == 2
+
+
+@pytest.mark.parametrize(("before", "after"), [
+    ("buildings in six districts", "properties across six districts"),
+    ("Size first.", "Lead with the sample."),
+])
+def test_plain_layout_only_repair_rejects_changed_checked_content(tmp_path, before, after):
+    renderer = FakeRenderer(tmp_path)
+    finding = {"slide": 2, "problem": "Use a clearer layout", "severity": "high",
+               "action": "layout", "layout": "points"}
+    rewrite = POINTS.replace(before, after)
+    assert rewrite != POINTS
+    assert fmt.numbers_in(rewrite) == fmt.numbers_in(POINTS)
+    assert citation_numbers(rewrite) == citation_numbers(POINTS)
+    fake = FakeProvider(looking_router(rewrite=rewrite, findings=[finding]))
+    _, built = make_with_look(fake, renderer)
+    old = fmt.split_slides(built.content)[1]
+    assert fmt.parse_slide(old).layout == "stats" and before in old and after not in old
+    assert built.skill["look"]["rejected"] == [
+        {"slide": 2, "why": "changed checked wording, notes or citations"},
+    ]
+
+
+def test_plain_content_finding_uses_the_editorial_repair_path(tmp_path):
+    renderer = FakeRenderer(tmp_path)
+    finding = {"slide": 2, "problem": "The phrase is too long", "severity": "high",
+               "action": "cut", "fix": "Shorten the sample description"}
+    rewrite = POINTS.replace("buildings in six districts", "buildings across districts")
+    fake = FakeProvider(looking_router(rewrite=rewrite, findings=[finding]))
+    _, built = make_with_look(fake, renderer)
+    assert "buildings across districts" in built.content
+    assert built.skill["look"]["applied"][0]["slide"] == 2
 
 
 def test_with_no_model_that_sees_the_step_says_why_and_the_deck_is_unchanged(tmp_path):

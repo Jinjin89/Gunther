@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from fake_models import FakeProvider, output_replies
+from fake_models import FakeProvider, orchestrator_replies, output_replies
 from sqlalchemy import func, inspect, select
 from sqlalchemy.exc import IntegrityError
 from test_output_skills import (
@@ -16,10 +16,11 @@ from test_output_skills import (
     SLIDES_OUTLINE,
     saved_skill_output,
 )
-from test_outputs import SIDECAR, app_for, check_reads, library, route, workspace
+from test_outputs import SIDECAR, app_for, check_reads, library, output_turn, route, workspace
 
 from gunther.artifact_manifest import artifact_manifest_hash
 from gunther.artifact_workspace import (
+    CONVERSATION_PENDING,
     Pending,
     Workspace,
     dump_workspace,
@@ -70,7 +71,11 @@ def test_a_conversation_is_created_listed_read_renamed_and_archived(tmp_path: Pa
         one = created.json()
         assert one["id"] == "device-one" and one["title"] == "Cool roofs"
         assert one["scope"] == {"mode": "library", "sourceIds": [], "unitIds": [], "sessionIds": []}
-        assert one["brief"] == {"goal": None, "audience": None, "constraints": [], "open": []}
+        assert one["brief"] == {
+            "goal": None, "audience": None, "constraints": [], "open": [],
+            "emphasize": [], "avoid": [],
+        }
+        assert one["editVersion"] == 0 and one["studioWorks"] == []
         assert (one["messages"], one["works"]) == ([], [])
         assert (one["active"], one["pending"]) == (None, None)
         assert (one["artifactCount"], one["waiting"], one["archived"]) == (0, False, False)
@@ -92,7 +97,7 @@ def test_a_conversation_is_created_listed_read_renamed_and_archived(tmp_path: Pa
         assert [item["id"] for item in listed] == [other["id"], blank.json()["id"], "device-one"]
         assert set(listed[0]) == {
             "id", "title", "updatedAt", "artifactCount", "waiting",
-            "outputType", "shape", "lineageId", "lastTurn",
+            "outputType", "shape", "lineageId", "lastTurn", "studioWorks",
         }
 
         read = client.get(conversations(base_id, "/device-one"), headers=headers)
@@ -211,6 +216,8 @@ def test_lines_typed_in_the_panel_are_marked_as_the_users(tmp_path: Path) -> Non
                     {"text": "short", "mark": "edited"},
                 ],
                 "open": [{"text": "Include costs?", "mark": "edited"}],
+                "emphasize": [],
+                "avoid": [],
             },
             "spec": None,
         }
@@ -411,11 +418,16 @@ def test_editing_the_brief_makes_what_depends_on_it_out_of_date_and_nothing_else
         assert work["approach"]["state"] == "ok"
         assert [p["state"] for p in work["parts"]] == ["ok", "ok", "ok"]
 
-        # Constraints and open questions change no step.
-        client.patch(url, headers=headers, json={"constraints": ["no jargon"], "open": ["Costs?"]})
+        client.patch(url, headers=headers, json={"open": ["Costs?"]})
         (work,) = client.get(conversations(base_id, "/stale"), headers=headers).json()["works"]
         assert work["approach"]["state"] == "ok"
         assert [p["state"] for p in work["parts"]] == ["ok", "ok", "ok"]
+
+        client.patch(url, headers=headers, json={"constraints": ["no jargon"]})
+        (work,) = client.get(conversations(base_id, "/stale"), headers=headers).json()["works"]
+        assert work["approach"]["why"] == "the constraints changed"
+        assert [p["why"] for p in work["parts"]] == ["the constraints changed"] * 3
+        client.patch(url, headers=headers, json={"constraints": []})
 
         # A use the deck skill does not have is refused, and nothing is changed.
         refused = client.patch(url, headers=headers, json={"spec": {"use": "forever"}})
@@ -636,6 +648,93 @@ def test_opening_a_saved_skills_plan_uses_the_legacy_reader(tmp_path: Path) -> N
             assert work.outline[1].message == "Old planner message"
         read = client.get(route(base_id, saved["id"]), headers=headers).json()
         assert read["content"] == saved["content"] and len(fake.requests) == before
+
+
+def test_pending_question_is_projected_only_for_its_saved_work(tmp_path):
+    with app_for(tmp_path, FakeProvider([])) as client:
+        base, _ = library(client)
+        cid = "multi_work_history"
+        headers = workspace(client)
+        first = saved_skill_output(client, base, conversationId=cid)
+        second = saved_skill_output(client, base, kind="slides", conversationId=cid)
+        path = conversations(base, f"/{cid}")
+        client.get(conversations(base), headers=headers).raise_for_status()
+        service = client.app.state.knowledge_service
+        with service.sessions.begin() as session:
+            row = session.get(ArtifactConversation, cid)
+            state = load_workspace(row.state_json)
+            state.active = second["lineageId"]
+            state.pending_by_target[first["lineageId"]] = Pending(
+                question="Which result should we expand?", options=["First"], message_id="acm_ask",
+            )
+            row.state_json = dump_workspace(state)
+
+        shown = client.get(path, headers=headers).raise_for_status().json()
+        by_key = {work["key"]: work for work in shown["works"]}
+        assert shown["active"] == second["lineageId"] and shown["pending"] is None
+        assert by_key[first["lineageId"]]["pending"]["messageId"] == "acm_ask"
+        assert by_key[second["lineageId"]]["pending"] is None
+        focused = client.patch(
+            f"{path}/works/{first['lineageId']}", headers=headers,
+            json={"baseEditVersion": shown["editVersion"]},
+        ).raise_for_status().json()
+        assert focused["pending"] == by_key[first["lineageId"]]["pending"]
+
+
+def test_saved_turn_can_still_clear_a_legacy_unattached_question(tmp_path):
+    fake = FakeProvider(orchestrator_replies(
+        [{"actions": [{"do": "reply", "text": "I’ll use the earlier context."}]}],
+        lambda _: '{"assertions":[]}',
+    ))
+    with app_for(tmp_path, fake) as client:
+        base, _ = library(client)
+        cid = "unattached_question"
+        headers = workspace(client)
+        saved = saved_skill_output(client, base, conversationId=cid)
+        client.get(conversations(base), headers=headers).raise_for_status()
+        service = client.app.state.knowledge_service
+        with service.sessions.begin() as session:
+            row = session.get(ArtifactConversation, cid)
+            state = load_workspace(row.state_json)
+            state.pending_by_target[CONVERSATION_PENDING] = Pending(
+                question="Use the earlier context?", options=["Yes"], message_id="acm_legacy",
+            )
+            row.state_json = dump_workspace(state)
+        name, result = output_turn(client, base, cid, {
+            "kind": "answer", "clientRequestId": "legacy_pending_answer",
+            "targetLineageId": saved["lineageId"], "text": "Yes",
+        }, headers)[-1]
+        assert name == "done" and result["outcome"] == "replied"
+        with service.sessions() as session:
+            state = load_workspace(session.get(ArtifactConversation, cid).state_json)
+        assert not state.pending_by_target
+
+
+def test_reading_a_saved_version_with_no_outline_projects_stable_rows(tmp_path):
+    with app_for(tmp_path, FakeProvider([])) as client:
+        base, _ = library(client)
+        cid = "empty_legacy_outline"
+        headers = workspace(client)
+        saved = saved_skill_output(client, base, kind="slides", conversationId=cid)
+        service = client.app.state.knowledge_service
+        with service.sessions.begin() as session:
+            row = session.get(Artifact, saved["id"])
+            row.outline_json = "[]"
+            row.manifest_hash = artifact_manifest_hash(row.__getattribute__)
+        path = route(base, saved["id"])
+        shown = client.get(path, headers=headers).raise_for_status().json()
+        assert shown["outline"][0]["layout"] == "title"
+        assert [item["heading"] for item in shown["outline"]] == [
+            item["heading"] for item in shown["sections"]
+        ]
+        ids = [item["id"] for item in shown["outline"]]
+        assert all(ids) and len(set(ids)) == len(ids)
+        assert client.get(path, headers=headers).raise_for_status().json() == shown
+        client.get(conversations(base), headers=headers).raise_for_status()
+        history = client.get(conversations(base, f"/{cid}"), headers=headers).json()
+        assert [part["itemId"] for part in history["works"][0]["parts"]] == ids
+        with service.sessions() as session:
+            assert session.get(Artifact, saved["id"]).outline_json == "[]"
 
 
 def test_two_requests_for_a_missing_conversation_make_it_once(tmp_path: Path) -> None:

@@ -26,6 +26,7 @@ import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, get_args
+from uuid import uuid4
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
@@ -48,6 +49,7 @@ from gunther.citations import (
 )
 from gunther.evidence import Evidence
 from gunther.markup import Markup, parse_markup
+from gunther.model_profiles import Effort
 from gunther.output_shapes import OutputUnit
 from gunther.output_types import (
     DECK_USES,
@@ -67,7 +69,25 @@ from gunther.outputs import (
     section_hash,
     split_document,
 )
-from gunther.schemas import ArtifactOut, ConversationCitationOut, OutlineItem, OutputScope
+from gunther.schemas import (
+    PLAN_LINE_LENGTH,
+    PLAN_LINE_LIMIT,
+    ArtifactAudience,
+    ArtifactMark,
+    ArtifactOut,
+    ConversationCitationOut,
+    OutlineItem,
+    OutputScope,
+    PlanAttemptOut,
+    PlanBasis,
+    PlanCountEditInput,
+    PlanLineInput,
+    PlanLines,
+    PlanPartField,
+    PlanPreferencesOut,
+    PreferenceLineOut,
+    VoicePair,
+)
 from gunther.slide_scene import rebind_graphics_hash
 
 logger = logging.getLogger(__name__)
@@ -75,11 +95,11 @@ logger = logging.getLogger(__name__)
 # Sources one conversation may hold (``AgentLimits.pool``).
 POOL_LIMIT = 160
 # Lines the brief keeps of each list (constraints, open questions).
-MAX_LINES = 8
+MAX_LINES = PLAN_LINE_LIMIT
 # Who a work is for when the brief does not say.
 DEFAULT_AUDIENCE = "scientist"
 
-Mark = Literal["you", "guessed", "edited"]
+Mark = ArtifactMark
 Kind = ShapeId
 PartState = Literal["ok", "not_written", "out_of_date", "not_checked"]
 
@@ -91,6 +111,8 @@ _LEGACY_REPORT_TYPES = {
     "learn": "study_guide",
 }
 _SPEC_LINES = ("use", "length", "output_type")
+_PREFERENCE_FIELDS = ("emphasize", "avoid")
+CONVERSATION_PENDING = "$conversation"
 
 
 # The workspace ---------------------------------------------------------------------------------
@@ -100,11 +122,11 @@ class Line(BaseModel):
     """One line of the brief, and whose it is: ``you`` said it in a message, ``edited`` was
     typed in the panel, ``guessed`` is the agent's. A model never changes the first two."""
 
-    text: str = Field(max_length=300)
+    text: str = Field(max_length=PLAN_LINE_LENGTH)
     mark: Mark = "guessed"
 
 
-class ConversationBrief(BaseModel):
+class ConversationBrief(PlanPreferencesOut):
     """What the conversation is for. It belongs to the conversation, not to one artifact."""
 
     goal: Line | None = None  # what the work is about, and what it is for
@@ -123,6 +145,14 @@ class WorkSpec(BaseModel):
     language: str | None = None
     theme: str | None = None
     design_version: int | None = None
+    focus: str | None = None  # None lets older work retain the brief's goal
+    requested_title: str | None = None
+    audience_choice: ArtifactAudience | None = None
+    scope: OutputScope | None = None
+    web: bool = False
+    voices: VoicePair | None = None
+    model_ref: str | None = None
+    effort: Effort | None = None
 
     @property
     def chosen_output_type(self) -> str | None:
@@ -161,7 +191,10 @@ class ItemRec(BaseModel):
     design_attempted: bool = False
     cards: list[str] = Field(default_factory=list)  # card ids
     refs: list[int] = Field(default_factory=list)  # pool numbers planned for it
+    required_refs: list[int] = Field(default_factory=list)
     queries: list[str] = Field(default_factory=list)
+    notes: str = ""
+    edited_fields: list[PlanPartField] = Field(default_factory=list)
 
 
 class PartRec(BaseModel):
@@ -190,6 +223,43 @@ class PartRec(BaseModel):
         return coverage_of(self.verdicts, self.checked or section_hash(self.text))
 
 
+class PlanProposalRecord(BaseModel):
+    summary: str
+    angle: str
+    coverage: PlanLines = Field(default_factory=list)
+    count: PlanCountEditInput = Field(default_factory=lambda: PlanCountEditInput(mode="auto"))
+    target_minutes: float | None = None
+
+
+class PlanAttemptRecord(PlanAttemptOut):
+    server_boot_id: str
+    attempt_id: str
+
+
+class PlanApprovalRecord(BaseModel):
+    request_id: str
+    attempt_id: str
+    user_message_id: str
+    revision: str
+    material_key: str
+    approved_at: str
+    first_version_id: str | None = None
+
+
+class PlanRecord(BaseModel):
+    id: str
+    epoch: int = Field(default=0, ge=0)
+    basis: PlanBasis = "assistant"
+    round_message_ids: list[str] = Field(default_factory=list)
+    order_edited: bool = False
+    coverage_edited: bool = False
+    reviewed_material_key: str | None = None
+    proposal: PlanProposalRecord | None = None
+    attempt: PlanAttemptRecord | None = None
+    approval: PlanApprovalRecord | None = None
+    updated_at: str = ""
+
+
 class Work(BaseModel):
     """One artifact in the conversation, and everything that was kept while making it."""
 
@@ -211,6 +281,23 @@ class Work(BaseModel):
     skipped: list[dict] = Field(default_factory=list)  # the skill's notes since the last save
     next_card: int = 1
     next_item: int = 1
+    plan: PlanRecord | None = None
+    studio_progress: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def read_legacy_progress(cls, data: Any) -> Any:
+        approach = data.get("approach") if isinstance(data, dict) else None
+        if not isinstance(approach, dict) or "studio_progress" not in approach:
+            return data
+        approach = dict(approach)
+        progress = approach.pop("studio_progress")
+        converted = {**data, "approach": approach or None}
+        if "studio_progress" not in data and isinstance(progress, dict):
+            converted["studio_progress"] = progress
+        return converted
 
     @model_validator(mode="before")
     @classmethod
@@ -244,6 +331,13 @@ class Pending(BaseModel):
     question: str
     options: list[str]
     message_id: str
+    revision: str | None = None
+
+
+def pending_target(work: Work | None = None, *, work_key: str | None = None) -> str:
+    if work is not None:
+        return work.plan.id if work.plan is not None else work.key
+    return work_key or CONVERSATION_PENDING
 
 
 class Workspace(BaseModel):
@@ -253,9 +347,47 @@ class Workspace(BaseModel):
     works: list[Work] = Field(default_factory=list)
     refinement_scopes: dict[str, OutputScope] = Field(default_factory=dict)
     active: str | None = None  # a work key
-    pending: Pending | None = None
+    pending_by_target: dict[str, Pending] = Field(default_factory=dict)
     log: list[str] = Field(default_factory=list)  # the change log, oldest first
     asked_in_a_row: int = 0
+    edit_version: int = Field(default=0, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def convert_pending(cls, data: Any) -> Any:
+        if not isinstance(data, dict) or "pending_by_target" in data or not data.get("pending"):
+            return data
+        active = data.get("active")
+        key = CONVERSATION_PENDING
+        works = data.get("works")
+        for work in works if isinstance(works, list) else []:
+            if isinstance(work, Work) and work.key == active:
+                key = pending_target(work)
+                break
+            if isinstance(work, dict) and isinstance(active, str) and work.get("key") == active:
+                key = active
+                plan = work.get("plan")
+                if isinstance(plan, dict) and isinstance(plan.get("id"), str):
+                    key = plan["id"] or key
+                break
+        return {**data, "pending_by_target": {key: data["pending"]}}
+
+    @property
+    def pending(self) -> Pending | None:
+        """Compatibility view for the saved-work reader's selected target."""
+
+        key = pending_target(active_work(self), work_key=self.active)
+        return self.pending_by_target.get(key) or self.pending_by_target.get(CONVERSATION_PENDING)
+
+    @pending.setter
+    def pending(self, value: Pending | None) -> None:
+        key = pending_target(active_work(self), work_key=self.active)
+        if value is None:
+            if key not in self.pending_by_target:
+                key = CONVERSATION_PENDING
+            self.pending_by_target.pop(key, None)
+        else:
+            self.pending_by_target[key] = value
 
 
 def load_workspace(raw: str | None) -> Workspace:
@@ -306,9 +438,15 @@ def forget_works(workspace: Workspace, lineages: set[str]) -> bool:
     changed = lost_active or len(works) != len(workspace.works) or (
         len(scopes) != len(workspace.refinement_scopes)
     )
+    removed_targets = lineages | {
+        pending_target(work) for work in workspace.works if work.key in lineages
+    }
+    for key in removed_targets:
+        if workspace.pending_by_target.pop(key, None) is not None:
+            changed = True
     workspace.works, workspace.refinement_scopes = works, scopes
     if lost_active:
-        workspace.active, workspace.pending = None, None
+        workspace.active = None
     return changed
 
 
@@ -564,6 +702,29 @@ def _audience(brief: ConversationBrief) -> str:
     return _words(brief.audience) or DEFAULT_AUDIENCE
 
 
+def _work_audience(brief: ConversationBrief, work: Work) -> str:
+    return work.spec.audience_choice or _audience(brief)
+
+
+def _preference_inputs(brief: ConversationBrief) -> dict[str, object]:
+    return {
+        key: lines for key, lines in {
+            "constraints": [_words(line) for line in brief.constraints],
+            "emphasize": [line.text for line in brief.emphasize],
+            "avoid": [line.text for line in brief.avoid],
+        }.items() if lines
+    }
+
+
+def _language_input(work: Work) -> dict[str, object]:
+    return {"language": work.spec.language} if work.spec.language is not None else {}
+
+
+_PREFERENCE_INPUTS = {
+    "constraints": "the constraints",
+    "emphasize": "what to emphasize",
+    "avoid": "what to avoid",
+}
 APPROACH_FROM = {
     "goal": "the goal",
     "audience": "the audience",
@@ -571,41 +732,63 @@ APPROACH_FROM = {
     "use": "the use",
     "length": "the length",
     "output_type": "the output type",
+    "language": "the language",
+    **_PREFERENCE_INPUTS,
 }
-OUTLINE_FROM = {"approach": "the approach", "cards": "the material cards"}
+OUTLINE_FROM = {
+    "approach": "the approach", "cards": "the material cards", "language": "the language",
+    **_PREFERENCE_INPUTS,
+}
 PART_FROM = {
     "item": "its outline item",
     "cards": "its cards",
     "audience": "the audience",
     "kind": "the kind",
     "use": "the use",
+    "language": "the language",
+    **_PREFERENCE_INPUTS,
 }
 
 
 def digest_approach_inputs(brief: ConversationBrief, work: Work) -> str:
-    """What the approach is written from: the brief's goal and audience (a scientist when it
-    has none), and the artifact's kind, use, length and output type; spacing and capitals are
-    no change. Constraints are not part of it (§2.5)."""
+    """The brief and settings that condition preparation."""
 
     return _digest(
         {
-            "goal": _same_words(brief.goal),
-            "audience": _fold(_audience(brief)),
+            "goal": work.spec.focus if work.spec.focus is not None else _same_words(brief.goal),
+            "audience": _fold(_work_audience(brief, work)),
             "kind": work.spec.kind,
             "use": _same_words(work.spec.use),
             "length": _same_words(work.spec.length),
             "output_type": work.spec.chosen_output_type or "",
+            **_preference_inputs(brief),
+            **_language_input(work),
         }
     )
 
 
-def digest_outline_inputs(work: Work) -> str:
-    """What the outline is planned from: the approach, and the material cards it points to."""
+def digest_outline_inputs(work: Work, brief: ConversationBrief | None = None) -> str:
+    """The approach, material cards and brief used for the outline."""
 
     approach = work.approach
     if approach is not None:
         approach = {key: value for key, value in approach.items() if key != "studio_progress"}
-    return _digest({"approach": approach, "cards": [card.model_dump() for card in work.cards]})
+    inputs = {
+        "approach": approach,
+        "cards": [card.model_dump() for card in work.cards],
+        **_language_input(work),
+    }
+    if brief is not None:
+        return _digest({**inputs, **_preference_inputs(brief)})
+    # Saved-work callers already stamped the brief that produced the approach.
+    try:
+        previous = json.loads(work.approach_inputs or "{}")
+    except ValueError:
+        previous = {}
+    hashes = {name: _short(value) for name, value in inputs.items()}
+    if isinstance(previous, dict):
+        hashes.update({name: previous[name] for name in _PREFERENCE_INPUTS if name in previous})
+    return json.dumps(hashes, sort_keys=True, separators=(",", ":"))
 
 
 def digest_part_inputs(brief: ConversationBrief, work: Work, item: ItemRec) -> str:
@@ -628,6 +811,7 @@ def digest_part_inputs(brief: ConversationBrief, work: Work, item: ItemRec) -> s
                     "message": item.message,
                     "question": item.question,
                     "requires": item.requires,
+                    "notes": item.notes,
                 }.items()
                 if value
             },
@@ -635,9 +819,11 @@ def digest_part_inputs(brief: ConversationBrief, work: Work, item: ItemRec) -> s
                 cards[card_id].model_dump() if card_id in cards else {"missing": card_id}
                 for card_id in item.cards
             ],
-            "audience": _fold(_audience(brief)),
+            "audience": _fold(_work_audience(brief, work)),
             "kind": work.spec.kind,
             "use": _same_words(work.spec.use),
+            **_preference_inputs(brief),
+            **_language_input(work),
         }
     )
 
@@ -688,12 +874,12 @@ def approach_state(work: Work, brief: ConversationBrief) -> StepState:
     return StepState(state="ok")
 
 
-def outline_state(work: Work) -> StepState:
+def outline_state(work: Work, brief: ConversationBrief | None = None) -> StepState:
     """The outline is out of date when the approach it was planned from is not today's."""
 
     if not work.outline:
         return StepState(state="not_written")
-    now = digest_outline_inputs(work)
+    now = digest_outline_inputs(work, brief)
     if work.outline_inputs != now:
         return StepState(
             state="out_of_date", why=_what_changed(work.outline_inputs, now, OUTLINE_FROM)
@@ -800,10 +986,12 @@ class BriefUpdate(BaseModel):
         "use",
         "length",
         "output_type",
+        "emphasize",
+        "avoid",
     ]
-    text: str = Field(default="", max_length=300)
+    text: str = Field(default="", max_length=PLAN_LINE_LENGTH)
     # The user's own words that say it; empty for the model's own guess.
-    quote: str = Field(default="", max_length=300)
+    quote: str = Field(default="", max_length=PLAN_LINE_LENGTH)
 
 
 @dataclass
@@ -887,6 +1075,20 @@ def _add_line(lines: list[Line], text: str, mark: Mark, label: str) -> str:
     return ""
 
 
+def _add_preference(
+    lines: list[PreferenceLineOut], text: str, mark: Mark, label: str,
+) -> str:
+    for position, line in enumerate(lines):
+        if _fold(line.text) == _fold(text):
+            if line.mark == "guessed" and mark == "you":
+                lines[position] = line.model_copy(update={"mark": mark})
+            return ""
+    if len(lines) == MAX_LINES:
+        return f"Could not add what to {label}: there are already {MAX_LINES} lines."
+    lines.append(PreferenceLineOut(id=f"pref_{uuid4().hex}", text=text, mark=mark))
+    return ""
+
+
 def apply_brief_updates(
     brief: ConversationBrief,
     work: Work | None,
@@ -921,7 +1123,10 @@ def apply_brief_updates(
             continue
         mark: Mark = "you" if _is_theirs(update.quote, said, clicked) else "guessed"
         note = ""
-        if settled and mark == "guessed" and name in APPROACH_FROM:
+        if (
+            settled and mark == "guessed" and name in APPROACH_FROM
+            and name not in _PREFERENCE_FIELDS
+        ):
             notes.append(
                 f"Kept the {name} as it is: the approach was written from it, and only your own "
                 "words change it now."
@@ -934,6 +1139,8 @@ def apply_brief_updates(
             note = _add_line(brief.constraints, text, mark, "constraint")
         elif name == "open":
             note = _add_line(brief.open, text, mark, "open question")
+        elif name in _PREFERENCE_FIELDS:
+            note = _add_preference(getattr(brief, name), text, mark, name)
         elif name == "drop_constraint":
             at = _find(brief.constraints, text)
             if mark != "you":
@@ -952,6 +1159,9 @@ def apply_brief_updates(
                 note = f"Kept the open question “{text[:60]}”: closing it needs your own words."
         elif spec is None:
             note = f"Could not set the {name}: there is no artifact yet."
+        elif name == "output_type" and work is not None and work.plan is not None:
+            if _brief_value(spec.kind, name, text) != spec.chosen_output_type:
+                note = "Start a separate plan for another output type."
         elif name == "use" and spec.kind != "slides":
             note = "A report has no use; it was left out."
         elif (value := _brief_value(spec.kind, name, text)) is None:
@@ -975,6 +1185,8 @@ def edit_brief(
     audience: str | None = None,
     constraints: Sequence[str] | None = None,
     open: Sequence[str] | None = None,
+    emphasize: Sequence[PlanLineInput] | None = None,
+    avoid: Sequence[PlanLineInput] | None = None,
     use: str | None = None,
     length: str | None = None,
     output_type: str | None = None,
@@ -984,7 +1196,7 @@ def edit_brief(
     it, and a list is the whole new list. Raises ValueError for a use or type the skill
     does not have, or when there is no artifact to set one on."""
 
-    brief = brief.model_copy(deep=True)
+    brief = edit_preferences(brief, emphasize=emphasize, avoid=avoid).model_copy(deep=True)
     spec = work.spec.model_copy(deep=True) if work is not None else None
 
     def typed(current: Line | None, text: str) -> Line | None:
@@ -1030,6 +1242,65 @@ def edit_brief(
     return brief, spec
 
 
+def edit_preferences(
+    brief: ConversationBrief, *, emphasize: Sequence[PlanLineInput] | None = None,
+    avoid: Sequence[PlanLineInput] | None = None,
+) -> ConversationBrief:
+    """Replace submitted lists by ID, preserving marks on unchanged rows and reorders."""
+
+    before = {
+        line.id: (field, line) for field in _PREFERENCE_FIELDS for line in getattr(brief, field)
+    }
+    updates: dict[str, list[PreferenceLineOut]] = {}
+    for name, rows in zip(_PREFERENCE_FIELDS, (emphasize, avoid), strict=True):
+        if rows is None:
+            continue
+        lines = []
+        for row in rows:
+            prior_field, prior_row = before.get(row.id, (None, None))
+            if prior_row is not None and prior_field == name and prior_row.text == row.text:
+                lines.append(prior_row)
+            else:
+                lines.append(PreferenceLineOut(id=row.id, text=row.text, mark="edited"))
+        updates[name] = lines
+    return ConversationBrief.model_validate({**brief.model_dump(), **updates}) if updates else brief
+
+
+def _merge_preferences(
+    base: ConversationBrief, mine: ConversationBrief, theirs: ConversationBrief,
+) -> dict[str, list[PreferenceLineOut]]:
+    known_ids = {
+        line.id for brief in (base, theirs) for field in _PREFERENCE_FIELDS
+        for line in getattr(brief, field)
+    }
+    result = {}
+    for name in _PREFERENCE_FIELDS:
+        before = {line.id: line for line in getattr(base, name)}
+        current = getattr(theirs, name)
+        proposed = {line.id: line for line in getattr(mine, name)}
+        kept = []
+        for line in current:
+            suggestion = proposed.get(line.id)
+            if (
+                line == before.get(line.id) and line.mark == "guessed"
+                and suggestion is not None and suggestion.text == line.text
+                and suggestion.mark == "you"
+            ):
+                line = suggestion
+            kept.append(line)
+        if current or not before:
+            # A deleted, replaced or moved line must not return under a model-generated ID.
+            used_text = {_fold(line.text) for line in (*before.values(), *current)}
+            for line in proposed.values():
+                folded = _fold(line.text)
+                if line.id not in known_ids and folded not in used_text and len(kept) < MAX_LINES:
+                    kept.append(line)
+                    known_ids.add(line.id)
+                    used_text.add(folded)
+        result[name] = kept
+    return result
+
+
 def keep_edits(
     base: ConversationBrief, mine: ConversationBrief, theirs: ConversationBrief
 ) -> ConversationBrief:
@@ -1055,14 +1326,14 @@ def keep_edits(
             lines = [other for other in lines if _fold(other.text) != _fold(line.text)]
             lines.append(line)
         setattr(kept, name, lines[:MAX_LINES])
-    return kept
+    return kept.model_copy(update=_merge_preferences(base, mine, theirs), deep=True)
 
 
 def keep_spec_edits(base: WorkSpec, mine: WorkSpec, theirs: WorkSpec) -> WorkSpec:
     """An artifact's spec at the end of a turn, keeping the fields the user changed meanwhile."""
 
     kept = mine.model_copy(deep=True)
-    for name in _SPEC_LINES:
+    for name in WorkSpec.model_fields.keys() - {"kind"}:
         if getattr(theirs, name) != getattr(base, name):
             setattr(kept, name, getattr(theirs, name))
     return kept
@@ -1074,10 +1345,12 @@ def render_brief(brief: ConversationBrief, work: Work | None = None) -> str:
     for the writer, so they are left out."""
 
     lines: list[str] = []
-    if brief.goal:
-        lines.append(f"Goal: {_words(brief.goal)}")
-    if brief.audience:
-        lines.append(f"Audience: {_words(brief.audience)}")
+    focus = work.spec.focus if work is not None else None
+    if goal := focus if focus is not None else _words(brief.goal):
+        lines.append(f"Goal: {goal}")
+    audience = work.spec.audience_choice if work is not None else None
+    if audience := audience or _words(brief.audience):
+        lines.append(f"Audience: {audience}")
     if work is not None:
         for name in ("use", "length"):
             if line := getattr(work.spec, name):
@@ -1097,13 +1370,16 @@ def spec_of(brief: ConversationBrief, work: Work) -> Spec:
     length = _same_words(work.spec.length)
     return Spec(
         kind=work.spec.kind,
-        audience=_audience(brief),
+        audience=_work_audience(brief, work),
         output_type=work.spec.chosen_output_type,
         brief=render_brief(brief, work),
+        title=work.spec.requested_title,
         theme=work.spec.theme,
         design_version=work.spec.design_version,
         length=length if length in get_args(OutputLength) else None,
         language=work.spec.language,
+        emphasize=tuple(line.text for line in brief.emphasize),
+        avoid=tuple(line.text for line in brief.avoid),
     )
 
 
@@ -1167,6 +1443,13 @@ def _note_dropped(work: Work, step: str, position: int, dropped: Sequence[int]) 
         )
 
 
+def _version_cover_settings(version: ArtifactOut) -> tuple[str | None, int | None]:
+    from gunther.output_commands import slide_cover_settings
+
+    slides = split_document(version.content, version.kind)[1]
+    return slide_cover_settings(slides[0]) if slides else (None, None)
+
+
 def _spec_of_version(version: ArtifactOut) -> WorkSpec:
     """The type and options a saved version was made with."""
 
@@ -1179,10 +1462,7 @@ def _spec_of_version(version: ArtifactOut) -> WorkSpec:
         language=getattr(version.provenance, "language", None),
     )
     if version.kind == "slides":
-        first = split_document(version.content, version.kind)[1]
-        if first:
-            spec.theme = _marked(first[0]).theme
-            spec.design_version = _marked(first[0]).design_version
+        spec.theme, spec.design_version = _version_cover_settings(version)
     use = getattr(version.provenance, "use", None)
     if use:
         spec.use = Line(text=use, mark="guessed")
@@ -1200,6 +1480,7 @@ def _section_item(
     return ItemRec(
         id=identity, heading=heading_of(section) or (plan.heading if plan else ""),
         goal=plan.goal if plan else "",
+        notes=plan.notes if plan else "",
         layout=_layout_of(kind, position, raw),
         refs=citation_numbers(SHAPES[kind].markup(text)),
     )
@@ -1303,6 +1584,7 @@ def import_work(
             id=identity,
             heading=(plan.heading if plan else "") or heading_of(section),
             goal=plan.goal if plan else "",
+            notes=plan.notes if plan else "",
             message=plan.message if plan else "",
             question=plan.question if plan else "",
             requires=list(plan.requires) if plan else [],
@@ -1410,9 +1692,14 @@ def sync(
 
     """
 
-    if work.version_id == head.id:
-        return _refresh_checks(work, head, checks)
     kind = work.spec.kind
+    theme_changed = False
+    if kind == "slides":
+        theme, _ = _version_cover_settings(head)
+        theme_changed = work.spec.theme != theme
+        work.spec.theme = theme
+    if work.version_id == head.id:
+        return _refresh_checks(work, head, checks) or theme_changed
     pool = pool_from(workspace)
     version_map = _adopt(pool, head.citations)
     store_pool(workspace, pool)

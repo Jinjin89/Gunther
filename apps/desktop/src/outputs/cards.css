@@ -67,6 +67,10 @@
   font-size: var(--gx-text-lg);
   line-height: 1.6;
 }
+.reader-track .cards-response { font-family: var(--outputs-serif, var(--gx-font-display)); }
+.reader-track :is(.cards-prompt h2, .cards-response > .answer-markdown, .cards-option-text > .answer-markdown) {
+  max-inline-size: min(100%, 66ch);
+}
 .cards-turn[data-card-kind="flashcard"] .cards-response {
   box-sizing: border-box;
   /* Three lines with room for raised citation marks. */
@@ -162,6 +166,8 @@
 
 @container library-reader (max-width: 32em) {
   .cards-turn[data-card-kind="flashcard"] { padding: 16px; }
+  .cards-choice { grid-template-columns: 28px minmax(0, 1fr); row-gap: 4px; }
+  .cards-choice-result { grid-column: 2; grid-row: 2; }
 }
 
 @media print {

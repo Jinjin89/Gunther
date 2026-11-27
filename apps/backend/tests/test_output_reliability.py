@@ -23,12 +23,15 @@ from test_outputs import (
     body,
     build,
     built,
+    heading,
     library,
+    plan_and_approve,
     refine,
     route,
     saved_output,
     workspace,
 )
+from test_outputs import output_replies as planned_output_replies
 
 from gunther.agent import AskAgent
 from gunther.artifact_read import latest_check_records
@@ -266,15 +269,15 @@ def test_invented_chart_values_are_never_drawn_as_a_chart(tmp_path):
         "title": "Markers",
         "sections": [
             {"heading": "Markers", "layout": "title", "cards": []},
-            {"heading": "Marker levels", "layout": "bar_chart", "cards": [1]},
-            {"heading": "Choose markers", "layout": "takeaways", "cards": [1]},
+            {"heading": "Marker levels", "layout": None, "cards": [1]},
+            {"heading": "Choose markers", "layout": "points", "cards": [1]},
         ],
     }
     pages = [
-        "# Markers\n\nHow the markers compare",
+        "<!-- layout: title -->\n# Markers\n\nHow the markers compare",
         "<!-- layout: chart -->\n## Marker levels\n\n| Marker | Level (%) |\n| --- | --- |\n"
         "| CD3D | 62 [1] |\n| CD19 | 41 [1] |",
-        "## Choose markers\n\nCD3D marks T cells [1].",
+        "<!-- layout: points -->\n## Choose markers\n\nCD3D marks T cells [1].",
     ]
     def unsupported(request):
         prompt = request["messages"][-1]["content"]
@@ -283,7 +286,8 @@ def test_invented_chart_values_are_never_drawn_as_a_chart(tmp_path):
     fake = FakeProvider(output_replies(outline, pages, unsupported=unsupported))
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
-        version = built(build(client, base_id, body(kind="slides")))
+        version = built(plan_and_approve(client, base_id, {"type": "slides"}))["artifact"]
+    assert version["provenance"]["creationPlan"]["outline"][1]["layout"] is None
     # The deck is saved, but the slide whose values its source does not state is drawn as a
     # table with what the Checker found, never as a chart, and the version says why.
     chart = version["content"].split("\n---\n")[1].strip()
@@ -480,12 +484,13 @@ def test_output_retains_its_figure_when_the_original_source_is_deleted(tmp_path,
             return document
 
     def written(index, prompt):
+        title = heading(prompt)
         if index == 0:
             assert f"gunther-asset:{image_ids[0]}" in prompt
-            return f"## Evidence\n\nEvidence [1].\n\n![Figure](gunther-asset:{image_ids[0]}) [1]."
-        return f"## Evidence {index}\n\nEvidence [1]."
+            return f"## {title}\n\nEvidence [1].\n\n![Figure](gunther-asset:{image_ids[0]}) [1]."
+        return f"## {title}\n\nEvidence [1]."
 
-    fake = FakeProvider(output_replies(OUTLINE, written))
+    fake = FakeProvider(planned_output_replies(OUTLINE, written))
     with app_for(tmp_path, fake) as client:
         client.headers.update(SIDECAR)
         base_id, _ = library(client, notes={})

@@ -198,7 +198,7 @@ export function CardsView({ artifact, onCite, onAsk, changed, onPart, goTo, pres
   </div>;
 
   return <CitationDetails.Provider value={artifact.citations}>
-    <section ref={reader} className="cards-reader" tabIndex={0} aria-label="Card reader" onKeyDown={keys}>
+    <section ref={reader} className="cards-reader reader-track" data-track="structured" tabIndex={0} aria-label="Card reader" onKeyDown={keys}>
       {card && <header className="cards-session">
         <div className="cards-mode" role="group" aria-label="Study mode">
           <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" aria-pressed={!list} onClick={() => setList(false)}>Practice</button>

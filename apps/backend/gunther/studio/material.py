@@ -100,16 +100,17 @@ class StudioMaterial:
         shape = SHAPES[run.spec.kind]
         whole = self._material(items)
         extra = self._notes_text(notes)
+        run.evidence_material = extra + whole
+        if kept and kept.get("notes") == extra and isinstance(kept.get("digest"), str):
+            run.read_digest = kept["digest"]
+            compacted = run.read_digest + "\n\n" if run.read_digest else ""
+            return extra + compacted + whole
         if tokens(whole) <= DIRECT_TOKENS:
             if shape.pipeline == "direct":
                 label = "Reading the material"
                 self._stage(emit, "read", label, "running")
                 self._stage(emit, "read", label, "done", f"{len(items)} passages")
-            return extra + whole
-        if kept and kept.get("notes") == extra and kept.get("digest"):
-            self._stage(emit, "read", "Reading the material", "done", "kept from before")
-            run.read_digest = kept["digest"]
-            return extra + run.read_digest + "\n\n" + whole
+            return run.evidence_material
         self._stage(emit, "read", "Reading the material", "running")
         parts: list[list[Evidence]] = [[]]
         size = 0
@@ -126,7 +127,8 @@ class StudioMaterial:
         def note(part: list[Evidence]) -> PartNotes | None:
             try:
                 return self._json(
-                    model, PartNotes, *material_request(self._material(part), system), "low"
+                    model, PartNotes, *material_request(self._material(part), system, run.spec),
+                    "low",
                 )
             except ModelError as error:
                 logger.info("Reading a part failed: %s", error)

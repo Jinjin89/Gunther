@@ -1,224 +1,223 @@
-import { artifactAudiences, type ActivityItem, type BuildTurnInput, type OutputScope, type OutputType } from "@gunther/contracts";
-import { LoaderCircle, Pencil, Trash2, X } from "lucide-react";
-import { useState, type FormEvent } from "react";
-import { openSettings } from "../components/SettingsLayout";
-import { useModelMenu } from "../models/askModel";
-import { useEscape } from "../shortcuts/shortcuts";
+import type { ActivityItem, OutputScope, OutputType, PlanStatus } from "@gunther/contracts";
+import { LoaderCircle, Trash2 } from "lucide-react";
+import { useId, useState } from "react";
+import { knowledgeApi } from "../api";
+import type { MenuItem } from "../contents/SectionMenu";
 import { ArtifactMenu } from "./ArtifactMenu";
-import { artifactRequestId } from "./artifactConversations";
+import { outputActivityTarget, outputTargetKey, planAddress } from "./artifactConversations";
 import { outputActivity } from "./liveOutput";
 import { outputIcon, resolveOutputType } from "./outputCatalog";
-import { StudioWebSwitch } from "./StudioWebSwitch";
-import { latestVersions, type OutputTarget, type OutputTrashTarget, type useStudio } from "./useStudio";
-import { readVoices, VoiceFields } from "./VoiceFields";
+import { latestVersions, type OutputTarget, type OutputTrashTarget, type PlanAddress, type SourceState, type useStudio } from "./useStudio";
 
 export type StudioRun = { activity: Pick<ActivityItem, "id" | "startedAt"> | undefined };
 
-type Card = {
-  id: string; title: string; label: string; at: string; target: OutputTarget; type: OutputType | undefined;
-} & (
-  | { status: "saved"; version: number; trash: OutputTrashTarget }
-  | { status: "running"; detail: string; buildTypeId: string | null; run: StudioRun }
-  | { status: "failed"; detail: string; retry: BuildTurnInput; trash: OutputTrashTarget }
-);
+const statusLabels = {
+  setup: "Setup", planning: "Planning", needs_answer: "Needs answer", ready: "Ready to approve",
+  generating: "Generating", failed: "Failed", saved: "",
+} satisfies Record<"setup" | PlanStatus, string>;
 
-function newBuildType({ lineageId, artifactId, typeId }: OutputTarget) {
-  return lineageId || artifactId ? null : typeId ?? null;
-}
+type Card = {
+  id: string;
+  title: string;
+  label: string;
+  at: string;
+  target: OutputTarget;
+  type: OutputType | undefined;
+  status: keyof typeof statusLabels;
+  detail?: string | undefined;
+  version?: number;
+  trash?: OutputTrashTarget;
+  running?: { run: StudioRun; stop: (() => Promise<void>) | undefined; stopping?: boolean };
+};
+
+const cardKey = (target: OutputTarget) =>
+  target.lineageId ? outputTargetKey({ lineageId: target.lineageId }) : outputTargetKey(target);
 
 function cardsOf(studio: ReturnType<typeof useStudio>): Card[] {
   const typeOf = (id: string | null | undefined) => studio.types.find((type) => type.id === id);
   const cards = new Map<string, Card>();
-  const running = new Set<string>();
   const heads = latestVersions(studio.artifacts);
-  const activities = new Map(studio.activities.flatMap((item) => {
-    const target = item.open;
-    if ((item.state !== "running" && item.state !== "waiting") || target?.view !== "library" || target.tab !== "outputs") return [];
-    const id = target.conversationId ?? target.lineageId;
-    return id ? [[id, { ...item, open: target }] as const] : [];
-  }));
+  const settledPlans = [...studio.jobs.values()].flatMap((job) => {
+    const event = job.live.plan;
+    return event && event.plan.planStatus !== "saved" && event.plan.attempt?.state !== "running"
+      ? [{ conversationId: event.conversationId, planId: event.plan.planId }] : [];
+  });
+  const active = studio.activities.flatMap((item) => {
+    const target = outputActivityTarget(item.open);
+    return target && (item.state === "running" || item.state === "waiting") &&
+      !settledPlans.some((plan) => plan.conversationId === target.conversationId && plan.planId === target.planId)
+      ? [{ item, target }] : [];
+  });
+
   for (const artifact of heads) {
-    const id = artifact.lineageId;
+    const conversationId = studio.owner(artifact);
+    const work = studio.works.find((item) => item.conversationId === conversationId && item.lineageId === artifact.lineageId);
     const type = resolveOutputType(studio.types, artifact) ?? studio.types.find((item) => item.shape === artifact.kind);
+    const target = { conversationId, lineageId: artifact.lineageId, typeId: type?.id ?? artifact.style, planId: work?.planId ?? null };
+    const id = cardKey(target)!;
     cards.set(id, {
-      id, title: artifact.title, label: artifact.outputType, at: artifact.createdAt, status: "saved", type,
-      target: { conversationId: studio.owner(artifact), lineageId: id, typeId: type?.id ?? artifact.style },
-      version: artifact.versionNumber,
-      trash: { id: artifact.id, lineageId: id },
+      id, title: artifact.title, label: artifact.outputType, at: artifact.createdAt, status: "saved", type, target,
+      version: artifact.versionNumber, trash: { id: artifact.id, lineageId: artifact.lineageId },
     });
   }
-  const showRun = (id: string, target: OutputTarget, title: string, detail: string, at: string,
-    activity: ActivityItem | undefined, buildTypeId = newBuildType(target)) => {
-    const conversation = studio.conversations.find((item) => item.id === id);
-    const current = target.lineageId ? cards.get(target.lineageId) : undefined;
-    const type = typeOf(target.typeId) ?? current?.type;
-    const key = target.lineageId ?? id;
-    running.add(id);
-    cards.set(key, {
-      id: key, title: current?.title ?? title, type,
-      label: current?.label ?? type?.label ?? conversation?.outputType ?? "Output",
-      at, status: "running", detail, buildTypeId, run: { activity }, target: { ...target, typeId: type?.id ?? target.typeId ?? null },
-    });
-  };
-  for (const [id, job] of studio.jobs) {
-    const announced = activities.get(id);
-    const open = announced?.open;
-    const conflicts = (job.lineageId && open?.lineageId && job.lineageId !== open.lineageId)
-      || (job.artifactId && open?.artifactId && job.artifactId !== open.artifactId);
-    const activity = conflicts ? undefined : announced;
-    const artifactId = job.artifactId ?? activity?.open.artifactId ?? null;
-    const owned = heads.filter((item) => studio.owner(item) === id);
-    const savedLineage = artifactId ? studio.artifacts.find((item) => item.id === artifactId)?.lineageId
-      : owned.length === 1 ? owned[0]!.lineageId : null;
-    const lineageId = job.lineageId ?? activity?.open.lineageId ?? savedLineage ?? null;
-    if (!job.build && !activity && !lineageId && !artifactId) continue;
-    // The tile follows the original build even after its output gets a lineage.
-    const buildTypeId = job.build && !job.lineageId ? job.build.type
-      : job.kind === "follow" && activity ? newBuildType(activity.open) : null;
-    const detail = job.title && !job.live.running.length ? job.title : outputActivity(job.live);
-    showRun(id, { conversationId: id, typeId: job.build?.type ?? activity?.open.typeId ?? null, lineageId, artifactId },
-      job.live.title || job.build?.title || job.build?.focus || typeOf(job.build?.type)?.label || "Output",
-      job.stopping ? "Stopping…" : detail, job.startedAt, activity, buildTypeId);
-  }
-  for (const [id, item] of activities) {
-    if (!running.has(id)) showRun(id, item.open, item.title, item.detail || "Starting…", item.startedAt, item);
-  }
-  const showFailure = (id: string, build: BuildTurnInput, error: string, at: string) => {
-    if (running.has(id)) return;
-    const type = typeOf(build.type);
+
+  for (const draft of Object.values(studio.planning.locals)) {
+    if (!draft) continue;
+    const type = typeOf(draft.setup.type);
     const label = type?.label ?? "Output";
+    const target = { conversationId: draft.conversationId, planId: draft.planId, typeId: draft.setup.type };
+    const id = cardKey(target)!;
+    cards.set(id, { id, title: draft.setup.title || label, label, at: draft.updatedAt, target, type, status: "setup", detail: "This device" });
+  }
+
+  for (const work of studio.works) {
+    const target = { conversationId: work.conversationId, planId: work.planId ?? work.workKey, typeId: work.type };
+    if (work.status === "saved" || work.versionId || studio.savedForPlan(target)) continue;
+    const type = typeOf(work.type);
+    const label = type?.label ?? "Output";
+    const id = cardKey(target)!;
+    const attempt = work.attempt;
+    const running = attempt?.state === "running" && !studio.activities.some((item) => {
+      const open = outputActivityTarget(item.open);
+      return (item.state === "done" || item.state === "failed") && open?.conversationId === target.conversationId
+        && open.planId === target.planId && item.endedAt && item.endedAt >= work.updatedAt;
+    });
+    const status = !running && work.status === "generating" ? "planning" : work.status;
+    const detail = status === "failed"
+      ? [attempt?.phase === "generate" ? "Generation failed" : "Planning failed", attempt?.detail].filter(Boolean).join(" · ")
+      : attempt?.detail || (attempt?.state === "stopped" ? "Paused" : attempt?.state === "interrupted" ? "Interrupted"
+        : status === "planning" && !running ? "Update plan" : undefined);
     cards.set(id, {
-      id, title: build.title || build.focus || label, label, at, type,
-      target: { conversationId: id, typeId: build.type }, status: "failed", detail: error, retry: build,
-      trash: { id, conversation: true },
+      id, title: work.title || label, label, at: work.updatedAt, target, type, status, detail,
+      ...(running ? { running: { run: { activity: undefined }, stop: () => studio.turnStop(work.conversationId) } }
+        : { trash: { id: work.conversationId, conversation: true } as const }),
+    });
+  }
+
+  const showRun = (target: OutputTarget, title: string, detail: string, at: string, running: NonNullable<Card["running"]>, generating?: boolean) => {
+    const address = planAddress(target);
+    const verified = target.artifactId ? studio.artifacts.find((item) => item.id === target.artifactId) : undefined;
+    const saved = address ? studio.savedForPlan(address) : undefined;
+    const lineageId = target.lineageId ?? verified?.lineageId ?? saved?.lineageId ?? null;
+    const artifactId = target.artifactId ?? saved?.id ?? null;
+    const id = cardKey({ ...target, lineageId });
+    if (!id) return;
+    const previous = cards.get(id);
+    // A committing plan and its first version share a row while any attachment finishes.
+    if (address && lineageId) cards.delete(cardKey(address)!);
+    const type = typeOf(target.typeId) ?? previous?.type;
+    const isGenerating = generating ?? (previous?.status === "generating" || Boolean(lineageId || artifactId));
+    cards.set(id, {
+      id, title: previous?.title ?? title, label: previous?.label ?? type?.label ?? "Output", type, at,
+      target: { ...target, conversationId: target.conversationId ?? (verified ? studio.owner(verified) : null), lineageId, artifactId },
+      status: isGenerating ? "generating" : "planning", detail, running,
     });
   };
-  for (const conversation of studio.conversations) {
-    const last = conversation.lastTurn;
-    if (last?.build && last.error) showFailure(conversation.id, last.build, last.error, last.createdAt);
+
+  for (const { item, target } of active) {
+    showRun(target, item.about || item.title, item.detail || "Starting…", item.startedAt, {
+      run: { activity: item }, stop: item.canStop ? () => knowledgeApi.stopActivity(item.id) : undefined,
+    });
   }
-  for (const [id, failure] of Object.entries(studio.failures)) {
-    if (failure?.build) showFailure(id, failure.build, failure.message, failure.createdAt);
+  for (const [conversationId, job] of studio.jobs) {
+    const plan = job.live.plan?.plan;
+    if (settledPlans.some((settled) => settled.conversationId === conversationId && settled.planId === plan?.planId)) continue;
+    const planId = job.planId ?? plan?.planId;
+    const announced = active.find(({ target }) => target.conversationId === conversationId
+      && (!planId || target.planId === planId)
+      && (!job.lineageId || !target.lineageId || target.lineageId === job.lineageId)
+      && (!job.artifactId || !target.artifactId || target.artifactId === job.artifactId));
+    const lineageId = job.lineageId ?? announced?.target.lineageId;
+    const artifactId = job.artifactId ?? announced?.target.artifactId;
+    if (!planId && !announced && !lineageId && !artifactId) continue;
+    const typeId = job.typeId ?? plan?.options.type ?? announced?.target.typeId;
+    const detail = job.stopping ? "Stopping…" : job.live.running.length ? outputActivity(job.live)
+      : job.title ?? announced?.item.detail ?? "Starting…";
+    showRun({ conversationId, lineageId: lineageId ?? null, artifactId: artifactId ?? null, planId: planId ?? null, typeId: typeId ?? null },
+      job.live.title || typeOf(typeId)?.label || "Output", detail, job.startedAt,
+      { run: { activity: announced?.item }, stop: () => studio.stop(conversationId), stopping: job.stopping },
+      job.phase === "generate" || plan?.attempt?.phase === "generate" ? true : undefined);
   }
-  return [...cards.values()].sort((a, b) => b.at.localeCompare(a.at));
+  return [...cards.values()].sort((a, b) => b.at.localeCompare(a.at) || a.id.localeCompare(b.id));
 }
 
-function BuildOptions({ type, disabled, webAvailable, onBuild, onClose }: {
-  type: OutputType; disabled: boolean; webAvailable: boolean; onBuild: (options: BuildTurnInput) => void; onClose: () => void;
-}) {
-  useEscape(onClose);
-  const [web, setWeb] = useState(false);
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (disabled) return;
-    const data = new FormData(event.currentTarget);
-    const options: BuildTurnInput = { type: type.id };
-    if (webAvailable && web) options.web = true;
-    for (const field of type.options) {
-      if (field === "voices") {
-        const voices = readVoices(data);
-        if (voices) options.voices = voices;
-        continue;
-      }
-      const value = String(data.get(field) ?? "").trim();
-      if (value) Object.assign(options, { [field]: value });
-    }
-    onBuild(options);
-  };
-  return <form className="studio-options" aria-label={`${type.label} options`} onSubmit={submit}>
-    <header><strong>{type.label}</strong><button type="button" className="gx-icon-button" aria-label="Close options" onClick={onClose}><X size={15} /></button></header>
-    {type.options.includes("focus") && <label>Focus<textarea name="focus" rows={2} maxLength={2_000} autoFocus /></label>}
-    {type.options.includes("audience") && <label>Audience<select name="audience"><option value="">Default</option>{artifactAudiences.map((audience) => <option key={audience} value={audience}>{audience[0]!.toUpperCase() + audience.slice(1)}</option>)}</select></label>}
-    {type.options.includes("length") && <label>Length<select name="length"><option value="">Default</option><option value="short">Short</option><option value="standard">Standard</option><option value="long">Long</option></select></label>}
-    {type.options.includes("language") && <label>Language<input name="language" maxLength={80} placeholder="Automatic" /></label>}
-    {type.options.includes("use") && <label>Use<select name="use"><option value="">Default</option><option value="talk">Present</option><option value="read">Read</option></select></label>}
-    {type.options.includes("voices") && type.voices && <VoiceFields options={type.voices} />}
-    <StudioWebSwitch available={webAvailable} checked={web} onChange={setWeb} />
-    <button type="submit" className="gx-btn gx-btn-primary gx-btn-sm" disabled={disabled}>Build {type.label}</button>
-  </form>;
-}
-
-export function StudioColumn({ studio, scope, scopeEmpty, webAvailable, sourceCount, sourceLoadFailed, selectedSourceCount, disabled, activeOutput, onOpen, onTrash }: {
-  studio: ReturnType<typeof useStudio>; scope: OutputScope; scopeEmpty: boolean; webAvailable: boolean;
-  sourceCount: number | null; sourceLoadFailed: boolean; selectedSourceCount: number; disabled: boolean;
-  activeOutput: Pick<OutputTarget, "lineageId" | "conversationId"> | null;
+export function StudioColumn({ studio, scope, sourceState, sourceCount, disabled, activeOutput, onOpen, onTrash, onDiscard, onNotify }: {
+  studio: ReturnType<typeof useStudio>; scope: OutputScope; sourceState: SourceState; sourceCount: number; disabled: boolean;
+  activeOutput: OutputTarget | null;
   onOpen: (target: OutputTarget, run?: StudioRun) => void;
-  onTrash: (target: OutputTrashTarget) => void;
+  onTrash: (target: OutputTrashTarget, reopen: OutputTarget) => void;
+  onDiscard: (address: PlanAddress) => void;
+  onNotify: (message: string) => void;
 }) {
-  const [optionsId, setOptionsId] = useState<string | null>(null);
-  const { menu, unavailable } = useModelMenu();
-  const needsModel = menu !== null && menu.models.length === 0;
-  const buildDisabled = disabled || unavailable || !menu?.models.length;
   const cards = cardsOf(studio);
-  const openCard = (card: Card) => onOpen(card.target, card.status === "running" ? card.run : undefined);
-  const activeRun = activeOutput?.conversationId
-    ? cards.find(({ target }) => !target.lineageId && target.conversationId === activeOutput.conversationId)
-    : undefined;
-  const activeCard = activeRun ?? cards.find(({ target }) => target.lineageId && target.lineageId === activeOutput?.lineageId);
-  const optionType = studio.types.find((type) => type.id === optionsId);
+  const activeKey = activeOutput && cardKey(activeOutput);
+  const activePlan = activeOutput && planAddress(activeOutput);
   const canFold = cards.length >= 4;
-  const [disclosure, setDisclosure] = useState({ canFold, open: false });
-  if (disclosure.canFold !== canFold) setDisclosure({ canFold, open: Boolean(optionType) });
-  const closeOptions = () => setOptionsId(null);
-  const empty = sourceCount === 0;
-  const tilesDisabled = buildDisabled || scopeEmpty || sourceCount === null || sourceLoadFailed;
-  const start = (options: BuildTurnInput) => {
-    if (tilesDisabled) return;
-    closeOptions();
-    void studio.build(artifactRequestId(), { ...options, scope });
+  const [expanded, setExpanded] = useState(false);
+  const tilesId = useId();
+  const openTile = (type: OutputType, fresh = false) => {
+    setExpanded(true);
+    const preferred = activeOutput?.planId;
+    const address = studio.planning.targetFor(type.id, scope, {
+      fresh, ...(preferred ? { preferredPlanId: preferred } : {}),
+    });
+    onOpen({ ...address, typeId: type.id });
   };
-  const tiles = <><div className="studio-tiles">{studio.types.map((type) => {
-      const Icon = outputIcon(type);
-      const running = cards.find((card) => card.status === "running" && card.buildTypeId === type.id);
-      return <div key={type.id} className="studio-tile">
-        <button type="button" title={type.description} disabled={tilesDisabled && !running} onClick={() => running ? openCard(running) : start({ type: type.id })}><Icon size={16} /><span>{type.label}</span></button>
-        <button type="button" className="gx-icon-button" disabled={tilesDisabled} aria-label={`${type.label} options`}
-          aria-expanded={optionType?.id === type.id} onClick={() => setOptionsId(optionsId === type.id ? null : type.id)}><Pencil size={13} /></button>
-      </div>;
-    })}</div>
-    {optionType && <div className="studio-popover"><BuildOptions key={optionType.id} type={optionType}
-      disabled={tilesDisabled} webAvailable={webAvailable} onBuild={start} onClose={closeOptions} /></div>}</>;
-  const count = scope.mode === "library" ? sourceCount : selectedSourceCount;
-  const scopeLabel = sourceLoadFailed ? "Source count unavailable"
-    : sourceCount === null ? "Loading sources…"
-    : empty ? "Add sources to build outputs."
-    : `Building from ${scope.mode === "library" ? "all " : ""}${count} ${scope.mode === "selection" ? "selected " : ""}${count === 1 ? "source" : "sources"}`;
+  const scopeLabel = sourceState === "error" ? "Source count unavailable"
+    : sourceState === "loading" ? "Loading sources…"
+    : sourceState === "empty" ? "Add sources to plan outputs."
+    : `Using ${scope.mode === "library" ? "all " : ""}${sourceCount} ${scope.mode === "selection" ? "selected " : ""}${sourceCount === 1 ? "source" : "sources"}`;
+
   return <aside className="studio-column" aria-label="Studio">
     {studio.error && <p role="alert">{studio.error}</p>}
     <p className="studio-scope">{scopeLabel}</p>
-    {!empty && <>
-      {unavailable ? <p role="alert">Studio models could not be loaded.</p> : needsModel && <div className="studio-model-note">
-        <p role="status">Studio needs a model.</p>
-        <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => openSettings("models")}>Open Models settings</button>
-      </div>}
-      <details className="studio-new" open={!canFold || disclosure.open}>
-        <summary hidden={!canFold} onClick={(event) => {
-          event.preventDefault();
-          if (disclosure.open) closeOptions();
-          setDisclosure({ canFold, open: !disclosure.open });
-        }}>New output</summary>
-        {tiles}
-      </details>
-    </>}
+    {studio.types.length > 0 && <div className="studio-new">
+      {canFold && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm studio-disclosure"
+        aria-expanded={expanded} aria-controls={tilesId} onClick={() => setExpanded(!expanded)}>New output</button>}
+      <div className="studio-tiles" id={tilesId} hidden={canFold && !expanded}>{studio.types.map((type) => {
+        const Icon = outputIcon(type);
+        return <div key={type.id} className="studio-tile">
+          <button type="button" title={type.description} disabled={disabled} onClick={() => openTile(type)}>
+            <Icon size={16} aria-hidden="true" /><span>{type.label}</span>
+          </button>
+        </div>;
+      })}</div>
+    </div>}
     <ul className="studio-cards" aria-label="Outputs">{cards.map((card) => {
-      const Icon = card.status === "running" ? LoaderCircle : outputIcon(card.type);
+      const address = planAddress(card.target);
+      const selected = card.id === activeKey || (address && activePlan?.planId === address.planId
+        && activePlan.conversationId === address.conversationId);
+      const open = () => onOpen(card.target, card.running?.run);
+      const Icon = card.running ? LoaderCircle : outputIcon(card.type);
+      const menu: MenuItem[] = [];
+      if (card.status === "planning" && !card.running) menu.push({ label: "Resume", onSelect: open });
+      if (address && !card.target.lineageId && !card.target.artifactId && card.type) {
+        const type = card.type;
+        menu.push({ label: `New ${type.label} plan`, onSelect: () => openTile(type, true) });
+      }
+      const trash = card.trash;
+      if (trash) menu.push({ label: "Move to Trash", icon: Trash2, danger: true, onSelect: () => onTrash(trash, card.target) });
+      const stop = card.running?.stop;
       return <li key={card.id}>
-        <button type="button" className="studio-card-open" aria-current={card === activeCard ? "page" : undefined} onClick={() => openCard(card)}>
-          <Icon size={16} strokeWidth={1.75} className={card.status === "running" ? "spin" : undefined} aria-hidden="true" />
+        <button type="button" className="studio-card-open" aria-current={selected ? "page" : undefined} onClick={open}>
+          <Icon size={16} strokeWidth={1.75} className={card.running ? "spin" : undefined} aria-hidden="true" />
           <span>
             <strong>{card.title}</strong>
             {card.status === "saved" ? <small>
               {card.label}{" "}<span aria-hidden="true">/ v{card.version}</span>
               <span className="gx-sr-only">Version {card.version}</span>
-            </small> : <small className={card.status === "failed" ? "is-failed" : undefined}>
-              <span className="gx-sr-only">{card.label}</span>{" "}{card.detail}
+            </small> : <small>
+              <span className="studio-card-state" data-state={card.status}>{statusLabels[card.status]}</span>
+              {card.detail && <> · {card.detail}</>}
             </small>}
           </span>
         </button>
-        {card.status === "failed" && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={buildDisabled} onClick={() => void studio.retry(card.id, card.retry)}>Retry</button>}
-        {card.status !== "running" && <ArtifactMenu label={`Actions for “${card.title}”`} items={[
-          { label: "Move to Trash", icon: Trash2, danger: true, onSelect: () => onTrash(card.trash) },
-        ]} />}
+        {stop && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" aria-label={`Stop ${card.title}`}
+          disabled={card.running?.stopping} onClick={() => void stop().catch((reason) =>
+            onNotify(reason instanceof Error ? reason.message : "The output could not be stopped."))}>Stop</button>}
+        {card.status === "setup" && address && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm"
+          aria-label={`Discard ${card.title} setup`} onClick={() => onDiscard(address)}>Discard</button>}
+        {menu.length > 0 && <ArtifactMenu label={`Actions for “${card.title}”`} items={menu} />}
       </li>;
     })}</ul>
   </aside>;

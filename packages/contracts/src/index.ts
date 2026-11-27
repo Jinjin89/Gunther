@@ -855,6 +855,7 @@ export interface TrashItem {
   libraryTitles: string[];
   outputType?: string | null;
   versionCount?: number;
+  open?: OutputActivityOpen | null;
 }
 
 export interface Entity {
@@ -1352,6 +1353,9 @@ export interface OutputType {
   icon: string;
   options: OutputOption[];
   partLimit?: number;
+  minParts?: number;
+  firstPartRole?: string | null;
+  outlineLayouts?: string[];
   /** Stored styles from earlier versions that use this catalog type. */
   legacyStyles?: string[];
   capabilities: OutputCapabilities;
@@ -1398,6 +1402,9 @@ export interface ArtifactProvenance {
   changes?: ArtifactChange[] | null;
   searched?: SearchedHit[];
   keyResultsUsed?: UsedKeyResult[];
+  creationPlan?: ApprovedCreationPlan | null;
+  creationVersionId?: string | null;
+  preferences?: PlanPreferences | null;
 }
 
 /** What a deck is for: a talk (few words, speaker notes) or reading on its own. */
@@ -1542,6 +1549,7 @@ export interface OutlineItem {
   heading: string;
   goal: string;
   id?: string;
+  notes?: string;
   message?: string;
   question?: string;
   requires?: string[];
@@ -1696,7 +1704,7 @@ export interface ArtifactLine {
 }
 
 /** What the conversation is for. */
-export interface ArtifactBrief {
+export interface ArtifactBrief extends PlanPreferences {
   goal: ArtifactLine | null;
   audience: ArtifactLine | null;
   constraints: ArtifactLine[];
@@ -1749,6 +1757,10 @@ export interface ArtifactWork {
   approach: ArtifactStep;
   outline: ArtifactStep;
   parts: ArtifactPart[];
+  pending?: ArtifactPending | null;
+  /** The stored Setup inputs for an interrupted work from before plans. */
+  options?: PlanOptions | null;
+  plan?: WorkPlan | null;
 }
 
 export interface ArtifactConversationMessage {
@@ -1782,6 +1794,7 @@ export interface ArtifactConversationSummary {
   shape: OutputKind | null;
   lineageId: string | null;
   lastTurn: ArtifactLastTurn | null;
+  studioWorks?: StudioWorkSummary[];
 }
 
 export interface ArtifactConversationDetail extends ArtifactConversationSummary {
@@ -1795,6 +1808,7 @@ export interface ArtifactConversationDetail extends ArtifactConversationSummary 
   pending: ArtifactPending | null;
   archived: boolean;
   createdAt: string;
+  editVersion?: number;
 }
 
 export interface CreateArtifactConversationRequest {
@@ -1817,6 +1831,8 @@ export interface EditArtifactBriefRequest {
   audience?: string;
   constraints?: string[];
   open?: string[];
+  emphasize?: PlanLine[];
+  avoid?: PlanLine[];
   /** Belongs to the artifact being worked on. */
   spec?: { use?: string; length?: string; outputType?: OutputTypeId | "" };
 }
@@ -1877,7 +1893,7 @@ export interface ArtifactLastTurn {
 }
 
 /** One conversation turn. A build goes straight to Studio with its explicit options. */
-export interface ArtifactTurnInput {
+export interface SavedArtifactTurnInput {
   clientRequestId: string;
   kind?: "message" | "answer" | "start" | "continue" | "rebuild" | "build";
   /** Optional for structured actions. */
@@ -1890,6 +1906,141 @@ export interface ArtifactTurnInput {
   effort?: Effort;
   /** The web may be searched for this message (when it is set up). */
   web?: boolean;
+}
+
+export type PlanLine = { id: string; text: string };
+export type PreferenceLine = PlanLine & { mark: ArtifactMark };
+export type PlanPreferences = { emphasize: PreferenceLine[]; avoid: PreferenceLine[] };
+
+export type PlanPartEdit = {
+  id: string;
+  heading: string;
+  goal: string;
+  layout: string | null;
+  notes: string;
+};
+
+export type PlanPart = Omit<OutlineItem, keyof PlanPartEdit> & PlanPartEdit & {
+  refs?: number[];
+  requiredRefs?: number[];
+  editedFields?: Array<"heading" | "goal" | "layout" | "notes">;
+};
+
+export type PlanCountEdit = { mode: "auto" } | { mode: "target" | "exact"; value: number };
+export type PlanCount = { mode: "auto" | "target" | "exact"; value: number };
+
+export interface PlanOptions {
+  type: OutputTypeId;
+  scope: OutputScope;
+  focus: string;
+  title: string | null;
+  audience: ArtifactAudience;
+  length: OutputLength | null;
+  language: string | null;
+  use: DeckUse | null;
+  theme: NonNullable<BuildTurnInput["theme"]> | null;
+  designVersion: 0 | 1 | null;
+  voices: VoicePair | null;
+  web: boolean;
+  model: string | null;
+  effort: Effort | null;
+}
+
+export type PlanSetup = Pick<PlanOptions, "type" | "scope">
+  & Partial<Omit<PlanOptions, "type" | "scope">>
+  & { emphasize?: PlanLine[]; avoid?: PlanLine[] };
+
+export interface PlanProposal {
+  title: string;
+  summary: string;
+  angle: string;
+  coverage: PlanLine[];
+  count: PlanCount;
+  targetMinutes: number | null;
+}
+
+export interface PlanDraft { proposal: PlanProposal; outline: PlanPart[] | null }
+
+export type PlanStatus = "planning" | "needs_answer" | "ready" | "generating" | "failed" | "saved";
+export type PlanQuestion = ArtifactPending & { planId: string; planRevision: string };
+
+export type PlanAttempt = {
+  requestId: string;
+  phase: "plan" | "generate";
+  state: "running" | "stopped" | "failed" | "interrupted";
+  detail: string | null;
+};
+
+export interface WorkPlan {
+  planId: string;
+  planRevision: string;
+  planStatus: PlanStatus;
+  basis: "assistant" | "user_edited";
+  blocker: string | null;
+  options: PlanOptions;
+  preferences: PlanPreferences;
+  proposal: PlanProposal | null;
+  outline: PlanPart[] | null;
+  pending: PlanQuestion | null;
+  attempt: PlanAttempt | null;
+  approvedRevision: string | null;
+}
+
+export interface StudioWorkSummary {
+  workKey: string;
+  planId: string | null;
+  planRevision: string | null;
+  type: OutputTypeId;
+  title: string;
+  status: PlanStatus;
+  basis: WorkPlan["basis"];
+  versionId: string | null;
+  lineageId: string | null;
+  updatedAt: string;
+  attempt: PlanAttempt | null;
+}
+
+export interface WorkPlanPatch {
+  baseEditVersion: number;
+  options?: Partial<Omit<PlanOptions, "type">>;
+  emphasize?: PlanLine[];
+  avoid?: PlanLine[];
+  outline?: PlanPartEdit[];
+  coverage?: PlanLine[];
+  count?: PlanCountEdit;
+}
+
+export type PlanAnswer =
+  | { type: "choice"; index: number }
+  | { type: "text"; text: string }
+  | { type: "use_settings" };
+
+export type CreationTurn = { clientRequestId: string; planId: string } & (
+  | { kind: "plan"; setup: PlanSetup; initialOutline?: PlanPartEdit[] }
+  | { kind: "plan"; planRevision: string; text?: string }
+  | { kind: "answer"; planRevision: string; questionMessageId: string; answer: PlanAnswer }
+  | { kind: "approve"; planRevision: string }
+);
+
+type IndexedCreationTurn<T = CreationTurn> = T extends CreationTurn
+  ? T & { [Key in Exclude<keyof SavedArtifactTurnInput, keyof T>]?: never }
+  : never;
+
+// Round 1's saved sender spreads an Omit before attaching its request ID.
+type SavedTurnEnvelope = Omit<SavedArtifactTurnInput, "kind"> & {
+  kind?: SavedArtifactTurnInput["kind"] | CreationTurn["kind"];
+};
+
+export type ArtifactTurnInput = SavedTurnEnvelope | IndexedCreationTurn;
+
+export interface ApprovedCreationPlan extends PlanDraft {
+  planId: string;
+  revision: string;
+  approvalMessageId: string;
+  approvedAt: string;
+  materialKey: string;
+  options: PlanOptions;
+  preferences: PlanPreferences;
 }
 
 /** One thing a saved version changed. `position` is in the new version (null for a part that was removed), `was` in the one before (null for a new part). */
@@ -1908,7 +2059,7 @@ export interface ArtifactQuestion {
 
 /** How a turn ended: the `done` event of a message. */
 export interface ArtifactTurnOut {
-  outcome: "asked" | "answered" | "saved" | "replied" | "paused";
+  outcome: "asked" | "answered" | "saved" | "replied" | "paused" | "planned";
   reply: string;
   question: ArtifactQuestion | null;
   /** The version a turn saved. */
@@ -1916,11 +2067,14 @@ export interface ArtifactTurnOut {
   changes: ArtifactChange[];
   /** The stored reply, if this version has one. */
   message: ArtifactConversationMessage | null;
+  plan?: WorkPlan | null;
+  editVersion?: number | null;
 }
 
 /** What the agent reports while it works on a message (besides the skill's own events: outline, section, text, step, stage and approach). */
 export type ArtifactAgentEvent =
   | { type: "turn"; conversationId: string; messageId: string }
+  | { type: "plan"; conversationId: string; workKey: string; editVersion: number; plan: WorkPlan }
   | ({ type: "brief" } & ArtifactBriefState)
   | { type: "decision"; actions: Array<{ id: string; do: string; label: string }> }
   | { type: "action"; id: string; state: "running" | "done" | "failed" | "skipped"; label: string; note: string }
@@ -2002,6 +2156,7 @@ export interface OutputActivityOpen {
   typeId?: string | null;
   lineageId?: string | null;
   artifactId?: string | null;
+  planId?: string | null;
 }
 
 export type ActivityOpen =

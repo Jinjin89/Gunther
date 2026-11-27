@@ -113,7 +113,7 @@
 }
 .mind-map-selection-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
 .mind-map-selection-bar strong { flex: 1 1 10ch; font-size: var(--gx-text-md); }
-.mind-map-selection .outputs-status { max-inline-size: var(--outputs-reading-width, 66ch); }
+.mind-map-selection .outputs-status { max-inline-size: min(100%, 66ch); overflow-wrap: anywhere; }
 .mind-map-unreadable { overflow-wrap: anywhere; color: var(--gx-muted); font-size: var(--gx-text-sm); }
 
 .mind-map-outline { --map-indent: 16px; min-inline-size: 0; }
@@ -136,6 +136,11 @@
 .mind-map-outline-label small { flex: none; color: var(--gx-muted); font-size: var(--gx-text-2xs); }
 .mind-map-outline-item > .mind-map-node-row { border-radius: var(--gx-radius-sm); }
 .mind-map-outline-item > .mind-map-node-row > .mind-map-node-label { flex: 1; }
+
+@container library-reader (max-width: 32em) {
+  .mind-map-reader { grid-template-columns: minmax(0, 1fr); }
+  .mind-map-zoom { justify-content: start; }
+}
 
 @media print {
   .mind-map-outline { --map-indent: 12pt; }

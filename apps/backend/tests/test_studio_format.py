@@ -1,3 +1,5 @@
+import pytest
+
 from gunther.studio import format as fmt
 
 GOOD = """<!-- layout: title; design: v2; theme: paper -->
@@ -117,6 +119,30 @@ def test_report_form_problems():
     assert "## Short claim\n<!-- block: summary -->" in marked
 
 
+@pytest.mark.parametrize(("body", "visible"), [
+    ("[material]: /appendix", False),
+    ("<!-- editor note -->\n\n[material]:\n  /appendix 'Supporting material'", False),
+    ("[^material]: Supporting notes for the appendix.", False),
+    ("[^material]: Supporting notes.\n\n    More appendix details.", False),
+    ("[^a]: See the other note [^b].\n\n[^b]: Supporting notes.", False),
+    (r"[^appendix\]details]: Supporting notes.", False),
+    (":::callout\n[material]: /appendix\n:::", False),
+    (":::callout\n[^material]: Supporting notes.\n:::", False),
+    ("[Read the comparison][material]\n\n[material]: /appendix", True),
+    ("[^material]\n\n[^material]:", True),
+    ("[^undefined]", True),
+    ("[^two\twords]: This is literal text.", True),
+    (":::callout Key point\nRead the comparison.\n:::", True),
+    ("[^material]: Supporting notes.\n:::callout Key point\n:::", True),
+    ("```text\n[material]: /appendix\n```", True),
+    ("```text\n[^material]: Supporting notes.\n```", True),
+    ("![Comparison](gunther-asset:ast_comparison)", True),
+    ("$$\nx + y = z\n$$", True),
+])
+def test_report_section_visibility_follows_decoded_markdown(body, visible):
+    assert fmt.report_section_has_content(f"## Summary\n{fmt.SUMMARY_MARK}\n{body}") is visible
+
+
 def test_copied_labels_are_stripped_but_not_from_notes():
     slide = "<!-- layout: title -->\n# T\nSubtitle: the point\nNote: Verdict: keep"
     assert fmt.strip_labels(slide) == "<!-- layout: title -->\n# T\nthe point\nNote: Verdict: keep"
@@ -152,14 +178,59 @@ def test_phrase_checks_apply_to_body_text():
     assert any("about the world" in p for p in dict(fmt.check_deck(deck))[2])
 
 
-def test_uncited_exhibit_rows_cite_the_source_line():
+@pytest.mark.parametrize("label", ["Source: ", "参照資料：", "来源："])
+def test_uncited_exhibit_rows_cite_the_source_line(label):
     text = (
         ":::exhibit\nExhibit 1 — Growth\n| 指标 | 增速 |\n| --- | --- |\n| GDP | +5.0% |\n"
-        "| CPI | +0.2% [3] |\nSource: 统计公报 [2]\n:::"
+        f"| CPI | +0.2% [3] |\n{label}统计公报 [2]\n:::"
     )
+    assert fmt.check_report(f"## Growth\n{text}", exhibit_counts=(1,)) == []
     out = fmt.cite_exhibit_rows(text)
     assert "| GDP | +5.0% [2] |" in out and "| CPI | +0.2% [3] |" in out
     assert "| 指标 | 增速 |" in out
+
+
+def test_attribution_must_follow_the_table():
+    text = (
+        ":::exhibit\nSource: Trial [2]\n| Group | Result |\n| --- | --- |\n"
+        "| A | 10 |\n:::\n"
+    )
+    [problem] = fmt.check_report(f"## Results\n{text}")
+    assert "attribution line after the table" in problem
+    assert fmt.cite_exhibit_rows(text) == text
+
+
+@pytest.mark.parametrize("fence", ["```", "~~~"])
+def test_only_exhibits_in_the_planned_section_outside_code_fences_count(fence):
+    exhibit = (
+        ":::exhibit\nComparison\n| Group | Rate |\n| --- | --- |\n| A | 10% |\n"
+        "| B | 20% |\n| C | 30% |\n参照資料：Trial [1]\n:::"
+    )
+    report = "## Findings\nThe rates were 10%, 20% and 30% [1]."
+    assert fmt.check_report(report, exhibit_counts=(0,)) == []
+    fenced = f"{report}\n\n{fence}markdown\n{exhibit}\n{fence}"
+    elsewhere = f"{fenced}\n\n## Appendix\n{exhibit}"
+    [problem] = fmt.check_report(elsewhere, exhibit_counts=(1, 0))
+    assert "Section 1 plans 1 exhibit(s) and has 0" in problem
+    assert fmt.cite_exhibit_rows(fenced) == fenced
+    assert fmt.check_report(f"{report}\n\n{exhibit}", exhibit_counts=(1,)) == []
+
+
+def test_single_dash_separator_without_data_rows_is_not_a_complete_exhibit():
+    empty_grid = (
+        "## Findings\nThe pilot measured cooling [1].\n\n"
+        ":::exhibit\nComparison\n| Group | Rate |\n| - | - |\nSource: Trial [1]\n:::"
+    )
+    problems = fmt.check_report(empty_grid, exhibit_counts=(1,))
+    assert any("data rows" in problem for problem in problems)
+    assert any("Section 1 plans 1 exhibit(s) and has 0" in problem for problem in problems)
+
+    with_dash_data = (
+        "## Findings\nThe pilot measured cooling [1].\n\n"
+        ":::exhibit\nComparison\n| Group | Rate |\n| - | - |\n"
+        "| Control | - [1] |\nSource: Trial [1]\n:::"
+    )
+    assert fmt.check_report(with_dash_data, exhibit_counts=(1,)) == []
 
 
 def test_short_japanese_slide_title_keeps_the_structural_citation_check():

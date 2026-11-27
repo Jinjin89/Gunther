@@ -1,5 +1,5 @@
 import type { ConversationCitation, SourceDetail } from "@gunther/contracts";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +20,7 @@ const block = (id: string, content: string) => ({ id, parentId: null, kind: "par
 const source = (asset: { mediaType: string; originalName: string } | null) => ({ id: "src_1", title: "Cell paper", kind: "file", asset: asset ? { id: "asset_1", sizeBytes: 10, ...asset } : null }) as unknown as SourceDetail;
 
 beforeEach(() => {
+  window.localStorage.clear();
   vi.mocked(knowledgeApi.sourceStructure).mockResolvedValue({ sourceId: "src_1", revisionId: "rev_1", processing: { state: "ready" }, parser: null, nextOffset: null, blocks: [block("b1", "First block."), block("b2", "Second block."), block("b3", "Third block.")] } as never);
 });
 
@@ -83,12 +84,18 @@ describe("EvidencePanel", () => {
     expect(onOpenSource).toHaveBeenCalledWith("src_1");
   });
 
-  it("views a PDF in the panel at the cited page, and the panel closes", async () => {
+  it("views the cited PDF page at the floating panel's chosen width, and the panel closes", async () => {
     vi.mocked(knowledgeApi.source).mockResolvedValue(source({ mediaType: "application/pdf", originalName: "paper.pdf" }));
     const onClose = vi.fn();
     render(<EvidencePanel citation={library} onClose={onClose} />);
+    const resize = screen.getByRole("separator", { name: "Resize evidence" });
+    expect(resize).toHaveAttribute("aria-valuenow", "460");
+    fireEvent.keyDown(resize, { key: "ArrowLeft" });
+    expect(resize).toHaveAttribute("aria-valuenow", "484");
     await userEvent.click(await screen.findByRole("button", { name: /Original · p\. 3/ }));
     expect(await screen.findByTestId("pdf")).toHaveAttribute("data-page", "3");
+    expect(resize).toHaveAttribute("aria-valuenow", "484");
+    expect(screen.getByRole("complementary", { name: "Evidence" })).toHaveClass("gx-evidence");
     await userEvent.click(screen.getByRole("button", { name: "Close evidence" }));
     expect(onClose).toHaveBeenCalledOnce();
     await userEvent.keyboard("{Escape}");
@@ -157,14 +164,14 @@ it("offers the library action beside the original page when a library handler is
   expect(screen.getByRole("link", { name: "Open example.org" })).toHaveAttribute("href", web.url);
 });
 
-it("reports when an inline original PDF is visible", async () => {
+it("returns from an inline original PDF to its cited passage", async () => {
   vi.mocked(knowledgeApi.source).mockResolvedValue(source({ mediaType: "application/pdf", originalName: "paper.pdf" }));
-  const onOriginalPdfChange = vi.fn();
-  render(<EvidenceDetail citation={library} onOriginalPdfChange={onOriginalPdfChange} />);
+  render(<EvidenceDetail citation={library} />);
   await userEvent.click(await screen.findByRole("button", { name: /Original · p\. 3/ }));
-  expect(onOriginalPdfChange).toHaveBeenLastCalledWith(true);
+  expect(await screen.findByTestId("pdf")).toHaveAttribute("data-page", "3");
   await userEvent.click(screen.getByRole("button", { name: "Passage" }));
-  expect(onOriginalPdfChange).toHaveBeenLastCalledWith(false);
+  expect(screen.queryByTestId("pdf")).not.toBeInTheDocument();
+  expect(screen.getByText("Second block.")).toHaveClass("is-cited");
 });
 
 describe("helpers", () => {

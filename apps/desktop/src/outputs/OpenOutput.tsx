@@ -1,7 +1,7 @@
-import type { Artifact, ArtifactConversationMessage, ArtifactTurnInput, ConversationCitation, OutputKind, OutputScope } from "@gunther/contracts";
+import type { Artifact, ArtifactConversationMessage, ArtifactPart, ConversationCitation, ModelMenu, OutputKind, OutputScope, OutputType, PlanPart, PlanPartEdit, SavedArtifactTurnInput } from "@gunther/contracts";
 import { invoke } from "@tauri-apps/api/core";
 import { MessageSquarePlus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, isTurnResult, knowledgeApi } from "../api";
 import { CitationDetails } from "../components/evidence/CitationButton";
 import { isWebCitation } from "../components/evidence/citationKind";
@@ -14,26 +14,24 @@ import { AudioDurationScope } from "./AudioOverview";
 import { withDeckMarker } from "./deck/marker";
 import { discardOutputEdit, EditPane } from "./EditPane";
 import { outputActivity } from "./liveOutput";
-import { OutlineEditor } from "./OutlineEditor";
+import { normalizeSavedOutline, OutlineEditor, outlineIssue, partEdits } from "./OutlineEditor";
 import { outputIcon, resolveOutputType } from "./outputCatalog";
 import { outputCitations } from "./OutputParts";
 import { outputViews } from "./OutputViews";
+import { ApprovedPlan, PlanDetailReader, PlanningWorkspace, sameScope, SavedPlanPreferences, type EditFlush } from "./PlanningWorkspace";
 import { prepareForPrint } from "./printReady";
 import { PrintRoot } from "./PrintRoot";
 import { parseSlides, withAccent, withTheme, type DeckStyle, type DeckTheme } from "./sections";
 import { StudioWebSwitch } from "./StudioWebSwitch";
-import { type OutputListener, type OutputTarget, type OutputTrashTarget, type useStudio } from "./useStudio";
+import { type OutputListener, type OutputTarget, type OutputTrashTarget, type SourceState, type useStudio } from "./useStudio";
 import "./outputs.css";
 
 const message = (reason: unknown) => reason instanceof Error ? reason.message : "The request could not be completed.";
-const sameIds = (a: string[], b: string[]) => a.length === b.length && a.every((id) => b.includes(id));
-const sameScope = (a: OutputScope, b: OutputScope) => a.mode === b.mode && (
-  a.mode === "library" || (sameIds(a.sourceIds, b.sourceIds) && sameIds(a.unitIds, b.unitIds) && sameIds(a.sessionIds, b.sessionIds))
-);
-export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEmpty, webAvailable,
-  dirty, onNotify, onCite, onOpen, onWideReader, onAskChat, onTrash, onArtifactChange, onPartChange }: {
+
+export interface OpenOutputProps {
   baseId: string; workspaceId: string; target: OutputTarget; studio: ReturnType<typeof useStudio>;
-  scope: OutputScope; scopeEmpty: boolean; webAvailable: boolean; dirty: { current: boolean };
+  scope: OutputScope; sourceState: (scope: OutputScope) => SourceState; modelMenu: ModelMenu | null;
+  webAvailable: boolean; dirty: { current: boolean }; editFlush: EditFlush;
   onNotify: (message: string) => void; onCite: (artifact: Artifact, index: number) => void;
   onOpen: (target: OutputTarget) => void;
   onWideReader: (wide: boolean) => void;
@@ -41,7 +39,62 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   onTrash: (target: OutputTrashTarget) => void;
   onArtifactChange: (artifact: Artifact | null) => void;
   onPartChange: (index: number | null) => void;
+}
+
+function SavedOutline({ artifact, type, parts, busy, readOnly, dirty, onRebuild }: {
+  artifact: Artifact; type: OutputType; busy: boolean; readOnly: boolean; dirty: { current: boolean };
+  parts: ArtifactPart[] | undefined;
+  onRebuild: (outline: PlanPartEdit[]) => Promise<boolean>;
 }) {
+  const [original, setOriginal] = useState<PlanPart[]>([]);
+  const [draft, setDraft] = useState<PlanPart[] | null>(null);
+  const [problem, setProblem] = useState("");
+  const trigger = useRef<HTMLButtonElement>(null);
+  const editor = useRef<HTMLDivElement>(null);
+  const wasEditing = useRef(false);
+  useEffect(() => {
+    let active = true;
+    void normalizeSavedOutline(artifact.id, artifact.outline, parts).then((rows) => {
+      if (active) { setOriginal(rows); setProblem(""); }
+    }).catch((reason: unknown) => { if (active) setProblem(message(reason)); });
+    return () => { active = false; };
+  }, [artifact.id, artifact.outline, parts]);
+  useLayoutEffect(() => {
+    if (Boolean(draft) === wasEditing.current) return;
+    wasEditing.current = Boolean(draft);
+    (draft ? editor.current?.querySelector("input") : trigger.current)?.focus();
+  }, [draft]);
+  useEffect(() => () => { dirty.current = false; }, [dirty]);
+  const value = draft ?? original;
+  const max = type.partLimit ?? original.length;
+  const invalid = Boolean(draft && outlineIssue(draft, max));
+  const cancel = () => { setDraft(null); dirty.current = false; };
+  return <div className="reader-track saved-outline" data-track="prose" ref={editor}>
+    {problem && <p className="output-error" role="alert">{problem}</p>}
+    {value.length > 0 && <>
+      <OutlineEditor value={value} onChange={(rows) => {
+        setDraft(rows);
+        dirty.current = JSON.stringify(partEdits(rows)) !== JSON.stringify(partEdits(original));
+      }} unitLabel={type.capabilities.unitLabel} max={max} layouts={type.outlineLayouts ?? []} firstPartRole={type.firstPartRole}
+        review={artifact.provenance.skill?.outlineReview} readOnly={!draft || readOnly} disabled={busy} />
+      {!readOnly && <div className="plan-actions">
+        {draft ? <>
+          <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={busy} onClick={cancel}>Cancel</button>
+          <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" disabled={busy || invalid}
+            onClick={() => void onRebuild(partEdits(draft)).then((saved) => { if (saved) cancel(); })}>Rebuild with this outline</button>
+        </> : <button ref={trigger} type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={busy}
+          onClick={() => setDraft(original)}>Edit outline</button>}
+      </div>}
+      {readOnly && draft && <div className="plan-actions">
+        <p className="plan-hint">Open the latest version to rebuild its outline.</p>
+        <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={cancel}>Discard outline edits</button>
+      </div>}
+    </>}
+  </div>;
+}
+
+export function OpenOutput({ baseId, workspaceId, target, studio, scope, sourceState, modelMenu, webAvailable,
+  dirty, editFlush, onNotify, onCite, onOpen, onWideReader, onAskChat, onTrash, onArtifactChange, onPartChange }: OpenOutputProps) {
   const [picked, pickVersion] = useState(target.artifactId ?? null);
   const [opened, setOpened] = useState<Artifact | null>(null);
   const [panel, setPanel] = useState<"versions" | "outline" | "style" | null>(null);
@@ -51,9 +104,10 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState("");
+  const sending = useRef(false);
   const [refineOpen, setRefineOpen] = useState(false);
   const [web, setWeb] = useState(false);
-  const [focus, setFocus] = useState<ArtifactTurnInput["focus"]>();
+  const [focus, setFocus] = useState<SavedArtifactTurnInput["focus"]>();
   const [jump, setJump] = useState<{ index: number; nonce: number } | null>(null);
   const partInView = useRef<number | null>(null);
   const refine = useRef<HTMLTextAreaElement>(null);
@@ -64,15 +118,32 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const styleRun = useRef<{ running: DeckStyle; pending: DeckStyle | null } | null>(null);
   const [pendingStyle, setPendingStyle] = useState<DeckStyle | null>(null);
   const [restyling, setRestyling] = useState(false);
+  const contentDirty = useRef(false);
+  const preferencesDirty = useRef(false);
+  const readerEdits = useMemo(() => {
+    const track = (field: { current: boolean }) => ({
+      get current() { return field.current; },
+      set current(value: boolean) {
+        field.current = value;
+        dirty.current = contentDirty.current || preferencesDirty.current;
+      },
+    });
+    return { content: track(contentDirty), preferences: track(preferencesDirty) };
+  }, [dirty]);
   const conversationId = target.conversationId ?? (opened ? studio.owner(opened) : null);
   const conversation = conversationId ? studio.details[conversationId] : undefined;
-  const lineageId = target.lineageId ?? opened?.lineageId ?? conversation?.lineageId;
+  const address = conversationId && target.planId ? { conversationId, planId: target.planId } : null;
+  const local = address ? studio.planning.locals[address.planId] : undefined;
+  const planWork = address && conversation?.works.find((work) => work.plan?.planId === address.planId || (!work.plan && work.key === address.planId));
+  const planSaved = address ? studio.savedForPlan(address) : undefined;
+  const lineageId = target.lineageId ?? opened?.lineageId ?? planSaved?.lineageId ??
+    (address ? planWork?.versionId ? planWork.key : null : conversation?.lineageId);
   const versions = studio.artifacts.filter((item) => lineageId ? item.lineageId === lineageId
-    : target.conversationId && studio.owner(item) === target.conversationId).sort((a, b) => b.versionNumber - a.versionNumber);
+    : !address && target.conversationId && studio.owner(item) === target.conversationId).sort((a, b) => b.versionNumber - a.versionNumber);
   const head = versions[0];
-  const shownId = picked ?? head?.id;
+  const shownId = picked ?? head?.id ?? planSaved?.id ?? planWork?.versionId;
   const unavailable = studio.artifactsLoaded && shownId
-    && !studio.artifacts.some((item) => item.id === shownId);
+    && !studio.artifacts.some((item) => item.id === shownId) && planWork?.versionId !== shownId;
   const artifact = opened?.id === shownId && !unavailable ? opened : null;
   const cite = (_citation: ConversationCitation, index: number) => { if (artifact) onCite(artifact, index); };
   const job = conversationId ? studio.jobs.get(conversationId) : undefined;
@@ -86,10 +157,18 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const changeable = artifact !== null && artifact.origin !== "legacy";
   const busy = Boolean(job) || checking || saving || updating || restyling;
   const useScope = (lineageId && conversation?.refinementScopes?.[lineageId]) || artifact?.scope || conversation?.scope || libraryScope();
-  const pending = conversation?.pending;
+  const savedWork = artifact && conversation?.works.find((item) => item.key === artifact.lineageId && item.versionId !== null);
+  const pending = savedWork?.pending !== undefined ? savedWork.pending : savedWork?.plan ? savedWork.plan.pending :
+    artifact && conversation?.active === artifact.lineageId ? conversation.pending : null;
   const pendingId = pending?.messageId;
-  const last = conversation?.messages.at(-1);
-  const onDirtyChange = useCallback((value: boolean) => { dirty.current = value; }, [dirty]);
+  const currentPendingId = useRef(pendingId);
+  currentPendingId.current = pendingId;
+  const otherQuestions = new Set(conversation?.works.map((work) => (work.pending ?? work.plan?.pending)?.messageId));
+  otherQuestions.add(conversation?.pending?.messageId);
+  otherQuestions.delete(pendingId);
+  const history = conversation?.messages.filter((item) => !otherQuestions.has(item.id)) ?? [];
+  const last = history.at(-1);
+  const onDirtyChange = useCallback((value: boolean) => { readerEdits.content.current = value; }, [readerEdits]);
   const onPart = useCallback((index: number | null) => { partInView.current = index; onPartChange(index); }, [onPartChange]);
 
   useLayoutEffect(() => {
@@ -107,46 +186,71 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   useEffect(() => { if (pendingId) setRefineOpen(true); }, [pendingId]);
   useEffect(() => { onArtifactChange(artifact); }, [artifact, onArtifactChange]);
   const { read, follow, reload } = studio;
+  const openingLocal = Boolean(local && !planWork);
   useEffect(() => {
-    if (!conversationId) return;
-    void read(conversationId).catch((reason) => setError(message(reason)));
-    follow(conversationId);
-  }, [conversationId, read, follow]);
+    if (!conversationId || openingLocal) return;
+    let active = true;
+    void read(conversationId).then(() => { if (active) follow(conversationId); })
+      .catch((reason) => { if (active) setError(message(reason)); });
+    return () => { active = false; };
+  }, [conversationId, openingLocal, read, follow]);
   useEffect(() => () => { styleRun.current = null; }, []);
 
-  const send = async (turn: Omit<ArtifactTurnInput, "clientRequestId">) => {
-    if (!artifact || !conversationId || !changeable || busy || editing) return;
+  const send = async (turn: Omit<SavedArtifactTurnInput, "clientRequestId">) => {
+    if (!artifact || !conversationId || !changeable || busy || editing || sending.current) return null;
+    sending.current = true;
+    setUpdating(true);
     setError("");
-    const material = artifact.scope ?? libraryScope();
-    const result = await studio.send(conversationId, { ...turn, targetLineageId: artifact.lineageId }, material);
-    if (result && "outcome" in result && result.artifact && latest) {
-      const section = turn.focus?.section;
-      if (section !== undefined) {
-        const id = artifact.outline[section - 1]?.id;
-        const index = id ? result.artifact.outline.findIndex((item) => item.id === id) : section - 1;
-        if (index >= 0) setJump((current) => ({ index, nonce: (current?.nonce ?? 0) + 1 }));
+    try {
+      if (editFlush.current && !await editFlush.current()) return null;
+      if ((turn.kind === "answer" || turn.kind === "start") && (!pendingId || pendingId !== currentPendingId.current)) {
+        setError("The pending question changed. Review it before sending an answer.");
+        return null;
       }
-      pickVersion(null);
+      const material = artifact.scope ?? libraryScope();
+      const result = await studio.send(conversationId, { ...turn, targetLineageId: artifact.lineageId }, material);
+      if (result && "outcome" in result && result.artifact && latest) {
+        const section = turn.focus?.section;
+        if (section !== undefined) {
+          const id = artifact.outline[section - 1]?.id;
+          const index = id ? result.artifact.outline.findIndex((item) => item.id === id) : section - 1;
+          if (index >= 0) setJump((current) => ({ index, nonce: (current?.nonce ?? 0) + 1 }));
+        }
+        pickVersion(null);
+      }
+      return result;
+    } catch (reason) {
+      setError(message(reason));
+      return null;
+    } finally {
+      sending.current = false;
+      setUpdating(false);
     }
   };
   const refineOutput = (text: string, visiblePart = partInView.current) => {
     if (!text.trim() || !artifact || !changeable || busy || editing) return;
     const part = latest ? focus ?? (visiblePart !== null ? { section: visiblePart + 1, selected: false } : undefined) : undefined;
     void send({ kind: pending ? "answer" : "message", text, ...(part ? { focus: part } : {}),
-      ...(webAvailable && web ? { web: true } : {}) });
-    setDraft(""); setFocus(undefined);
+      ...(webAvailable && web ? { web: true } : {}) }).then((result) => {
+      if (result) {
+        setDraft((current) => current === text ? "" : current);
+        setFocus(undefined);
+      }
+    });
   };
   const refineFromForm = (text: string) => refineOutput(text, artifact?.kind === "slides" ? undefined : refineOrigin.current?.part);
   const retry = (answer: ArtifactConversationMessage) => {
-    if (conversation?.lastTurn?.build && conversationId) { void studio.retry(conversationId, conversation.lastTurn.build); return; }
-    const earlier = conversation?.messages.slice(0, conversation.messages.indexOf(answer)).reverse().find((item) => item.role === "user");
-    if (!earlier) return;
-    const { focus: requested, rebuild, model, effort, web } = earlier.payload as Partial<ArtifactTurnInput>;
-    void send({ kind: earlier.kind as NonNullable<ArtifactTurnInput["kind"]>, text: earlier.text, ...(requested ? { focus: requested } : {}),
+    const earlier = conversation?.messages.find((item) => item.id === answer.payload.to) ??
+      conversation?.messages.slice(0, conversation.messages.indexOf(answer)).reverse().find((item) => item.role === "user");
+    if (!earlier || earlier.kind === "plan" || earlier.kind === "approve" || earlier.kind === "build") return;
+    const { focus: requested, rebuild, model, effort, web, targetLineageId } = earlier.payload as Partial<SavedArtifactTurnInput>;
+    if (targetLineageId && targetLineageId !== artifact?.lineageId) return;
+    if (earlier.kind === "answer" && (!pending || (!targetLineageId && conversation?.works.length !== 1))) return;
+    void send({ kind: earlier.kind as NonNullable<SavedArtifactTurnInput["kind"]>, text: earlier.text, ...(requested ? { focus: requested } : {}),
       ...(rebuild ? { rebuild } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(web ? { web } : {}) });
   };
   const updateScope = async () => {
-    if (!artifact || !conversationId || scopeEmpty || busy) return;
+    if (!artifact || !conversationId || sourceState(scope) !== "ready" || busy) return;
     setUpdating(true); setError("");
     try {
       await studio.ensure(conversationId, artifact.scope ?? libraryScope());
@@ -263,7 +367,8 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
     openRefine(trigger);
   };
   const problem = error || failure?.message || (unavailable ? "This output is unavailable." : "");
-  const targetType = studio.types.find((item) => item.id === target.typeId);
+  const targetType = studio.types.find((item) => item.id === (target.typeId ?? planWork?.plan?.options.type ??
+    planWork?.options?.type ?? local?.setup.type));
   const title = artifact?.title || (!unavailable && opened?.title) || job?.live.title || targetType?.label
     || activity?.title || conversation?.title || "Output";
   const changed = artifact?.supersedesArtifactId
@@ -275,7 +380,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
     void request.catch((reason) => setError(message(reason)));
   };
   const switchVersion = (id: string) => {
-    if (!discardOutputEdit(dirty)) return false;
+    if (!discardOutputEdit(readerEdits.content)) return false;
     setEditing(false); pickVersion(id); setJump(null);
     return true;
   };
@@ -283,9 +388,9 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const kind = artifact?.kind ?? targetType?.shape ?? conversation?.shape ?? "report";
   const type = artifact ? resolveOutputType(studio.types, artifact) : undefined;
   const controls = type ?? studio.types.find((item) => item.shape === kind);
-  const studioReader = kind !== "slides";
+  const refineInHeader = kind !== "slides";
   const Icon = outputIcon(artifact ? controls : targetType);
-  const { Reader, Review, wide = false, printLabel, savedStage, file } = outputViews[kind];
+  const { Reader, Review, headingTrack, wide = false, printLabel, savedStage, file } = outputViews[kind];
   const writingAttachment = Boolean(savedStage && (!runVersion || workingOnVersion)
     && job?.live.running.some((step) => step.kind === "stage" && step.id === savedStage));
   const working = workingOnVersion || writingAttachment;
@@ -297,10 +402,15 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
     if (!shownId) return;
     let alive = true;
     void knowledgeApi.artifact(baseId, shownId, workspaceId).then((version) => {
-      if (alive) setOpened(version);
+      if (!alive) return;
+      if (version.id !== shownId || (target.lineageId && target.lineageId !== version.lineageId)) {
+        setError("This version could not be verified.");
+        return;
+      }
+      setOpened(version);
     }).catch((reason) => { if (alive) setError(message(reason)); });
     return () => { alive = false; };
-  }, [baseId, shownId, workspaceId, working]);
+  }, [baseId, shownId, target.lineageId, workspaceId, working]);
   const hasWebEvidence = Boolean(artifact?.citations.some(isWebCitation)
     || artifact?.provenance.searched?.some((hit) => hit.kind === "web"));
   useEffect(() => {
@@ -321,19 +431,49 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
   const capabilities = controls?.capabilities;
   const unitLabel = (kind: OutputKind | null) => studio.types.find((item) => item.shape === kind)?.capabilities?.unitLabel ?? "part";
   const unit = capabilities?.unitLabel ?? "part";
-  const outline = capabilities?.outline && Boolean(artifact?.outline.length);
+  const outline = controls?.capabilities.outline && Boolean(artifact?.outline.length);
   const formats = capabilities?.exports ?? [];
   const printAction = formats.includes("pdf") ? "Export PDF" : printLabel;
   const styling = capabilities?.design && panel === "style" && changeable;
-  useLayoutEffect(() => onWideReader(wide), [wide, onWideReader]);
+  const showPlanning = Boolean(address && targetType && !artifact && !shownId);
+  useLayoutEffect(() => onWideReader(showPlanning ? false : wide), [showPlanning, wide, onWideReader]);
+  if (showPlanning && address && targetType) {
+    const planJob = job && (!job.planId || job.planId === address.planId)
+      && (!job.live.plan || job.live.plan.plan.planId === address.planId);
+    const planActivity = activity?.open?.view === "library" && activity.open.tab === "outputs"
+      && activity.open.planId === address.planId ? activity : undefined;
+    return <PlanDetailReader.Provider value={read}>
+      {problem && <p className="output-error reader-track" data-track="prose" role="alert">{problem}</p>}
+      <PlanningWorkspace key={address.planId} address={address} type={targetType} controller={studio.planning}
+        detail={conversation ?? null} work={planWork ?? null} sourceState={sourceState} currentScope={scope}
+        modelMenu={modelMenu} webAvailable={webAvailable} busy={Boolean(planJob || planActivity)}
+        stage={planJob ? outputActivity(job.live) : planActivity?.detail || planActivity?.title || null} onStop={stop}
+        dirty={dirty} editFlush={editFlush} />
+    </PlanDetailReader.Provider>;
+  }
   const canRefine = changeable && !editing;
+  const savedPreferences = canRefine && conversation && savedWork && <PlanDetailReader.Provider value={read}>
+    <SavedPlanPreferences key={savedWork.key} detail={conversation} work={savedWork} controller={studio.planning}
+      disabled={busy} dirty={readerEdits.preferences} editFlush={editFlush} />
+  </PlanDetailReader.Provider>;
+  const openOutline = () => {
+    if (panel === "outline" && !discardOutputEdit(readerEdits.content)) return;
+    if (panel !== "outline" && artifact) pickVersion(artifact.id);
+    choosePanel("outline");
+  };
+  const leaveOutline = (next: () => void) => {
+    if (panel !== "outline" || discardOutputEdit(readerEdits.content)) next();
+  };
   const allowPoint = canRefine && latest;
   const actions = artifact && <ArtifactMenu label="Output actions" items={[
-        { label: "Versions", onSelect: () => choosePanel("versions") },
-        ...(outline ? [{ label: "Outline", onSelect: () => choosePanel("outline") }] : []),
-        { label: "Edit", disabled: busy || !latest || !changeable, onSelect: () => { pickVersion(artifact.id); setEditing(true); setPanel(null); } },
+        { label: "Versions", onSelect: () => leaveOutline(() => choosePanel("versions")) },
+        ...(outline ? [{ label: "Outline", disabled: editing, onSelect: openOutline }] : []),
+        { label: "Edit", disabled: busy || !latest || !changeable, onSelect: async () => {
+          if (editFlush.current && !await editFlush.current()) return;
+          leaveOutline(() => { pickVersion(artifact.id); setEditing(true); setPanel(null); });
+        } },
         { label: "Check again", disabled: busy || !latest || !changeable, onSelect: () => void check() },
-        ...(capabilities?.design ? [{ label: "Style", disabled: editing, onSelect: () => choosePanel("style") }] : []),
+        ...(capabilities?.design ? [{ label: "Style", disabled: editing, onSelect: () => leaveOutline(() => choosePanel("style")) }] : []),
         ...(printAction ? [{ label: printAction, divider: true, disabled: editing, onSelect: () => { setError(""); void withSavedVersion(print); } }] : []),
         ...(formats.includes("markdown") ? [
           { label: "Copy Markdown", onSelect: () => void withSavedVersion(async (version) => {
@@ -349,16 +489,16 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
       ]} />;
 
   return <CitationDetails.Provider value={artifact?.citations ?? []}><article
-    className={`library-reading output-reader${studioReader ? " is-studio-reader" : ""}`} data-kind={kind} aria-label="Open output">
-    <header className={studioReader ? "output-reader-heading" : "library-reading-heading"}>
-      {studioReader && (artifact || targetType) && <div className="output-reader-meta">
+    className="output-reader" data-kind={kind} data-mode={editing ? "edit" : "read"} aria-label="Open output">
+    <header className="output-reader-heading reader-track" data-track={editing ? "full" : headingTrack}>
+      {refineInHeader && (artifact || targetType) && <div className="output-reader-meta">
         <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
         <span>{artifact?.outputType || targetType?.label}</span>
         {artifact && <span>Version {artifact.versionNumber}</span>}
       </div>}
       <h1>{title}</h1>
-      {studioReader ? <div className="output-reader-actions">
-        {canRefine && <button ref={refineTrigger} type="button" className="gx-btn gx-btn-quiet gx-btn-sm" aria-label="Refine output"
+      <div className="output-reader-actions">
+        {refineInHeader && canRefine && <button ref={refineTrigger} type="button" className="gx-btn gx-btn-quiet gx-btn-sm" aria-label="Refine output"
           aria-controls={refineId} aria-expanded={refineOpen} onClick={(event) => {
             if (refineOpen) closeRefine(event.currentTarget);
             else openRefine(event.currentTarget);
@@ -366,45 +506,54 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
           <MessageSquarePlus size={16} strokeWidth={1.75} aria-hidden="true" />Refine
         </button>}
         {actions}
-      </div> : actions}
+      </div>
     </header>
-    {problem && <p role="alert" className="output-error">{problem}</p>}
-    {artifact?.keyResults && <KeyResultsStatus key={artifact.keyResults.id} baseId={baseId} initial={artifact.keyResults} />}
-    {(job || activity) && <div className="output-run" role="status">
+    {problem && <p role="alert" className="output-error reader-track" data-track="prose">{problem}</p>}
+    {(savedPreferences || artifact?.provenance.creationPlan || artifact?.keyResults) &&
+      <div className="reader-track output-reader-disclosures" data-track={kind === "slides" ? "deck" : "prose"}>
+        {refineInHeader && savedPreferences}
+        {artifact?.provenance.creationPlan && controls && <ApprovedPlan value={artifact.provenance.creationPlan} type={controls} />}
+        {artifact?.keyResults && <div><KeyResultsStatus key={artifact.keyResults.id} baseId={baseId} initial={artifact.keyResults} /></div>}
+        {!refineInHeader && savedPreferences}
+      </div>}
+    {(job || activity) && <div className="output-run reader-track" data-track="prose" role="status">
       <span>{job ? outputActivity(job.live) : activity?.detail || activity?.title}</span>
       <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={job?.stopping} onClick={stop}>Stop</button>
     </div>}
-    {job?.live.reply && <AnswerBody content={job.live.reply} numbers={[]} />}
-    {!artifact && !job && !activity && !problem && <p>{conversation?.lastTurn?.error || (shownId ? "Loading version…" : "Waiting for the output…")}</p>}
+    {job?.live.reply && <div className="reader-track" data-track="prose"><AnswerBody content={job.live.reply} numbers={[]} /></div>}
+    {!artifact && !job && !activity && !problem && <p className="reader-track" data-track="prose">
+      {conversation?.lastTurn?.error || (shownId ? "Loading version…" : "Waiting for the output…")}
+    </p>}
     {artifact && <AudioDurationScope artifact={artifact}>
-      {panel === "versions" && <ul className="output-versions" aria-label="Versions">{versions.map((version) => <li key={version.id}>
+      {panel === "versions" && <ul className="output-versions reader-track" data-track="prose" aria-label="Versions">{versions.map((version) => <li key={version.id}>
         <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" aria-current={version.id === artifact.id ? "page" : undefined} onClick={() => switchVersion(version.id)}>Version {version.versionNumber}</button>
       </li>)}</ul>}
-      {panel === "outline" && outline && <OutlineEditor outline={artifact.outline} label={`${unit}s`} max={controls?.partLimit}
-        review={artifact.provenance.skill?.outlineReview} busy={busy || !changeable || !latest || editing}
-        onRebuild={(outline) => void send({ kind: "rebuild", rebuild: { artifactId: artifact.id, outline } })} />}
+      {panel === "outline" && outline && controls && <SavedOutline key={artifact.id} artifact={artifact} type={controls}
+        parts={savedWork && savedWork.versionId === artifact.id ? savedWork.parts : undefined}
+        busy={busy} readOnly={!changeable || !latest || editing} dirty={readerEdits.content} onRebuild={async (outline) => {
+          const result = await send({ kind: "rebuild", rebuild: { artifactId: artifact.id, outline } });
+          return Boolean(result && "outcome" in result && result.artifact);
+        }} />}
       {editing ? <EditPane key={artifact.id} artifact={artifact} type={type} saving={saving} onSave={(content) => void save(content)}
-        onCancel={() => { if (discardOutputEdit(dirty)) { setEditing(false); pickVersion(null); } }} onCite={cite} onDirtyChange={onDirtyChange} />
+        onCancel={() => { if (discardOutputEdit(readerEdits.content)) { setEditing(false); pickVersion(null); } }} onCite={cite} onDirtyChange={onDirtyChange} />
         : <>
           {Review && capabilities?.design && <Review artifact={artifact} baseId={baseId} workspaceId={workspaceId} disabled={busy || !latest || !changeable} onReview={() => void reviewSlides()} onFollowUp={refineOutput} />}
-          <div className="output-content">
-            <Reader artifact={artifact} onCite={cite} onPart={onPart} onAskChat={onAskChat}
-              onAsk={allowPoint ? point : undefined} goTo={jump} changed={changed} onNotice={onNotify}
-              type={type} presentation="read" work={{ working, disabled: busy || Boolean(activity), run: runReaderAction, voices: controls?.voices }}
-              design={styling ? {
-                onAccent: (accent) => void save(withAccent(artifact.content, accent)),
-                onTheme: (theme) => void save(withTheme(artifact.content, theme)),
-                onDeckTheme: (theme: DeckTheme) => void save(withDeckMarker(artifact.content, { theme })),
-                onDeckStyle: (style) => void restyle(style),
-                accentDisabled: busy || !latest, deckStyleDisabled: (!restyling && busy) || !latest, pendingDeckStyle: pendingStyle,
-              } : undefined} />
-          </div>
+          <Reader artifact={artifact} onCite={cite} onPart={onPart} onAskChat={onAskChat}
+            onAsk={allowPoint ? point : undefined} goTo={jump} changed={changed} onNotice={onNotify}
+            type={type} presentation="read" work={{ working, disabled: busy || Boolean(activity), run: runReaderAction, voices: controls?.voices }}
+            design={styling ? {
+              onAccent: (accent) => void save(withAccent(artifact.content, accent)),
+              onTheme: (theme) => void save(withTheme(artifact.content, theme)),
+              onDeckTheme: (theme: DeckTheme) => void save(withDeckMarker(artifact.content, { theme })),
+              onDeckStyle: (style) => void restyle(style),
+              accentDisabled: busy || !latest, deckStyleDisabled: (!restyling && busy) || !latest, pendingDeckStyle: pendingStyle,
+            } : undefined} />
         </>}
       {printAction && <PrintRoot artifact={artifact} type={type} />}
     </AudioDurationScope>}
-    {conversation && conversation.messages.length > 0 && <details className="output-history">
+    {history.length > 0 && <details className="output-history reader-track" data-track="prose">
       <summary>Change history</summary>
-      <ArtifactMessageList messages={conversation.messages} pending={pending ?? null} history={studio.artifacts}
+      <ArtifactMessageList messages={history} pending={pending} history={studio.artifacts}
         citations={artifact?.citations ?? []} kind={artifact?.kind ?? null} unitLabel={unitLabel} lineageId={lineageId ?? null} busy={busy}
         onOption={refineOutput} onStart={() => void send({ kind: "start" })} onContinue={() => void send({ kind: "continue" })}
         onRetry={retry} onOpenVersion={(version) => onOpen({ conversationId: studio.owner(version), lineageId: version.lineageId, artifactId: version.id })}
@@ -415,17 +564,21 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, scopeEm
           if (position) setJump({ index: position - 1, nonce: Date.now() });
         }} onCite={(index) => { const citation = artifact?.citations[index]; if (citation) cite(citation, index); }} earlier={conversationId === EARLIER_WORK} />
     </details>}
-    {!job && last && (last.kind === "reply" || last.kind === "answer") && <AnswerBody content={last.text}
-      {...(artifact ? outputCitations({ artifact, onCite: cite }) : { numbers: [] })} />}
-    {!job && last?.kind === "paused" && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => void send({ kind: "continue" })}>Continue</button>}
-    {canRefine && <form className="output-refine" id={refineId} aria-label={studioReader ? "Refine output" : undefined} hidden={studioReader && !refineOpen}
-      onKeyDown={studioReader ? (event) => {
+    {!job && last && (last.kind === "reply" || last.kind === "answer") && <div className="reader-track" data-track="prose">
+      <AnswerBody content={last.text} {...(artifact ? outputCitations({ artifact, onCite: cite }) : { numbers: [] })} />
+    </div>}
+    {!job && last?.kind === "paused" && !last.payload.plan && <div className="reader-track" data-track="prose">
+      <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => void send({ kind: "continue" })}>Continue</button>
+    </div>}
+    {canRefine && <form className="output-refine reader-track" data-track="prose" id={refineId}
+      aria-label={refineInHeader ? "Refine output" : undefined} hidden={refineInHeader && !refineOpen}
+      onKeyDown={refineInHeader ? (event) => {
         if (event.key === "Escape") { event.stopPropagation(); closeRefine(refineOrigin.current?.trigger); }
       } : undefined} onSubmit={(event) => { event.preventDefault(); refineFromForm(draft); }}>
       {latest && !sameScope(useScope, scope) && <div className="output-scope">
         <span>Using {useScope.mode === "selection" ? "this output’s " : ""}{scopeLabel(useScope)}</span>
-        <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={busy || scopeEmpty} onClick={() => void updateScope()}>
-          {scope.mode === "library" ? "Update to all sources" : `Update to current ${scope.sourceIds.length}`}
+        <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={busy || sourceState(scope) !== "ready"} onClick={() => void updateScope()}>
+          {scope.mode === "library" ? "Update to all sources" : `Update to current ${scopeLabel(scope)}`}
         </button>
       </div>}
       {pending && <div className="output-question"><p>{pending.question}</p>{pending.options.map((option) => <button key={option} type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={busy} onClick={() => refineFromForm(option)}>{option}</button>)}</div>}

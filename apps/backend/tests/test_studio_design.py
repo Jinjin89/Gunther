@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from fake_models import FakeProvider, gateway, model
-from test_studio_pipeline import DECK, pool, router
+from test_studio_pipeline import DECK, build_studio, pool, router
 
 from gunther.outputs import Notes, Spec, _marked
 from gunther.studio import design as D
@@ -40,8 +40,9 @@ GOOD_CHART = (
 def build(route=router, **options):
     fake = FakeProvider(route)
     agents = StudioAgents(gateway(fake), use="talk", **options)
-    built = agents.make(
-        model(), "high", Spec("slides", "collaborator", brief="A 10-minute talk"), pool(), Notes()
+    built = build_studio(
+        agents, model(), "high", Spec("slides", "collaborator", brief="A 10-minute talk"),
+        pool(), Notes(),
     )
     return agents, built, fake
 
@@ -288,8 +289,9 @@ def test_a_plain_slide_the_look_rewrites_stays_on_the_template_path_and_designs_
         return looks(request)
 
     agents = StudioAgents(gateway(FakeProvider(route)), use="talk", renderer=FakeRenderer(tmp_path))
-    built = agents.make(
-        model(), "high", Spec("slides", "collaborator", brief="A 10-minute talk"), pool(), Notes()
+    built = build_studio(
+        agents, model(), "high", Spec("slides", "collaborator", brief="A 10-minute talk"),
+        pool(), Notes(),
     )
     slides = fmt.split_slides(built.content)
     assert built.skill["look"]["status"] == "fixed" and built.skill["look"]["designed"] == []

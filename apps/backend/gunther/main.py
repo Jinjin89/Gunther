@@ -263,7 +263,8 @@ def create_app(
     service_store = service_settings or ServiceSettingsStore(active_settings.service_settings_file)
     active_settings = service_store.apply(base_settings)
     # The models are connected below, once the worker exists (see _connect_models).
-    knowledge_service = KnowledgeService(sessions)
+    answer_runs = AnswerRuns()
+    knowledge_service = KnowledgeService(sessions, answer_runs=answer_runs)
     embedder, off_reason = _semantic_search(active_settings, sessions)
     knowledge_service.index.embedder = embedder
     knowledge_service.index.semantic_off_reason = off_reason
@@ -311,7 +312,6 @@ def create_app(
         browser=active_settings.slide_browser_path,
     ) if active_settings.slide_review_enabled else None
 
-    answer_runs = AnswerRuns()
     trash_service = TrashService(
         sessions,
         assets_dir=active_settings.assets_dir,
@@ -383,6 +383,11 @@ def create_app(
     application.state.service_settings = service_store
     application.state.tts = TtsService(sessions, active_settings.speech_dir)
     application.state.answer_runs = answer_runs
+    from gunther.artifact_audio import voice_options
+
+    knowledge_service.output_voices = lambda: voice_options(
+        Request({"type": "http", "app": application}),
+    )
     application.state.activity = worker.activity
     # A recording's Transcribe again button.
     retranscriber = Retranscriber(application.state, sessions, active_settings.recordings_dir)

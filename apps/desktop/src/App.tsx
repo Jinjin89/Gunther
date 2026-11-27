@@ -14,6 +14,7 @@ import { HomePage, type HomeCaptureKind } from "./pages/HomePage";
 import { InboxPageV3 } from "./pages/InboxPage";
 import { KnowledgeBaseWorkspace } from "./pages/KnowledgeBaseWorkspace";
 import { LibraryActions } from "./components/LibraryActions";
+import { outputTargetKey } from "./outputs/artifactConversations";
 import { discardOutputEdit } from "./outputs/EditPane";
 import { NotebookPage } from "./pages/NotebookPage";
 import { TrashPage } from "./pages/TrashPage";
@@ -105,6 +106,7 @@ export default function App() {
   const [view, setView] = useState<AtlasView>("home");
   const [activeBaseId, setActiveBaseId] = useState<string | null>(null);
   const [outputActivity, setOutputActivity] = useState<OutputActivityOpen | null>(null);
+  const trashedOutputs = useRef(new Map<string, OutputActivityOpen>());
   const clearOutputActivity = useCallback((target: OutputActivityOpen) => {
     setOutputActivity((current) => current === target ? null : current);
   }, []);
@@ -274,18 +276,31 @@ export default function App() {
     advanceItem();
   }, [advanceItem, notify]);
 
+  const reopenRestoredOutput = useCallback((entry: TrashItem) => {
+    if (entry.kind !== "output") return;
+    const target = entry.open ?? trashedOutputs.current.get(entry.id);
+    trashedOutputs.current.delete(entry.id);
+    if (target && outputTargetKey(target) && discardOutputEdit(editDirty)) {
+      setActiveBaseId(target.libraryId);
+      setView("base");
+      setOutputActivity({ ...target });
+    }
+  }, []);
+
   const undoTrash = useCallback(async (entry: TrashItem) => {
     try {
-      await restoreFromTrash(entry);
+      const restored = await restoreFromTrash(entry);
       if (entry.kind === "library") await refreshKnowledgeBases();
+      reopenRestoredOutput({ ...restored, open: restored.open ?? entry.open ?? null });
       notify(`Restored “${entry.title}”.`);
     } catch (reason) {
       notify(reason instanceof Error ? reason.message : `“${entry.title}” could not be restored.`);
     }
-  }, [notify, refreshKnowledgeBases]);
+  }, [notify, refreshKnowledgeBases, reopenRestoredOutput]);
 
   // Something went to Trash: offer Undo, and stop showing a library that went.
-  const trashed = useCallback((entry: TrashItem) => {
+  const trashed = useCallback((entry: TrashItem, reopen?: OutputActivityOpen) => {
+    if (reopen) trashedOutputs.current.set(entry.id, reopen);
     notify(trashedMessage(entry), { label: "Undo", run: () => void undoTrash(entry) });
     if (entry.kind !== "library") return;
     setBases((current) => current.filter((base) => base.id !== entry.id));
@@ -332,7 +347,7 @@ export default function App() {
       if (target.tab === "ask" && !discardOutputEdit(editDirty)) return;
       if (!openBase(target.libraryId)) return;
       if (target.tab === "outputs") {
-        setOutputActivity(target.conversationId || target.lineageId || target.artifactId ? { ...target } : null);
+        setOutputActivity(outputTargetKey(target) ? { ...target } : null);
       }
       if (target.tab === "ask" && target.sessionId) {
         persistentStorage.setItem(`gunther:active-session:${target.libraryId}`, target.sessionId);
@@ -351,7 +366,7 @@ export default function App() {
   const isActivityHere = useCallback((target: ActivityOpen) => {
     if (target.view === "item") return view === "item" && openItemState?.ref.type === "source" && openItemState.ref.id === target.id;
     if (target.view === "library") {
-      if (target.tab === "outputs" && (target.conversationId || target.lineageId || target.artifactId)) return false;
+      if (target.tab === "outputs" && outputTargetKey(target)) return false;
       return view === "base" && activeBaseId === target.libraryId && chatVisible.current;
     }
     return view === "home";
@@ -596,7 +611,10 @@ export default function App() {
             onTitle={setItemTitle}
             onTrashed={(entry) => { trashed(entry); advanceItem(); }}
           /></AtlasPage>}
-          {view === "trash" && <AtlasPage><TrashPage onNotify={notify} onRestored={(entry) => { if (entry.kind === "library") void refreshKnowledgeBases(); }} /></AtlasPage>}
+          {view === "trash" && <AtlasPage><TrashPage onNotify={notify} onRestored={(entry) => {
+            if (entry.kind === "library") void refreshKnowledgeBases();
+            reopenRestoredOutput(entry);
+          }} /></AtlasPage>}
           {view === "settings" && <AtlasPage><SettingsPageV2 theme={themePreference} onTheme={setThemePreference} onNotify={notify} /></AtlasPage>}
           {view === "account" && <AtlasPage><AccountPageV2 bases={bases} /></AtlasPage>}
         </main>

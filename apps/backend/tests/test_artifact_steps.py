@@ -33,13 +33,14 @@ from gunther.artifact_workspace import (
     locate,
     outline_state,
     ready,
+    spec_of,
     status,
 )
 from gunther.checks import finding, verdicts_of
 from gunther.evidence import Evidence, Tool
 from gunther.llm import ModelError
 from gunther.outputs import Notes, Pool, layout_of, section_hash, split_document, with_layout
-from gunther.schemas import ConversationCitationOut
+from gunther.schemas import ConversationCitationOut, PreferenceLineOut
 from gunther.studio import format as fmt
 from gunther.studio.work import StudioWorkAgents
 
@@ -199,6 +200,31 @@ def test_understand_keeps_claim_ids_and_stales_the_previous_outline() -> None:
     assert steps.pool.by_ref()[3].url == news.url and steps.brief.goal == goal
     assert work.next_card == 4 and approach_state(work, steps.brief).state == "ok"
     assert work.outline_inputs == original_stamp and outline_state(work).state == "out_of_date"
+
+
+def test_service_preparation_keys_a_reading_focus_without_editing_the_work() -> None:
+    fake = FakeProvider(report_replies())
+    steps = steps_for(fake)
+    steps.work.spec.focus = "Compare the marker panel"
+
+    def prepare(work: Work, pool: Pool):
+        return steps.agents.prepare(
+            steps.model, steps.effort, spec_of(steps.brief, work), pool, steps.notes,
+            manifest={}, resume=work.studio_progress, emit=steps.emit, checkpoint=lambda _: None,
+        )
+
+    steps.prepare_work = prepare
+    steps.understand()
+    original = steps.work.studio_progress["prepare_key"]
+    steps.understand("Read about the second marker")
+    focused = steps.work.studio_progress["prepare_key"]
+    steps.understand("Read about the second marker")
+
+    assert original != focused == steps.work.studio_progress["prepare_key"]
+    assert steps.work.spec.focus == "Compare the marker panel"
+    first, second = [studio_task(r) for r in fake.requests if "lead analyst" in studio_task(r)]
+    assert "Compare the marker panel" in first
+    assert "Read about the second marker" in second
 
 
 @pytest.mark.parametrize("goal", [None, "Choose markers for a panel"])
@@ -525,6 +551,35 @@ def test_one_passage_is_replaced_and_the_rest_of_the_part_is_as_it_was() -> None
     assert work.parts["p2"] == kept["p2"] and work.parts["p3"] == kept["p3"]
     assert part.coverage["status"] == "partial"
     assert states(steps) == ["not_checked", "ok", "ok"]
+
+
+def test_saved_steps_apply_preferences_to_writing_and_review_but_not_the_checker() -> None:
+    new = "CD3D is on every T cell [1]"
+    replies = report_replies(replacer=replacing({"CD3D marks T cells [1]": new}))
+
+    def reply(request):
+        if "You are a demanding senior partner" in request["messages"][0]["content"]:
+            return '{"changes":[]}'
+        return replies(request)
+
+    fake = FakeProvider(reply)
+    steps = drafted(fake)
+    steps.brief.emphasize = [PreferenceLineOut(id="em_1", text="Methods first", mark="edited")]
+    steps.brief.avoid = [PreferenceLineOut(id="av_1", text="Marketing language", mark="you")]
+    assert steps.edit("p1", "CD3D marks T cells [1]", "Say where it is found")
+    assert steps.review() == []
+    prompts = [str(call["messages"][-1]["content"]) for call in fake.requests
+               if is_replacing(call) or "You are a demanding senior partner"
+               in call["messages"][0]["content"]]
+    assert len(prompts) == 2
+    for prompt in prompts:
+        assert json.loads(prompt.rsplit("Output preferences:\n", 1)[1]) == {
+            "emphasize": ["Methods first"], "avoid": ["Marketing language"],
+        }
+    start = len(fake.requests)
+    assert steps.check(["p1"]) == ["p1"]
+    checking = json.dumps(fake.requests[start:])
+    assert "Methods first" not in checking and "Marketing language" not in checking
 
 
 def test_a_passage_that_is_not_there_is_an_error_that_costs_nothing() -> None:

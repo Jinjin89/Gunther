@@ -23,6 +23,7 @@ from gunther.citations import citation_numbers, renumber_citations
 from gunther.markup import Markup
 from gunther.output_types import DECK_USES, OUTPUT_TYPES, SHAPES
 from gunther.outputs import Notes, Pool, layout_of
+from gunther.schemas import PreferenceLineOut
 from gunther.studio import format as studio_format
 from gunther.studio.format import without_design
 
@@ -110,9 +111,10 @@ class View:
     # The question this message answers (the workspace's pending one, as the turn began).
     asked: Any = None
     material: Notes = field(default_factory=Notes)
+    revising: bool = False
 
 
-def _line(label: str, line: Line | None, empty: str = "not set") -> str:
+def _line(label: str, line: Line | PreferenceLineOut | None, empty: str = "not set") -> str:
     return f"{label} {line.text} ({MARKS[line.mark]})" if line else f"{label} {empty}"
 
 
@@ -158,7 +160,9 @@ def resolve_passage(passage: str, body: str, deck: bool) -> str:
     return passage
 
 
-def part_lines(work: Work, brief: ConversationBrief, numbering: Numbering) -> list[str]:
+def part_lines(
+    work: Work, brief: ConversationBrief, numbering: Numbering, *, written_parts: bool = True,
+) -> list[str]:
     """The map: each part with where it stands and what it says."""
 
     deck = work.spec.kind == "slides"
@@ -166,7 +170,7 @@ def part_lines(work: Work, brief: ConversationBrief, numbering: Numbering) -> li
     lines: list[str] = []
     for part in status(work, brief):
         item = next(i for i in work.outline if i.id == part.item_id)
-        written = work.parts.get(item.id)
+        written = work.parts.get(item.id) if written_parts else None
         state = {
             "ok": "ok",
             "not_written": "not written yet",
@@ -181,7 +185,9 @@ def part_lines(work: Work, brief: ConversationBrief, numbering: Numbering) -> li
             extras += f" · sources {ranges(view)}"
         if item.cards and part.state != "ok":
             extras += f" · cards {', '.join(item.cards)}"
-        lines.append(f"{head}{item.heading} · {state}{extras}")
+        lines.append(f"{head}{item.heading}" + (f" · {state}{extras}" if written_parts else ""))
+        if item.notes:
+            lines.append(f"      Writer notes: {_one_line(item.notes, 400)}")
         if written is None:
             continue
         if deck:
@@ -200,6 +206,9 @@ def build_view(v: View) -> str:
     ws, brief = v.workspace, v.brief
     work = active_work(ws)
     out = [f"Library: {v.library}. Web: {'on' if v.web else 'off'}."]
+    out.append(
+        "Mode: revise the active verified version." if v.revising else "Mode: plan for approval."
+    )
     material = v.material
     has_material = bool(material.sources or material.knowledge or material.discussions)
     if has_material:
@@ -223,16 +232,20 @@ def build_view(v: View) -> str:
         )
         if kind == "slides":
             options += f". Uses: {', '.join(DECK_USES)}"
-        stages = (
-            "make → verify" if SHAPES[kind].pipeline == "direct"
-            else "understand → plan → write → review"
-        )
+        stages = "understand → propose"
+        if v.revising:
+            stages = (
+                "make → verify" if SHAPES[kind].pipeline == "direct"
+                else "understand → plan → write → review"
+            )
         out.append(f"{kind} in Studio: {stages}. {options}")
     out.append("Brief (you said = the user's words; edited = the user typed it; guessed = yours):")
     shown = [
         _line("- goal:", brief.goal, "") if brief.goal else None,
         _line("- audience:", brief.audience, "") if brief.audience else None,
         *(_line("- constraint:", line) for line in brief.constraints),
+        *(_line("- emphasize:", line) for line in brief.emphasize),
+        *(_line("- avoid:", line) for line in brief.avoid),
         *(f"- open: {line.text}" for line in brief.open),
     ]
     out += [row for row in shown if row] or ["- (nothing yet)"]
@@ -246,7 +259,9 @@ def build_view(v: View) -> str:
         out.append("Artifacts: " + " · ".join(listed))
     else:
         out.append("Artifacts: none yet.")
-    numbering = Numbering(work.version_map if work else [], [i.ref for i in v.pool.items if i.ref])
+    numbering = Numbering(
+        work.version_map if work and v.revising else [], [i.ref for i in v.pool.items if i.ref],
+    )
     pointed = ""
     if work:
         shape = SHAPES[work.spec.kind]
@@ -264,6 +279,8 @@ def build_view(v: View) -> str:
                 if part
             )
         )
+        if work.plan is not None:
+            out.append("The plan's catalog type is fixed. Start a separate plan to change it.")
         approach, outline = approach_state(work, brief), outline_state(work)
         said = {
             "ok": "up to date",
@@ -293,7 +310,9 @@ def build_view(v: View) -> str:
                 + (extra if v.pool.top > work.approach_top else "")
             )
         out.append("Parts:")
-        out += part_lines(work, brief, numbering) or ["  (nothing is planned yet)"]
+        out += part_lines(work, brief, numbering, written_parts=v.revising) or [
+            "  (nothing is planned yet)",
+        ]
         focus = v.focus or {}
         if focus and (focus.get("section") or focus.get("quote")):
             how = "selected" if focus.get("selected", True) else "on screen"
@@ -301,7 +320,7 @@ def build_view(v: View) -> str:
             line = f"Pointed at ({how}): "
             if position and 1 <= position <= len(work.outline):
                 line += f"part {position}, in full"
-                written = work.parts.get(work.outline[position - 1].id)
+                written = work.parts.get(work.outline[position - 1].id) if v.revising else None
                 if written is not None:
                     shown_text = numbering.text(shape.markup(
                         "\n".join(_deck_text(written.text, None))
@@ -341,7 +360,8 @@ def build_view(v: View) -> str:
         out.append("(nothing before this message)")
     if v.asked is not None:
         options = " | ".join(v.asked.options)
-        out.append(f'You asked: "{v.asked.question}" Options: {options} (this message answers it)')
+        status = "this message answers it" if v.kind == "answer" else "pending"
+        out.append(f'You asked: "{v.asked.question}" Options: {options} ({status})')
     out.append("This turn so far:")
     out += [f"- {row}" for row in v.notes] or ["- (nothing yet)"]
     if v.not_done:
@@ -351,10 +371,11 @@ def build_view(v: View) -> str:
     out.append(f"Budget left: {decisions} decisions · {calls} model calls · {searches} searches")
     label = {
         "message": "message",
+        "plan": "planning feedback",
         "answer": "answer to your question",
-        "start": '"just start"',
+        "start": "use current settings",
         "continue": '"continue"',
-    }[v.kind]
+    }.get(v.kind, v.kind)
     out += [f"Latest message ({label}):", v.text]
     return "\n".join(out)
 
@@ -369,6 +390,8 @@ def _brief_json(brief: ConversationBrief, spec: WorkSpec | None) -> dict[str, An
             "audience": line(brief.audience),
             "constraints": [line(x) for x in brief.constraints],
             "open": [line(x) for x in brief.open],
+            "emphasize": [x.model_dump(mode="json", by_alias=True) for x in brief.emphasize],
+            "avoid": [x.model_dump(mode="json", by_alias=True) for x in brief.avoid],
         },
         "spec": None
         if spec is None

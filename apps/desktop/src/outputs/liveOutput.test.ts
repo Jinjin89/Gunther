@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import type { ArtifactTurnEvent } from "../api";
-import { applyOutputEvent, EMPTY_LIVE, outputActivity } from "./liveOutput";
+import { libraryScope } from "./artifactConversations";
+import { applyOutputEvent, EMPTY_LIVE, outputActivity, type PlanEvent } from "./liveOutput";
 
 const feed = (...events: ArtifactTurnEvent[]) => events.reduce(applyOutputEvent, EMPTY_LIVE);
 
@@ -27,4 +28,31 @@ it("uses section progress when the stream has no current stage", () => {
 it("keeps streamed reply text in order", () => {
   const state = feed({ type: "reply", text: "The evidence " }, { type: "reply", text: "is mixed." });
   expect(state.reply).toBe("The evidence is mixed.");
+});
+
+it("records only the latest committed plan and retains the independent live progress", () => {
+  const committed: PlanEvent = {
+    type: "plan", conversationId: "conversation", workKey: "draft_work", editVersion: 8,
+    plan: {
+      planId: "draft_work", planRevision: "p3-revision", planStatus: "needs_answer", basis: "assistant", blocker: null,
+      options: {
+        type: "flashcards", scope: libraryScope(), focus: "", title: null, audience: "student", length: null,
+        language: null, use: null, theme: null, designVersion: null, voices: null, web: false, model: null, effort: null,
+      },
+      preferences: { emphasize: [], avoid: [] }, outline: null, proposal: null, attempt: null, approvedRevision: null,
+      pending: { planId: "draft_work", planRevision: "p3-revision", messageId: "question", question: "Who will read this?", options: [] },
+    },
+  };
+  const stage = { type: "stage", id: "read", label: "Reading", state: "running" } as const;
+  const state = feed(
+    { type: "outline", title: "Stream preview", sections: [{ heading: "Overview", goal: "" }] },
+    { type: "reply", text: "A question follows." },
+    stage,
+    committed,
+  );
+  expect(state.plan).toBe(committed);
+  expect(state).toMatchObject({ title: "Stream preview", headings: ["Overview"], reply: "A question follows." });
+  expect(outputActivity(state)).toBe("Reading");
+  expect(applyOutputEvent(state, { ...committed, editVersion: 7 })).toBe(state);
+  expect(applyOutputEvent(state, { ...stage, state: "done" }).plan).toBe(committed);
 });

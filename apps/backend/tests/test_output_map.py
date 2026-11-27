@@ -3,8 +3,8 @@ import json
 import pytest
 from fake_models import FakeProvider, is_sentence_checking, orchestrator_replies, studio_task
 from test_artifact_agent import done, turn
-from test_output_cards import EVIDENCE, EXAMPLES, checks_in, conversation, document
-from test_outputs import app_for, route, workspace
+from test_output_cards import EVIDENCE, EXAMPLES, checks_in, conversation, coverage_reply, document
+from test_outputs import app_for, plan_and_approve, route, workspace
 
 from gunther.citations import check_citations, renumber_citations
 from gunther.output_types import SHAPES
@@ -52,6 +52,8 @@ def model_replies(draft, rewrite=None):
         system = request["messages"][0]["content"]
         if "lead analyst" in task:
             return json.dumps({"title": "Cell development", "answer": EVIDENCE})
+        if task.startswith("Propose the direction"):
+            return coverage_reply()
         if "Write the complete Mind map" in task:
             return draft
         if is_sentence_checking(request):
@@ -69,7 +71,9 @@ def model_replies(draft, rewrite=None):
 
 
 def build_map(client, base_id, cid):
-    return turn(client, base_id, cid, "", "build", build={"type": "mind_map", "length": "short"})
+    return plan_and_approve(
+        client, base_id, {"type": "mind_map", "length": "short"}, conversation_id=cid,
+    )
 
 
 def checked_claims(requests):
@@ -92,7 +96,7 @@ def test_mind_map_build_checks_ancestor_context_and_enqueues_key_results(tmp_pat
         assert artifact["keyResults"]["state"] == "queued"
         complete = [event["id"] for name, event in events
                     if name == "stage" and event["state"] == "done"]
-        assert complete == ["read", "memo", "write", "format", "verify", "assemble"]
+        assert complete == ["read", "memo", "story", "write", "format", "verify", "assemble"]
         assert not fake.write_lock_failures
 
         def distill(request):

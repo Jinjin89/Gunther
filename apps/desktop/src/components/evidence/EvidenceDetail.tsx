@@ -57,13 +57,12 @@ function WebEvidence({ citation, locator, imports }: { citation: ConversationCit
   </>;
 }
 
-function LibraryEvidence({ citation, locator, source, failed, onOpenSource, onOriginalPdfChange }: {
+function LibraryEvidence({ citation, locator, source, failed, onOpenSource }: {
   citation: ConversationCitation;
   locator: string;
   source: SourceDetail | null;
   failed: boolean;
   onOpenSource?: ((sourceId: string) => void) | undefined;
-  onOriginalPdfChange?: ((original: boolean) => void) | undefined;
 }) {
   const [blocks, setBlocks] = useState<ContentBlock[]>([]);
   const [tab, setTab] = useState<"passage" | "original">("passage");
@@ -98,8 +97,6 @@ function LibraryEvidence({ citation, locator, source, failed, onOpenSource, onOr
   const page = citation.anchor?.page ?? (at >= 0 ? blocks[at]?.anchor.page : undefined);
   const viewable = source ? (isPdf(source) ? "pdf" : isImage(source) ? "image" : null) : null;
   const assetUrl = source?.asset ? sourceAssetUrl(source.asset.id) : null;
-  useEffect(() => { onOriginalPdfChange?.(tab === "original" && viewable === "pdf"); }, [onOriginalPdfChange, tab, viewable]);
-  useEffect(() => () => onOriginalPdfChange?.(false), [onOriginalPdfChange]);
 
   return <>
     {viewable && <nav className="gx-evidence-tabs" aria-label="View">
@@ -159,7 +156,7 @@ function PassagePicker({ passages, selectedId, onPassage }: {
 
 /** A citation's shared passage or original viewer, optionally within a source list. */
 export function EvidenceDetail({ citation, index, passages, onPassage, onOpenSource, headerAction, onBack,
-  position, total, onPrevious, onNext, onOriginalPdfChange, webImports }: {
+  position, total, onPrevious, onNext, webImports }: {
   citation: ConversationCitation;
   index?: number | undefined;
   passages?: readonly ConversationCitation[] | undefined;
@@ -171,7 +168,6 @@ export function EvidenceDetail({ citation, index, passages, onPassage, onOpenSou
   total?: number | undefined;
   onPrevious?: (() => void) | undefined;
   onNext?: (() => void) | undefined;
-  onOriginalPdfChange?: ((original: boolean) => void) | undefined;
   webImports?: WebFindImports | undefined;
 }) {
   const web = isWebCitation(citation);
@@ -214,7 +210,7 @@ export function EvidenceDetail({ citation, index, passages, onPassage, onOpenSou
     {passages && passages.length > 1 && onPassage && <PassagePicker passages={passages} selectedId={citation.id} onPassage={onPassage} />}
     {web ? <WebEvidence citation={citation} locator={locator} imports={webImports} />
       : <LibraryEvidence citation={citation} locator={locator} source={source} failed={loaded?.source === null}
-        onOpenSource={onOpenSource} onOriginalPdfChange={onOriginalPdfChange} />}
+        onOpenSource={onOpenSource} />}
   </div>;
 }
 

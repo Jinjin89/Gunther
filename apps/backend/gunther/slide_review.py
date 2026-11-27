@@ -13,6 +13,7 @@ from gunther import usage
 from gunther.llm import Image, ModelError
 from gunther.outputs import (
     BuiltOutput,
+    Spec,
     _marked,
     join_document,
     section_hash,
@@ -35,6 +36,7 @@ from gunther.slide_scene import (
     with_scene,
     without_scene_line,
 )
+from gunther.studio import prompts as P
 from gunther.studio.stages import stage_event
 
 
@@ -227,6 +229,7 @@ def review_deck(
     brief: str,
     use: str,
     emit=lambda _event: None,
+    spec: Spec | None = None,
 ) -> BuiltOutput:
     started = time.monotonic()
     budget = RunBudget(0, 0, 8, 8, phase="visual")
@@ -263,7 +266,7 @@ def review_deck(
                 model,
                 VisualReview,
                 system=REVIEW_RULES,
-                prompt="\n".join(
+                prompt=P.with_preferences("\n".join(
                     [
                         "Use: " + use + "\nDesign brief: " + brief,
                         json.dumps(
@@ -271,7 +274,7 @@ def review_deck(
                             ensure_ascii=False,
                         ),
                     ]
-                ),
+                ), spec),
                 effort=effort,
                 images=images,
             )
@@ -365,7 +368,7 @@ def review_deck(
                     "qualifications at a readable body size and comparable emphasis "
                     "to the observation they limit. "
                     "if layout cannot solve the defect. One attempt, at most four pages.",
-                    prompt=json.dumps(repair_inputs, ensure_ascii=False),
+                    prompt=P.with_preferences(json.dumps(repair_inputs, ensure_ascii=False), spec),
                     effort=effort,
                 )
                 record["repairCycles"] = 1

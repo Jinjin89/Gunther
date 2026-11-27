@@ -50,6 +50,8 @@
 @media (prefers-reduced-motion: reduce) { .conversation-scroll [data-citation-index].is-located { animation: none; } }
 
 .gx-evidence-body { min-height: 0; padding: 18px 20px 24px; flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+.library-inspector .gx-evidence-passages { box-sizing: border-box; inline-size: min(100%, 45rem); margin-inline: auto; }
+.library-inspector .gx-evidence-body > section { inline-size: min(100%, 66ch); margin-inline: auto; }
 .gx-evidence-body.is-viewer { padding: 10px 0 0; overflow: hidden; display: flex; flex-direction: column; }
 .gx-evidence-body h3 { margin: 0 0 10px; color: var(--gx-faint); font-size: var(--gx-text-xs); font-weight: 600; letter-spacing: 0.01em; }
 .gx-evidence-quote { margin: 0; padding: 2px 0 2px 14px; border-left: 2px solid var(--gx-ink); color: var(--gx-ink); font-size: calc(15px * var(--gx-fs, 1)); line-height: 1.7; overflow-wrap: anywhere; }

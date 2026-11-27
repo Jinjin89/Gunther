@@ -1,6 +1,7 @@
 .audio-overview {
   container: audio-reader / inline-size;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 .audio-transport {
@@ -46,6 +47,7 @@
 .audio-banner p, .audio-actions > .output-error { margin: 0; }
 .audio-banner > .output-error { overflow-wrap: anywhere; }
 .audio-actions > .output-error { flex-basis: 100%; }
+.audio-voices { min-inline-size: 0; }
 .audio-voices[open] { flex-basis: 100%; }
 .audio-voices > summary {
   display: list-item;
@@ -117,6 +119,12 @@ button.audio-script-time:hover { color: var(--gx-ink); }
   grid-column: 2;
   min-inline-size: 0;
   overflow-wrap: anywhere;
+  font: var(--gx-text-lg)/1.65 var(--outputs-serif, var(--gx-font-display));
+}
+.audio-overview :is(.audio-transcript > .answer-markdown, .audio-script-text) {
+  max-inline-size: min(100%, 66ch);
+}
+.audio-overview .audio-transcript > .answer-markdown {
   font: var(--gx-text-lg)/1.65 var(--outputs-serif, var(--gx-font-display));
 }
 .audio-script-text .answer-markdown > p { margin: 0; }

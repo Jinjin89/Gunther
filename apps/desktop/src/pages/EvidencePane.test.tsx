@@ -30,7 +30,7 @@ const selected: SessionMessage = { ...answer("selected", [paper, web]), context:
 const session: KnowledgeSession = { id: "chat", knowledgeBaseId: "library", title: "Chat", summary: "", focusChapterId: null,
   selectedSourceIds: [], pinned: false, archived: false, parentSessionId: null, branchedFromMessageId: null,
   messageCount: 2, createdAt: at, updatedAt: at, messages: [previous, selected] };
-const handlers = () => ({ onOpen: vi.fn(), onStep: vi.fn(), onBack: vi.fn(), onOpenSource: vi.fn(), onOriginalPdfChange: vi.fn(), onSourceCount: vi.fn() });
+const handlers = () => ({ onOpen: vi.fn(), onStep: vi.fn(), onBack: vi.fn(), onOpenSource: vi.fn(), onSourceCount: vi.fn() });
 const props = () => ({ session, selected, chatVisible: true, sources: [source], selectedSourceIds: [source.id], allSelected: true,
   webEnabled: false, onFocusSources: vi.fn(), detail: null as EvidenceTarget | null, ...handlers() });
 

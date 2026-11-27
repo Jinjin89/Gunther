@@ -4,10 +4,16 @@ from typing import Annotated, Any, ClassVar, Literal
 from pydantic import (
     AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
+    Discriminator,
     Field,
+    RootModel,
     SerializeAsAny,
     SerializerFunctionWrapHandler,
+    StrictBool,
+    StrictInt,
+    Tag,
     field_validator,
     model_serializer,
     model_validator,
@@ -263,6 +269,9 @@ class TrashItemOut(ApiModel):
     library_titles: list[str] = Field(default_factory=list)
     output_type: str | None = None
     version_count: int = 0
+    open: "OutputActivityOpenOut | None" = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
 
 class InboxItemOut(ApiModel):
@@ -996,6 +1005,13 @@ class OutputProvenanceOut(ArtifactProvenanceOut):
     reply: str | None = None
     changes: list[dict[str, Any]] | None = None
     work: dict[str, Any] | None = Field(default=None, exclude=True)
+    creation_plan: "ApprovedCreationPlanOut | None" = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
+    creation_version_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    preferences: "PlanPreferencesOut | None" = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
 
 class OutputScope(ApiModel):
@@ -1033,10 +1049,13 @@ class SlideDesignInput(ApiModel):
     layout: str | None = Field(default=None, max_length=40)
 
 
+_OUTLINE_ID_PATTERN = r"[A-Za-z][A-Za-z0-9_-]*"
+
+
 class OutlineItem(ApiModel):
     heading: str = Field(min_length=1, max_length=160)
     goal: str = Field(default="", max_length=400)
-    id: str = Field(default="", max_length=64, pattern=r"^(?:[A-Za-z][A-Za-z0-9_-]*)?$")
+    id: str = Field(default="", max_length=64, pattern=rf"^(?:{_OUTLINE_ID_PATTERN})?$")
     message: str = Field(default="", max_length=600)
     question: str = Field(default="", max_length=400)
     requires: list[str] = Field(default_factory=list, max_length=14)
@@ -1047,6 +1066,7 @@ class OutlineItem(ApiModel):
     layout_locked: bool = False
     design_locked: bool = False
     design_attempted: bool = False
+    notes: str = Field(default="", max_length=400, exclude_if=lambda value: not value)
 
     @model_serializer(mode="wrap")
     def _without_empty_layout(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -1146,6 +1166,20 @@ class OutputTypeOut(ApiModel):
     legacy_styles: tuple[str, ...]
     capabilities: OutputCapabilitiesOut
     voices: OutputVoicesOut | None = Field(default=None, exclude_if=lambda value: value is None)
+    outline_layouts: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
+    min_parts: int = 1
+    first_part_role: str | None = None
+
+
+class OutputActivityOpenOut(ApiModel):
+    view: Literal["library"] = "library"
+    library_id: str
+    tab: Literal["outputs"] = "outputs"
+    conversation_id: str | None = None
+    type_id: str | None = None
+    lineage_id: str | None = None
+    artifact_id: str | None = None
+    plan_id: str | None = None
 
 
 class OutputRequestInput(ApiModel):
@@ -1215,6 +1249,267 @@ class BuildTurnInput(ApiModel):
                     raise ValueError(f"{name} must not be blank")
                 setattr(self, name, value)
         return self
+
+
+class PlanMutation(ApiModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+PLAN_LINE_LIMIT = 8
+PLAN_LINE_LENGTH = 300
+ArtifactMark = Literal["you", "guessed", "edited"]
+PlanPartField = Literal["heading", "goal", "layout", "notes"]
+PlanStatus = Literal["planning", "needs_answer", "ready", "generating", "failed", "saved"]
+PlanBasis = Literal["assistant", "user_edited"]
+PlanRowId = Annotated[str, Field(max_length=64, pattern=rf"^{_OUTLINE_ID_PATTERN}$")]
+
+
+def _strip_text(value: Any) -> Any:
+    return value.strip() if isinstance(value, str) else value
+
+
+def _single_heading(value: Any) -> Any:
+    if isinstance(value, str) and value and value.splitlines() != [value]:
+        raise ValueError("Use a single line for the heading")
+    return _strip_text(value)
+
+
+PlanLineText = Annotated[str, Field(min_length=1, max_length=PLAN_LINE_LENGTH),
+                         BeforeValidator(_strip_text)]
+PlanHeading = Annotated[str, Field(min_length=1, max_length=160), BeforeValidator(_single_heading)]
+PlanWriterText = Annotated[str, Field(max_length=400), BeforeValidator(_strip_text)]
+PlanLayout = Annotated[str, Field(min_length=1, max_length=40)]
+
+
+class PlanLineInput(PlanMutation):
+    id: PlanRowId
+    text: PlanLineText
+
+
+class PreferenceLineOut(PlanLineInput):
+    mark: ArtifactMark
+
+
+def _unique_row_ids(rows: list) -> list:
+    seen: set[str] = set()
+    for row in rows:
+        if row.id in seen:
+            raise ValueError(f"Duplicate row ID: {row.id}")
+        seen.add(row.id)
+    return rows
+
+
+def _unique_preference_ids(emphasize: list, avoid: list) -> None:
+    _unique_row_ids([*emphasize, *avoid])
+
+
+PlanLines = Annotated[
+    list[PlanLineInput], Field(max_length=PLAN_LINE_LIMIT), AfterValidator(_unique_row_ids),
+]
+PreferenceLines = Annotated[
+    list[PreferenceLineOut], Field(max_length=PLAN_LINE_LIMIT), AfterValidator(_unique_row_ids),
+]
+
+
+class PlanPreferencesOut(ApiModel):
+    emphasize: PreferenceLines = Field(default_factory=list)
+    avoid: PreferenceLines = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_preferences(self) -> "PlanPreferencesOut":
+        _unique_preference_ids(self.emphasize, self.avoid)
+        return self
+
+
+class PlanPartEditInput(PlanMutation):
+    id: PlanRowId
+    heading: PlanHeading
+    goal: PlanWriterText
+    layout: PlanLayout | None
+    notes: PlanWriterText
+
+
+class PlanPartOut(OutlineItem):
+    id: PlanRowId
+    heading: PlanHeading
+    goal: PlanWriterText = ""
+    layout: PlanLayout | None = None
+    notes: PlanWriterText = ""
+    edited_fields: list[PlanPartField] = Field(default_factory=list)
+    refs: list[int] = Field(default_factory=list)
+    required_refs: list[int] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def _without_empty_layout(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data = super()._without_empty_layout(handler)
+        data["layout"] = self.layout
+        return data
+
+
+PlanOutlineInput = Annotated[
+    list[PlanPartEditInput], Field(min_length=1, max_length=MAX_OUTPUT_PARTS),
+    AfterValidator(_unique_row_ids),
+]
+PlanCountMode = Literal["auto", "target", "exact"]
+
+
+class PlanCountEditInput(PlanMutation):
+    mode: PlanCountMode
+    value: StrictInt | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def required_value(self) -> "PlanCountEditInput":
+        if self.mode == "auto" and "value" in self.model_fields_set:
+            raise ValueError("Automatic count has no value")
+        if self.mode != "auto" and self.value is None:
+            raise ValueError("Set a count for Target or Exact")
+        return self
+
+
+class PlanCountOut(ApiModel):
+    mode: PlanCountMode
+    value: StrictInt = Field(ge=1)
+
+
+class PlanScopeInput(OutputScope):
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def tidy_ids(self) -> "PlanScopeInput":
+        for name in ("source_ids", "unit_ids", "session_ids"):
+            ids = [item.strip() for item in getattr(self, name)]
+            if len(ids) != len(set(ids)):
+                raise ValueError(f"Duplicate IDs in {to_camel(name)}")
+            if self.mode == "library" and ids:
+                raise ValueError(f"{to_camel(name)} require selection scope")
+        return super().tidy_ids()
+
+
+class PlanOptionFields(PlanMutation):
+    focus: Annotated[str, Field(max_length=2_000), BeforeValidator(_strip_text)] = ""
+    title: Annotated[
+        str, Field(min_length=1, max_length=160), BeforeValidator(_strip_text),
+    ] | None = None
+    audience: ArtifactAudience = "scientist"
+    length: OutputLength | None = None
+    language: Annotated[
+        str, Field(min_length=1, max_length=100), BeforeValidator(_strip_text),
+    ] | None = None
+    use: DeckUse | None = None
+    theme: DeckThemeInput | None = None
+    design_version: Literal[0, 1] | None = None
+    voices: VoicePair | None = None
+    web: StrictBool = False
+    model: Annotated[
+        str, Field(min_length=1, max_length=200), BeforeValidator(_strip_text),
+    ] | None = None
+    effort: Effort | None = None
+
+    @field_validator("design_version", mode="before")
+    @classmethod
+    def strict_version(cls, value: Any) -> Any:
+        if value is not None and type(value) is not int:
+            raise ValueError("Expected an integer design version")
+        return value
+
+
+class PlanOptionsOut(PlanOptionFields):
+    type: str = Field(json_schema_extra={"enum": list(OUTPUT_TYPES)})
+    scope: OutputScope
+
+    @model_validator(mode="after")
+    def supports_options(self) -> "PlanOptionsOut":
+        item = OUTPUT_TYPES.get(self.type)
+        if item is None:
+            raise ValueError("Choose a known output type")
+        for name in ("use", "voices"):
+            if name not in item.options and getattr(self, name) is not None:
+                raise ValueError(f"{item.label} has no {name} option")
+        if not item.capabilities.design and (
+            self.theme is not None or self.design_version is not None
+        ):
+            raise ValueError("Only slides have a deck theme or design version")
+        return self
+
+
+class PlanSetupInput(PlanOptionsOut):
+    scope: PlanScopeInput
+    emphasize: PlanLines = Field(default_factory=list)
+    avoid: PlanLines = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_preferences(self) -> "PlanSetupInput":
+        _unique_preference_ids(self.emphasize, self.avoid)
+        return self
+
+
+class PlanProposalOut(ApiModel):
+    title: str
+    summary: str
+    angle: str
+    coverage: PlanLines
+    count: PlanCountOut
+    target_minutes: float | None = None
+
+
+class PlanDraftOut(ApiModel):
+    proposal: PlanProposalOut
+    outline: Annotated[list[PlanPartOut], AfterValidator(_unique_row_ids)] | None
+
+
+class ApprovedCreationPlanOut(PlanDraftOut):
+    plan_id: str
+    revision: str
+    approval_message_id: str
+    approved_at: str
+    material_key: str
+    options: PlanOptionsOut
+    preferences: PlanPreferencesOut
+
+
+class PlanOptionsPatchInput(PlanOptionFields):
+    scope: PlanScopeInput = Field(default_factory=PlanScopeInput)
+
+
+class WorkPlanPatchInput(PlanMutation):
+    base_edit_version: StrictInt = Field(ge=0)
+    options: PlanOptionsPatchInput = Field(default_factory=PlanOptionsPatchInput)
+    emphasize: PlanLines = Field(default_factory=list)
+    avoid: PlanLines = Field(default_factory=list)
+    outline: PlanOutlineInput = Field(default_factory=list)
+    coverage: PlanLines = Field(default_factory=list)
+    count: PlanCountEditInput = Field(default_factory=lambda: PlanCountEditInput(mode="auto"))
+
+    @model_validator(mode="after")
+    def unique_preferences(self) -> "WorkPlanPatchInput":
+        _unique_preference_ids(self.emphasize, self.avoid)
+        return self
+
+
+class _PlanChoiceAnswer(PlanMutation):
+    type: Literal["choice"]
+    index: StrictInt = Field(ge=0)
+
+
+class _PlanTextAnswer(PlanMutation):
+    type: Literal["text"]
+    text: str = Field(max_length=20_000)
+
+    @field_validator("text")
+    @classmethod
+    def needs_words(cls, text: str) -> str:
+        if not (text := text.strip()):
+            raise ValueError("Write an answer")
+        return text
+
+
+class _PlanSettingsAnswer(PlanMutation):
+    type: Literal["use_settings"]
+
+
+PlanAnswerInput = Annotated[
+    _PlanChoiceAnswer | _PlanTextAnswer | _PlanSettingsAnswer, Field(discriminator="type"),
+]
 
 
 class BuildOutputInput(OutputRequestInput):
@@ -1353,7 +1648,6 @@ class ArtifactOut(ArtifactSummaryOut):
 
 # The Artifacts agent's conversations, kept on the backend (see artifact_workspace) ------------
 
-ArtifactMark = Literal["you", "guessed", "edited"]
 # Where a part stands (see artifact_workspace.status), and the approach or the outline.
 ArtifactPartState = Literal["ok", "not_written", "out_of_date", "not_checked"]
 ArtifactStepState = Literal["ok", "not_written", "out_of_date"]
@@ -1366,7 +1660,7 @@ class ArtifactLineOut(ApiModel):
     mark: ArtifactMark
 
 
-class ArtifactBriefOut(ApiModel):
+class ArtifactBriefOut(PlanPreferencesOut):
     """What the conversation is for."""
 
     goal: ArtifactLineOut | None = None
@@ -1418,6 +1712,9 @@ class ArtifactWorkOut(ApiModel):
     approach: ArtifactStepOut
     outline: ArtifactStepOut
     parts: list[ArtifactPartOut]
+    pending: "ArtifactPendingOut | None" = None
+    options: PlanOptionsOut | None = None
+    plan: "WorkPlanOut | None" = None
 
 
 class ArtifactMessageOut(ApiModel):
@@ -1442,6 +1739,47 @@ class ArtifactPendingOut(ApiModel):
     message_id: str
 
 
+class PlanQuestionOut(ArtifactPendingOut):
+    plan_id: str
+    plan_revision: str
+
+
+class PlanAttemptOut(ApiModel):
+    request_id: str
+    phase: Literal["plan", "generate"]
+    state: Literal["running", "stopped", "failed", "interrupted"]
+    detail: str | None = None
+
+
+class WorkPlanOut(ApiModel):
+    plan_id: str
+    plan_revision: str
+    plan_status: PlanStatus
+    basis: PlanBasis
+    blocker: str | None
+    options: PlanOptionsOut
+    preferences: PlanPreferencesOut
+    proposal: PlanProposalOut | None
+    outline: list[PlanPartOut] | None
+    pending: PlanQuestionOut | None
+    attempt: PlanAttemptOut | None
+    approved_revision: str | None
+
+
+class StudioWorkSummaryOut(ApiModel):
+    work_key: str
+    plan_id: str | None
+    plan_revision: str | None
+    type: str
+    title: str
+    status: PlanStatus
+    basis: PlanBasis
+    version_id: str | None
+    lineage_id: str | None
+    updated_at: str
+    attempt: PlanAttemptOut | None
+
+
 class ArtifactLastTurnOut(ApiModel):
     kind: str
     error: str | None = None
@@ -1460,6 +1798,7 @@ class ArtifactConversationSummaryOut(ApiModel):
     shape: ShapeId | None = None
     lineage_id: str | None = None
     last_turn: ArtifactLastTurnOut | None = None
+    studio_works: list[StudioWorkSummaryOut] = Field(default_factory=list)
 
 
 class ArtifactConversationOut(ArtifactConversationSummaryOut):
@@ -1472,6 +1811,7 @@ class ArtifactConversationOut(ArtifactConversationSummaryOut):
     pending: ArtifactPendingOut | None = None
     archived: bool = False
     created_at: str
+    edit_version: int = 0
 
 
 class CreateArtifactConversationInput(ApiModel):
@@ -1503,6 +1843,8 @@ class EditArtifactBriefInput(ApiModel):
     constraints: list[str] | None = Field(default=None, max_length=8)
     open: list[str] | None = Field(default=None, max_length=8)
     spec: ArtifactSpecInput | None = None
+    emphasize: PlanLines = Field(default_factory=list)
+    avoid: PlanLines = Field(default_factory=list)
 
     @field_validator("constraints", "open")
     @classmethod
@@ -1510,6 +1852,11 @@ class EditArtifactBriefInput(ApiModel):
         if lines is not None and any(len(line) > 300 for line in lines):
             raise ValueError("A line is at most 300 characters")
         return lines
+
+    @model_validator(mode="after")
+    def unique_preferences(self) -> "EditArtifactBriefInput":
+        _unique_preference_ids(self.emphasize, self.avoid)
+        return self
 
 
 class ArtifactFocusInput(ApiModel):
@@ -1529,7 +1876,7 @@ class OutlineRebuildInput(ApiModel):
 ARTIFACT_TURN_FIELDS = {"build", "rebuild", "model", "effort", "web", "targetLineageId"}
 
 
-class ArtifactTurnInput(ApiModel):
+class SavedArtifactTurnInput(ApiModel):
     """One message of the user to the agent. ``answer`` replies to its question, ``start`` is
     "just start" (no more questions), ``continue`` picks up a paused turn."""
 
@@ -1545,7 +1892,7 @@ class ArtifactTurnInput(ApiModel):
     target_lineage_id: str | None = Field(default=None, min_length=1, max_length=80)
 
     @model_validator(mode="after")
-    def needs_words(self) -> "ArtifactTurnInput":
+    def needs_words(self) -> "SavedArtifactTurnInput":
         self.text = self.text.strip()
         if (self.kind == "rebuild") != (self.rebuild is not None):
             raise ValueError("An outline rebuild needs the current artifact and its outline")
@@ -1574,6 +1921,107 @@ class ArtifactTurnInput(ApiModel):
         return fields
 
 
+class _CreationTurnInput(PlanMutation):
+    client_request_id: str = Field(min_length=8, max_length=128)
+    plan_id: PlanRowId
+
+    def request_fields(self) -> dict:
+        return self.model_dump(
+            mode="json", by_alias=True, exclude_unset=True,
+            exclude={"kind", "client_request_id", "text"},
+        )
+
+
+PlanRevision = Annotated[str, Field(pattern=r"^p[0-9]+-[a-f0-9]{64}$")]
+
+
+class InitialPlanTurnInput(_CreationTurnInput):
+    kind: Literal["plan"]
+    setup: PlanSetupInput
+    initial_outline: PlanOutlineInput = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def check_outline(self) -> "InitialPlanTurnInput":
+        if "initial_outline" not in self.model_fields_set:
+            return self
+        item = OUTPUT_TYPES[self.setup.type]
+        if not item.capabilities.outline:
+            raise ValueError(f"{item.label} uses coverage topics")
+        if error := item.part_count_error(len(self.initial_outline)):
+            raise ValueError(error)
+        for position, row in enumerate(self.initial_outline):
+            if error := item.capabilities.outline_layout_error(row.layout, position):
+                raise ValueError(f"{row.id} layout: {error}")
+        return self
+
+
+class RevisePlanTurnInput(_CreationTurnInput):
+    kind: Literal["plan"]
+    plan_revision: PlanRevision
+    text: Annotated[str, Field(max_length=20_000), AfterValidator(str.strip)] = ""
+
+
+class AnswerPlanTurnInput(_CreationTurnInput):
+    kind: Literal["answer"]
+    plan_revision: PlanRevision
+    question_message_id: PlanRowId
+    answer: PlanAnswerInput
+
+
+class ApprovePlanTurnInput(_CreationTurnInput):
+    kind: Literal["approve"]
+    plan_revision: PlanRevision
+
+
+_CREATION_TURN_MARKERS = {
+    "planId", "plan_id", "planRevision", "plan_revision", "setup", "answer",
+    "questionMessageId", "question_message_id", "initialOutline", "initial_outline",
+}
+
+
+def _artifact_turn_branch(value: Any) -> str | None:
+    if isinstance(value, dict):
+        kind = value.get("kind", "message")
+        if kind == "plan":
+            return "setup" if "setup" in value else "plan"
+        if kind == "approve":
+            return "approve"
+        if _CREATION_TURN_MARKERS.intersection(value):
+            return "answer" if kind == "answer" else None
+        return "saved"
+    if isinstance(value, InitialPlanTurnInput):
+        return "setup"
+    if isinstance(value, _CreationTurnInput):
+        return value.kind
+    if isinstance(value, SavedArtifactTurnInput):
+        return "saved"
+    return None
+
+
+ArtifactTurnBranch = Annotated[
+    Annotated[SavedArtifactTurnInput, Tag("saved")]
+    | Annotated[InitialPlanTurnInput, Tag("setup")]
+    | Annotated[RevisePlanTurnInput, Tag("plan")]
+    | Annotated[AnswerPlanTurnInput, Tag("answer")]
+    | Annotated[ApprovePlanTurnInput, Tag("approve")],
+    Discriminator(_artifact_turn_branch),
+]
+
+
+class ArtifactTurnInput(RootModel[ArtifactTurnBranch]):
+    """One request envelope. Use ``root`` to dispatch the validated operation."""
+
+    def __getattr__(self, name: str) -> Any:
+        # Saved-work routes and their compatibility build adapter still access the old fields.
+        branch = self.__dict__.get("root")
+        if branch is not None and name in type(branch).model_fields:
+            return getattr(branch, name)
+        return super().__getattr__(name)
+
+    def request_fields(self) -> dict:
+        return self.root.request_fields()
+
+
 class ArtifactChangeOut(ApiModel):
     """One thing a saved version changed. ``position`` is in the new version (none for a part
     that was removed), ``was`` in the one before (none for a new part)."""
@@ -1593,12 +2041,14 @@ class ArtifactQuestionOut(ApiModel):
 class ArtifactTurnOut(ApiModel):
     """How a turn ended: it asked, answered, saved a version, replied, or paused."""
 
-    outcome: Literal["asked", "answered", "saved", "replied", "paused"]
+    outcome: Literal["asked", "answered", "saved", "replied", "paused", "planned"]
     reply: str
     question: ArtifactQuestionOut | None = None
     artifact: ArtifactOut | None = None
     changes: list[ArtifactChangeOut] = Field(default_factory=list)
     message: ArtifactMessageOut | None
+    plan: WorkPlanOut | None = Field(default=None, exclude_if=lambda value: value is None)
+    edit_version: int | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ImportedArtifactTurn(ApiModel):

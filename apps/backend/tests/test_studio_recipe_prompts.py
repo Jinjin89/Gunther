@@ -1,7 +1,11 @@
 """The default Report retains the planning, writing and review text from before the catalog."""
 
+import json
+
 from gunther.output_types import output_type_for
+from gunther.outputs import Spec
 from gunther.studio import prompts
+from gunther.studio.requests import material_request
 
 ORIGINAL_REPORT_STORY = """\
 You are the editor of a top consulting firm's research practice, planning a written report \
@@ -130,3 +134,17 @@ def test_default_report_prompt_text():
     )
     assert prompts.CRITIC.format(**review, recipe=f"\n\n{report.plan}") == expected_critic
     assert prompts.CRITIC.format(**review, recipe=output_type_for("slides").plan) == original_critic
+
+
+def test_preferences_are_ordered_json_in_the_task_and_leave_evidence_unchanged():
+    spec = Spec("report", "student", emphasize=("Prior \"result\"", "Details"), avoid=("猜测",))
+    evidence = "[1] A passage."
+    system, prompt = material_request(evidence, "Draft the report.", spec)
+    material, task = prompt.split(prompts.TASK_BOUNDARY)
+    instruction, preferences = task.split("\n\nOutput preferences:\n")
+    assert system == prompts.STUDIO_BASE
+    assert material == f"The material:\n\n{evidence}"
+    assert instruction == "Draft the report."
+    assert json.loads(preferences) == {
+        "emphasize": ['Prior "result"', "Details"], "avoid": ["猜测"],
+    }

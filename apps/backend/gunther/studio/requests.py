@@ -8,6 +8,7 @@ from itertools import islice
 from threading import Lock, local
 
 from gunther.answer_runs import check_stop
+from gunther.outputs import Spec
 from gunther.studio import prompts as P
 
 WORKERS = 12
@@ -28,9 +29,11 @@ def _in_context(function):
     return lambda *args: context.copy().run(function, *args)
 
 
-def material_request(material: str, task: str) -> tuple[str, str]:
+def material_request(material: str, task: str, spec: Spec | None = None) -> tuple[str, str]:
     """One opening for every step reading the same build's material."""
 
+    if spec is not None:
+        task = P.with_preferences(task, spec)
     return P.STUDIO_BASE, "The material:\n\n" + material + P.TASK_BOUNDARY + task
 
 

@@ -9,11 +9,13 @@ from collections.abc import Sequence
 
 from gunther.llm import ModelError
 from gunther.llm import unfence as _unfence
+from gunther.markup import markdown_lines
 from gunther.output_document import project_outline
 from gunther.output_types import SHAPES
 from gunther.outputs import BuiltOutput, Events, Planned, Pool, split_document
 from gunther.studio import format as fmt
 from gunther.studio import prompts as P
+from gunther.studio import science as S
 from gunther.studio.reference import DECK_FORMAT, READ_NOTE, STUDY_DECK_FORMAT, report_format
 from gunther.studio.requests import WORKERS, material_request, warm_map
 from gunther.studio.state import (
@@ -24,6 +26,7 @@ from gunther.studio.state import (
     Run,
     StorySlide,
     _keeps_heading,
+    _keeps_layout,
     _matches_plan,
     _validate_count,
     _validate_storyline,
@@ -42,7 +45,14 @@ LENGTH_TARGETS = {
 
 
 def _outline_text(plan: Sequence[Planned]) -> str:
-    return "\n".join(f"{n}. {p.heading} — goal: {p.goal}" for n, p in enumerate(plan, 1))
+    return json.dumps(
+        [
+            {"id": p.id, "heading": p.heading, "goal": p.goal, "layout": p.layout or None,
+             "notes": p.notes}
+            for p in plan
+        ],
+        ensure_ascii=False,
+    )
 
 
 def source_images_kept(before: str, after: str) -> bool:
@@ -60,10 +70,22 @@ def _report_story_text(story: ReportStory, summary_box: bool) -> str:
         line = f"{number}. {part.heading} — job: {part.job}"
         if part.exhibits:
             line += f" — exhibits: {'; '.join(part.exhibits)}"
+        if part.notes:
+            line += f" — writer notes: {part.notes}"
         lines.append(line + " " + "".join(f"[{r}]" for r in part.refs))
         if number == 1 and summary_box:
             lines.extend(f"  - {point}" for point in story.summary_points)
     return "\n".join(lines)
+
+
+def report_exhibit_counts(run: Run) -> list[int]:
+    story = run.story
+    if not isinstance(story, ReportStory):
+        return []
+    return [
+        sum(bool(exhibit.strip()) for exhibit in part.exhibits)
+        for part in story.parts(run.output_type.summary_box)
+    ]
 
 
 class StudioDrafting:
@@ -80,7 +102,7 @@ class StudioDrafting:
             use_line=f"Use: {run.use}." if run.use else "",
             kind=shape.name,
         )
-        memo = self._json(model, Memo, *material_request(material, system), effort)
+        memo = self._json(model, Memo, *material_request(material, system, spec), effort)
         self._stage(emit, "memo", "Finding what is worth saying", "done", memo.answer[:200])
         emit({"type": "memo", "memo": memo.model_dump()})
         return memo
@@ -124,7 +146,7 @@ class StudioDrafting:
     def storyline(
         self, model, effort, run: Run, material: str, emit: Events, *,
         previous_outline: Sequence[Planned] = (), instruction: str = "",
-        preview_outline: bool = True,
+        preview_outline: bool = True, reviewed_inputs: str = "",
     ) -> DeckStory | ReportStory:
         spec = run.spec
         output_type = run.output_type
@@ -154,14 +176,25 @@ class StudioDrafting:
                 memo=memo,
                 recipe=output_type.plan,
             )
-            if not output_type.summary_box:
+            if output_type.summary_box:
+                system += (
+                    "\nKeep the summary in the summary fields. It is the first counted section; "
+                    "return its writer notes in summary_notes, its evidence in summary_refs "
+                    "and evidence the summary depends on in summary_required_refs. "
+                    "Use sections for the following rows only."
+                )
+            else:
                 system += "\n\n" + P.WITHOUT_SUMMARY
-        first = "summary" if output_type.summary_box else "first section"
+        first = output_type.first_part_role or "first section"
         system += "\n\n" + P.STORY_LENGTH.format(
             parts="slides" if spec.kind == "slides" else "report sections",
-            first="title slide" if spec.kind == "slides" else first,
+            first=first.lower(),
         )
-        system += f"\nThe outline can have up to {output_type.part_limit} {shape.unit_label}s."
+        system += (
+            f"\nThe outline can have up to {output_type.part_limit} {shape.unit_label}s. "
+            "Return each row's evidence numbers in refs. In required_refs, identify the "
+            "subset needed to support the row's main claim or exhibit."
+        )
         system += "\n" + P.language_instruction(spec.language, run.model_language)
         if run.plan:
             system += (
@@ -170,7 +203,8 @@ class StudioDrafting:
             )
         if previous_outline:
             summary_id = (
-                "Return the report summary's id as summary_id. " if output_type.summary_box else ""
+                "Return the report summary's id as summary_id. "
+                if output_type.summary_box else ""
             )
             system += (
                 "\nThe existing outline, in order. Preserve headings, goals and order where "
@@ -178,15 +212,14 @@ class StudioDrafting:
                 "each continuing part, even if its title or position changes. Use null for a new "
                 f"part and omit removed parts. {summary_id}"
                 "Keep only claims supported by the selected material.\n"
-                + json.dumps(
-                    [{"id": p.id, "heading": p.heading, "goal": p.goal} for p in previous_outline],
-                    ensure_ascii=False,
-                )
+                + _outline_text(previous_outline)
             )
         if instruction:
             system += "\nRequested change to the outline: " + instruction
+        if run.reviewed:
+            system += "\n" + P.OUTLINED_PROPOSAL + reviewed_inputs
         figures = self._figures(material)
-        system, prompt = material_request(material, system + figures)
+        system, prompt = material_request(material, system + figures, spec)
         story = self._json(model, schema, system, prompt, effort)
         length = story.model_dump(include={"requested_count", "requested_minutes"})
         run.reviews = []
@@ -227,9 +260,10 @@ class StudioDrafting:
                 })
                 break
         if isinstance(story, DeckStory):
-            story = self._tidy_deck_story(story)
+            story = self._tidy_deck_story(story, automatic_layout=run.reviewed)
         story = story.model_copy(update=length)
-        _validate_storyline(run, story)
+        if not run.reviewed:
+            _validate_storyline(run, story)
         self._stage(emit, "story", "Planning the storyline", "done", story.title)
         emit({"type": "storyline", "storyline": story.model_dump()})
         if not preview_outline:
@@ -249,12 +283,13 @@ class StudioDrafting:
         return story
 
     @staticmethod
-    def _tidy_deck_story(story: DeckStory) -> DeckStory:
+    def _tidy_deck_story(story: DeckStory, *, automatic_layout: bool = False) -> DeckStory:
         slides = [
-            replace_layout(slide, slide.layout if slide.layout in fmt.LAYOUTS else "points")
+            slide if slide.layout in fmt.LAYOUTS or (automatic_layout and slide.layout is None)
+            else replace_layout(slide, "points")
             for slide in story.slides
         ]
-        if slides[0].layout != "title":
+        if slides[0].layout != "title" and not (automatic_layout and slides[0].layout is None):
             slides.insert(0, StorySlide(title=story.title, layout="title", job=story.subtitle))
         for index, slide in enumerate(slides[1:], 1):
             if slide.layout == "title":
@@ -290,7 +325,8 @@ class StudioDrafting:
         )
         try:
             return self._json(
-                model, Review, *material_request(material, system + "\n\nReview it now."), "low"
+                model, Review,
+                *material_request(material, system + "\n\nReview it now.", spec), "low",
             )
         except ModelError as error:
             logger.info("The storyline review failed: %s", error)
@@ -316,7 +352,8 @@ class StudioDrafting:
         story_text = "\n".join(
             [f"Deck title: {story.title}", f"Subtitle: {story.subtitle}"]
             + [
-                f"{n}. [{s.layout}] {s.title} — job: {s.job} {''.join(f'[{r}]' for r in s.refs)}"
+                f"{n}. [{s.layout or 'automatic'}] {s.title} — job: {s.job} "
+                f"{''.join(f'[{r}]' for r in s.refs)}"
                 for n, s in enumerate(story.slides, 1)
             ]
         )
@@ -339,9 +376,15 @@ class StudioDrafting:
         )
         if run.plan:
             system += "\nUse the approved slide titles in order:\n" + _outline_text(run.plan)
+            if run.reviewed:
+                system += "\n" + P.APPROVED_OUTLINE
         if story.requested_minutes is not None:
-            system += f"\nWrite speaker notes for a talk lasting {story.requested_minutes} minutes."
-        system, prompt = material_request(material, system + self._figures(material))
+            system += (
+                f"\nWrite speaker notes for a talk lasting {story.requested_minutes:g} minutes."
+            )
+        if run.study:
+            system += "\n" + S.PANEL_ASSIGNMENTS
+        system, prompt = material_request(material, system + self._figures(material), spec)
         text = self._text(model, system, prompt, effort, max_tokens=24_000)
         deck = _unfence(text)
         slides = fmt.split_slides(deck)
@@ -360,7 +403,7 @@ class StudioDrafting:
             slides += fmt.split_slides(_unfence(more))
         slides = self._title_marker([fmt.strip_labels(slide) for slide in slides], theme)
         _validate_count(run, story, len(slides), "written deck")
-        if not _matches_plan(run, slides):
+        if not _matches_plan(run, slides, layouts=False):
             raise ModelError("The written deck did not follow the approved outline.")
         self._stage(emit, "write", "Writing the slides", "done", f"{len(slides)} slides")
         return "\n\n---\n\n".join(slides)
@@ -387,12 +430,19 @@ class StudioDrafting:
         )
         errors: dict[int, str] = {}
         for _ in range(2):
-            found = SHAPES[run.spec.kind].format_check(
+            slides = fmt.split_slides(deck)
+            found = dict(SHAPES[run.spec.kind].format_check(
                 deck, read=read, notes_required=notes, scientific=bool(run.study)
-            )
+            ))
+            for index, slide in enumerate(slides):
+                if not _keeps_layout(run, index, slide):
+                    layout = run.plan[index].layout
+                    requirement = (
+                        f"the approved {layout} layout" if layout else "a registered layout"
+                    )
+                    found.setdefault(index + 1, []).append(f"Use {requirement} for this slide.")
             if not found:
                 break
-            slides = fmt.split_slides(deck)
 
             def fix(
                 item: tuple[int, list[str]], slides: list[str] = slides
@@ -400,7 +450,7 @@ class StudioDrafting:
                 n, problems = item
                 system = P.FIX_SLIDES.format(format=guide, problems="")
                 if run.study:
-                    system += "\n" + P.SCIENCE_TRUTH
+                    system += "\n" + P.SCIENCE_TRUTH + "\n" + S.PANEL_ASSIGNMENTS
                 prompt = (
                     f"Slide {n} problems:\n"
                     + "\n".join(f"- {p}" for p in problems)
@@ -411,7 +461,9 @@ class StudioDrafting:
                     # A format fix is mechanical: little thinking, so its 4,000 tokens are
                     # spent on the slide (high thinking ran out of room and asked again).
                     again = fmt.split_slides(
-                        _unfence(self._text(model, system, prompt, "low", 4000))
+                        _unfence(self._text(
+                            model, system, P.with_preferences(prompt, run.spec), "low", 4000,
+                        ))
                     )
                 except ModelError as error:
                     logger.info("Fixing slide %d failed: %s", n, error)
@@ -422,11 +474,15 @@ class StudioDrafting:
                 if not source_images_kept(slides[n - 1], text):
                     return None, None
                 if n == 1:
-                    text = self._title_marker(
-                        [text], fmt.parse_slide(slides[0]).attrs.get("theme", "paper")
-                    )[0]
+                    theme = run.spec.theme
+                    if theme not in fmt.THEMES:
+                        theme = fmt.parse_slide(slides[0]).attrs.get("theme", "paper")
+                    text = self._title_marker([text], theme)[0]
+                if not _keeps_layout(run, n - 1, text):
+                    return None, None
                 return text, None
 
+            found = list(found.items())
             fixed = warm_map(fix, found, WORKERS)
             changed = False
             for (n, _), (text, request_error) in zip(found, fixed, strict=True):
@@ -469,6 +525,27 @@ class StudioDrafting:
             notes.append({"step": "format", "label": label, "reason": reason[:600]})
         self.skipped.extend(notes)
 
+    @staticmethod
+    def _report_plan_problems(run: Run, preamble: str, parts: Sequence[str]) -> list[str]:
+        if not _matches_plan(run, parts):
+            return ["Follow the exact approved section headings and order."]
+        problems = []
+        if run.output_type.summary_box:
+            if any(line.lstrip().startswith(":::") for line, fenced in markdown_lines(preamble)
+                   if not fenced):
+                problems.append("Place the summary and any callouts inside the approved sections.")
+            if not parts or not fmt.report_section_has_content(parts[0]):
+                problems.append(
+                    "Write the executive summary under the first approved heading "
+                    "with visible content."
+                )
+        for number, (part, count) in enumerate(
+            zip(parts, report_exhibit_counts(run), strict=False), 1,
+        ):
+            if problem := fmt.planned_exhibit_problem(fmt.report_exhibits(part), count, number):
+                problems.append(problem)
+        return problems
+
     def write_report(self, model, effort, run: Run, pool: Pool, material: str, emit: Events) -> str:
         spec = run.spec
         output_type = run.output_type
@@ -487,19 +564,24 @@ class StudioDrafting:
             recipe=output_type.write,
         )
         if run.plan:
-            system += "\nUse exactly these approved section headings in order. "
+            system += "\nUse exactly these approved section headings in order.\n" + _outline_text(
+                run.plan,
+            )
             if output_type.summary_box:
-                system += "The first section is the summary."
-            system += "\n" + _outline_text(run.plan)
-        system, prompt = material_request(material, system + self._figures(material))
+                system += (
+                    "\nThe first section is the executive summary. Write it under its approved "
+                    "heading, with its goal and writer notes. Keep the preamble to the report "
+                    "title and its introductory line."
+                )
+            if run.reviewed:
+                system += "\n" + P.APPROVED_OUTLINE
+        system, prompt = material_request(material, system + self._figures(material), spec)
         text = _unfence(self._text(model, system, prompt, effort, max_tokens=24_000))
-        if not _matches_plan(run, split_document(text, "report")[1]):
-            raise ModelError("The written report did not follow the approved outline.")
+
         def format_problems(report: str) -> list[str]:
             return SHAPES[spec.kind].format_check(
-                report, require_exhibits=output_type.require_exhibits,
-                summary_box=output_type.summary_box,
-            )
+                report, summary_box=output_type.summary_box,
+            ) + self._report_plan_problems(run, *split_document(report, "report"))
 
         problems = format_problems(text)
         if problems:
@@ -515,10 +597,7 @@ class StudioDrafting:
                         max_tokens=24_000,
                     )
                 )
-                if (
-                    fixed.count("\n## ") >= text.count("\n## ") - 1
-                    and _matches_plan(run, split_document(fixed, "report")[1])
-                ):
+                if not self._report_plan_problems(run, *split_document(fixed, "report")):
                     text = fixed
             except ModelError as error:
                 logger.info("Fixing the report's form failed: %s", error)
@@ -537,7 +616,8 @@ class StudioDrafting:
                 )
         if not text.lstrip().startswith("<!-- report: v2 -->"):
             text = "<!-- report: v2 -->\n" + text.lstrip()
-        text = fmt.ensure_summary_mark(text, enabled=output_type.summary_box)
+        if problems := self._report_plan_problems(run, *split_document(text, "report")):
+            raise ModelError(" ".join(problems))
         text = fmt.cite_exhibit_rows(fmt.cite_captions(text))
         self._stage(emit, "write", "Writing the report", "done")
         return text

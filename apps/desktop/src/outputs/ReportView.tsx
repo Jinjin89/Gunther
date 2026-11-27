@@ -160,7 +160,7 @@ function Report({ artifact, type, presentation = "read", onCite, onAsk, onPart, 
         </div>}
         {reading && <OutputPartTools position={index} onAsk={point} changed={changed} label="Refine section" />}
       </div>
-      <div id={contentId} className={section.summary ? "rp-summary" : "rp-prose"} hidden={!open}>
+      <div id={contentId} className={`${section.summary ? "rp-summary" : "rp-prose"}${disclosure ? " rp-answer" : ""}`} hidden={!open}>
         <ReportBlocks blocks={section.blocks} presentation={presentation} {...references} />
       </div>
       {presentation !== "print" && <div className="rp-part-status"><SectionStatus info={artifact.sections[index]} /></div>}
@@ -168,7 +168,8 @@ function Report({ artifact, type, presentation = "read", onCite, onAsk, onPart, 
   };
 
   return <CitationDetails.Provider value={artifact.citations}>
-    <div ref={body} className="outputs-body rp" data-recipe={recipe} data-presentation={presentation}
+    <div ref={body} className={presentation === "print" ? "outputs-body rp" : "outputs-body rp reader-track"}
+      data-track={presentation === "print" ? undefined : "report"} data-recipe={recipe} data-presentation={presentation}
       lang={languageTag(artifact.provenance?.language)}>
       {doc.preamble.length > 0 && <div className={doc.sections.length ? "rp-preamble" : "rp-prose"}>
         <ReportBlocks blocks={doc.preamble} presentation={presentation} {...references} />

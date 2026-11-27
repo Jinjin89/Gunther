@@ -22,13 +22,20 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from evals.artifacts.run import Counter
+from evals.artifacts.run import (
+    Counter,
+    copy_library,
+    describe,
+    new_conversation_id,
+    plan_and_approve,
+)
 from evals.ask.run import (
     NO_MODEL,
     RESULTS,
@@ -130,9 +137,10 @@ def read_stream(
                 data = json.loads(line[6:])
                 last = (name, data)
                 if name != "text":
-                    events.append(
-                        {"event": name, **{k: v for k, v in data.items() if k != "content"}}
-                    )
+                    event = {"event": name, **{k: v for k, v in data.items() if k != "content"}}
+                    if artifact := event.get("artifact"):
+                        event["artifact"] = {k: v for k, v in artifact.items() if k != "content"}
+                    events.append(event)
     return last
 
 
@@ -224,11 +232,14 @@ def build_one(
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="gunther-quality-") as scratch:
         copy = Path(scratch) / "library"
-        shutil.copytree(template, copy)
+        copy_library(template, copy)
         settings_file = write_settings_file(
             Path(scratch) / "service-settings.json", options.settings
         )
-        app = make_app(copy, settings_file, token, factory, {**(overrides or {}), "processing_worker_enabled": False})  # fmt: skip
+        app = make_app(
+            copy, settings_file, token, factory,
+            {**(overrides or {}), "library_root": None, "processing_worker_enabled": False},
+        )
         with TestClient(app) as client:
             workspace = client.get("/api/workspace/bootstrap", headers=headers).json()[
                 "workspaceId"
@@ -237,20 +248,22 @@ def build_one(
             service = client.app.state.knowledge_service
             sources, source_figures = source_material(service, info["knowledgeBaseId"])
             counter = Counter(client.app.state.models)
-            body: dict[str, Any] = {
-                "clientRequestId": f"quality_{secrets.token_hex(6)}",
-                "kind": brief.kind, "audience": brief.audience, "brief": brief.text(),
+            setup: dict[str, Any] = {
+                "type": brief.kind, "audience": brief.audience, "focus": brief.text(),
                 "scope": {"mode": "library"}, "model": model,
             }  # fmt: skip
             if brief.kind == "slides":
-                body["use"] = brief.use or "talk"
+                setup["use"] = brief.use or "talk"
             if options.effort:
-                body["effort"] = options.effort
+                setup["effort"] = options.effort
             events: list[dict] = []
-            url = f"/api/knowledge-bases/{info['knowledgeBaseId']}/outputs/build/stream"
+            url = (f"/api/knowledge-bases/{info['knowledgeBaseId']}/artifact-conversations/"
+                   f"{new_conversation_id()}/messages/stream")
             say(f"  building {job.name} ...")
             with counter.window() as used:
-                name, data = read_stream(client, url, headers, body, events)
+                name, data = plan_and_approve(
+                    partial(read_stream, client, url, headers, events=events), setup,
+                )
             record["seconds"] = round(used.seconds, 1)
             record["calls"], record["tokens"] = used.calls, used.tokens
     (folder / "events.json").write_text(
@@ -258,11 +271,9 @@ def build_one(
     )
     record["wallSeconds"] = round(time.perf_counter() - started, 1)
     if name != "done":
-        record["error"] = (
-            f"HTTP {data.get('status')}: {str(data.get('detail', ''))[:400]}"
-            if name == "error" else f"The build ended with {name}."
-        )  # fmt: skip
+        record["error"] = describe(name, data)
         return record
+    data = data["artifact"]
     content = data["content"]
     short, full = citation_files(data.get("citations") or [])
     (folder / "content.md").write_text(content, encoding="utf-8")
@@ -547,6 +558,7 @@ def run_quality(
     material_file: Path = materials.MATERIALS,
     say: Callable[[str], None] = print,
 ) -> Path:
+    overrides = {**(overrides or {}), "library_root": None}
     all_sets = materials.load_sets(material_file)
     unknown = set(options.sets) - {item.id for item in all_sets}
     if unknown:

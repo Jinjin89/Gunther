@@ -12,7 +12,7 @@ import re
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
@@ -63,6 +63,9 @@ from gunther.studio import design as designing
 from gunther.studio import format as studio_fmt
 from gunther.studio.format import without_design
 from gunther.studio.work import StudioWorkAgents, _single_part, slide_in_deck_format
+
+if TYPE_CHECKING:
+    from gunther.studio.pipeline import Prepared
 
 # What the writer is asked when one passage of a part is changed. Its first sentence is its
 # own, so that a test can tell this request from the others.
@@ -135,6 +138,7 @@ class WorkSteps:
         emit: Events | None = None,
         *,
         read_material: Callable[[Pool], Notes] | None = None,
+        prepare_work: Callable[[Work, Pool], Prepared] | None = None,
         evidence_allowed: Callable[[Evidence], bool] | None = None,
         report_v2: bool = True,
         searched: list[SearchHit] | None = None,
@@ -147,6 +151,7 @@ class WorkSteps:
         self.pool = pool
         self.notes = notes
         self.read_material = read_material
+        self.prepare_work = prepare_work
         self.evidence_allowed = evidence_allowed
         self.report_v2 = report_v2
         self.searched = searched if searched is not None else []
@@ -226,7 +231,7 @@ class WorkSteps:
 
     def _planned(self) -> list[Planned]:
         return [
-            Planned(item.heading, item.goal, id=item.id, layout=item.layout)
+            Planned(item.heading, item.goal, item.layout, tuple(item.refs), item.id, item.notes)
             for item in self.work.outline
         ]
 
@@ -269,9 +274,14 @@ class WorkSteps:
 
     # 1. Understand --------------------------------------------------------------------------
 
-    def _planning_material(self) -> tuple[Pool, Notes]:
+    def _planning_pool(self) -> Pool:
         made = Pool(self.pool.limit)
-        made.restore(self.pool.items)
+        made.restore(self._part_pool().items)
+        made.top = self.pool.top
+        return made
+
+    def _planning_material(self) -> tuple[Pool, Notes]:
+        made = self._planning_pool()
         notes = self.read_material(made) if self.read_material else self.notes
         return made, notes
 
@@ -287,20 +297,36 @@ class WorkSteps:
 
     def understand(self, focus: str | None = None) -> None:
         work = self.work
-        made, notes = self._planning_material()
-        self._load_use()
-        spec = spec_of(self.brief, work)
-        if focus:
-            spec = replace(spec, brief=f"{spec.brief}\nFocus for this reading: {focus}".lstrip())
-        purpose = (work.approach or {}).get("purpose")
-        with self._noting():
-            approach = self.agents.understand_work(
-                self.model, self.effort, spec, made, notes, self.emit, purpose,
+        if self.prepare_work is None:
+            made, notes = self._planning_material()
+            self._load_use()
+            spec = spec_of(self.brief, work)
+            if focus:
+                brief = f"{spec.brief}\nFocus for this reading: {focus}".lstrip()
+                spec = replace(spec, brief=brief)
+            purpose = (work.approach or {}).get("purpose")
+            with self._noting():
+                approach = self.agents.understand_work(
+                    self.model, self.effort, spec, made, notes, self.emit, purpose,
+                )
+        else:
+            # A read can narrow its focus without changing the user's plan options.
+            target = (
+                work.model_copy(update={"spec": work.spec.model_copy(update={"focus": focus})})
+                if focus else work
             )
+            prepared = self.prepare_work(target, self._planning_pool())
+            made = prepared.pool
+            for item in made.items:
+                if self.pool.adopt(item).ref != item.ref:
+                    raise ValueError("The evidence pool changed. Read the material again.")
+            work.studio_progress = prepared.progress
+            approach = self.agents._saved_approach(prepared.run, made)
         self._keep_studio_approach(approach, made)
-        self._stamp_understanding()
+        # Shared preparation has already applied the plan's effective use.
+        self._stamp_understanding(infer_use=self.prepare_work is None)
 
-    def _stamp_understanding(self) -> None:
+    def _stamp_understanding(self, *, infer_use: bool = True) -> None:
         work = self.work
         understood = work.approach or {}
         rows = (understood.get("memo") or {}).get("insights") or (
@@ -308,7 +334,7 @@ class WorkSteps:
         ).get("claims", [])
         self._keep_cards(rows)
         work.approach_top = self.pool.top
-        if understood.get("use") and work.spec.use is None:
+        if infer_use and understood.get("use") and work.spec.use is None:
             work.spec.use = Line(text=understood["use"], mark="guessed")
         work.approach_inputs = digest_approach_inputs(self.brief, work)
 
@@ -352,14 +378,10 @@ class WorkSteps:
         self._load_use()
         spec = spec_of(self.brief, work)
         saved = work.approach
-        previous = [
-            Planned(item.heading, item.goal, id=item.id, refs=tuple(item.refs))
-            for item in work.outline
-        ]
         with self._noting():
             title, planned, approach, refreshed = self.agents.replan_work(
                 self.model, self.effort, spec, made, notes, self.emit, saved, work.cards,
-                previous, instruction,
+                self._planned(), instruction,
             )
         by_id = {item.id: item for item in work.outline}
         continued = [plan.id for plan in planned if plan.id]
@@ -383,12 +405,17 @@ class WorkSteps:
             cover_changed = (
                 old is not None and self._deck and (index == 0) != (work.outline[0] is old)
             )
-            same_plan = old is not None and (old.heading, old.goal) == (plan.heading, plan.goal)
+            notes = plan.notes
+            if old and ("notes" in old.edited_fields or not notes):
+                notes = old.notes
+            same_plan = old is not None and (old.heading, old.goal, old.notes) == (
+                plan.heading, plan.goal, notes,
+            )
             layout = plan.layout
             if part and self._deck and same_plan and not cover_changed:
                 layout = studio_fmt.parse_slide(part.text).layout or plan.layout
             item = ItemRec(
-                id=identity, heading=plan.heading, goal=plan.goal, layout=layout,
+                id=identity, heading=plan.heading, goal=plan.goal, layout=layout, notes=notes,
                 refs=list(dict.fromkeys(refs)), cards=list(old.cards) if old else [],
             )
             if part and old:
@@ -583,6 +610,7 @@ class WorkSteps:
                 pool,
                 goal=item.goal,
                 layout=item.layout,
+                writer_notes=item.notes,
                 instruction=instruction if part is not None else None,
                 refs=refs,
                 notes=self.notes,
@@ -606,7 +634,7 @@ class WorkSteps:
             self.emit({"type": "section", "index": index, "state": "checking"})
             with self._noting():
                 draft = agents.check_built(self.model, text, pool, index)
-                draft = self._designed(index, draft, part.text if part else "")
+                draft = self._designed(index, draft, part.text if part else "", spec)
             was_current = part is None or part.inputs == digest_part_inputs(self.brief, work, item)
             heading = heading_of(draft.text) if self._deck else draft.text.splitlines()[0][3:]
             if heading and _fold(heading) != _fold(item.heading):
@@ -731,12 +759,13 @@ class WorkSteps:
             *self.agents._pool_lines(pool, [*citation_numbers(body), *item.refs]),
         ]
         self.emit({"type": "section", "index": at, "state": "writing"})
-        reply, _ = self.agents.gateway.complete_json(
+        reply = self.agents.rewrite_passage(
             self.model,
+            self.effort,
+            spec,
             Replacement,
             system=REPLACER.format(unit=unit, what=self.agents._what(spec)),
             prompt="\n".join(lines),
-            effort=self.effort,
         )
         # The passage's own edges (a line's break, a space) stay, so the rest is as it was.
         lead = passage[: len(passage) - len(passage.lstrip())]
@@ -766,7 +795,7 @@ class WorkSteps:
         self.emit({"type": "section", "index": at, "state": "checking"})
         with self._noting():
             draft = self._check_changed(part, shaped, self._part_pool(citation_numbers(body)), at)
-            draft = self._designed(at, draft, part.text)
+            draft = self._designed(at, draft, part.text, spec)
         self._keep_edit(item, part, draft, at)
         return True
 
@@ -846,7 +875,7 @@ class WorkSteps:
             for n, i in enumerate(work.outline)
         ]
 
-    def _designed(self, at: int, draft: Draft, old: str) -> Draft:
+    def _designed(self, at: int, draft: Draft, old: str, spec: Spec) -> Draft:
         """A slide whose words were just written or changed, drawn again in the deck's style
         (after its claims were checked: the design is for the words as they now stand). The
         words are final, so a design may not change one: a slide that fails the fact guard
@@ -870,7 +899,7 @@ class WorkSteps:
                 slides = self._slides(at, text)
                 done, _, notes = designing.redesign(
                     self.agents, self.model, slides, {at: ""}, workers=1, style=style,
-                    keep_on_fail=False,
+                    keep_on_fail=False, spec=spec,
                 )  # fmt: skip
                 self.agents.skipped += notes
                 text = done[at]
@@ -916,6 +945,7 @@ class WorkSteps:
             workers=min(len(positions), 12) or 1,
             style=style,
             keep_on_fail=True,
+            spec=self._load(),
         )
         self.agents.skipped += notes
         changed: list[str] = []
@@ -1047,6 +1077,10 @@ class WorkSteps:
         )
         built = replace(
             built,
+            outline=[
+                {**row, **({"notes": item.notes} if item.notes else {})}
+                for row, item in zip(built.outline, planned, strict=True)
+            ],
             approach={
                 **(work.approach or {}),
                 "ref_map": {str(ref): n for n, ref in enumerate(built.pool_refs, 1)},

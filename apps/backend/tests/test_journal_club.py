@@ -10,7 +10,7 @@ import pytest
 from fake_models import FakeProvider, gateway, model
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from test_studio_pipeline import request_text
+from test_studio_pipeline import build_studio, request_text
 from test_studio_science import (
     DECK,
     NO_IMAGE,
@@ -30,6 +30,9 @@ from gunther.studio import science as S
 from gunther.studio.pipeline import StudioAgents
 from gunther.studio.reference import DECK_FORMAT, STUDY_DECK_FORMAT
 from gunther.studio.state import Run
+
+FIGURE_SLIDE = "<!-- layout: figure -->\n## Evidence\n![Data](gunther-asset:ast_signal)"
+PANEL_ROWS = "\n- **A**: Compare the filters under noise\n- **B**: Explain the ablation"
 
 
 def run():
@@ -63,14 +66,15 @@ def test_crop_parsing_scope_and_malformed_checks(fragment, valid):
     assert S.scope_problems(slide.replace("ast_signal", "outside"), science_pool().items)
 
 
-def test_only_reader_boxes_authorize_crops_and_panel_labels_are_visible_tokens():
-    slide = "<!-- layout: figure -->\n## Evidence\n![Data](gunther-asset:ast_signal)\nA baseline"
+def test_assignments_are_visible_and_crops_match_the_reader_boxes():
     study = S.StudyMap.model_validate(STUDY)
     readings = run().figure_readings
-    # Notes are not visible; both unnamed panels of the figure are one problem.
-    noted = S.content_problems(study, readings, slide + "\nNote: Panel A and Panel B")
+    assert S.content_problems(study, readings, FIGURE_SLIDE + PANEL_ROWS) == []
+    noted = S.content_problems(
+        study, readings, FIGURE_SLIDE + "\nNote: Walk through both comparisons." + PANEL_ROWS,
+    )
     assert len(noted) == 1 and "panels A and B are not identified" in noted[0]
-    cropped = slide.replace("ast_signal)", "ast_signal#x=0,y=0,w=0.5,h=1)")
+    cropped = FIGURE_SLIDE.replace("ast_signal)", "ast_signal#x=0,y=0,w=0.5,h=1)")
     problems = S.content_problems(study, readings, cropped)
     assert len(problems) == 1 and "central panel B is not identified" in problems[0]
     both = cropped + "\n\n---\n\n" + cropped.replace("#x=0,", "#x=0.5,")
@@ -168,13 +172,13 @@ def test_gate_runs_code_and_learner_even_when_source_review_is_unavailable(tmp_p
     fake = FakeProvider(reply)
     agents = StudioAgents(gateway(fake), use="read", design=False, asset_reader=pixels(tmp_path))
     checked = []
-    original = S.code_problems
+    original = S.code_findings
 
     def check(*args, **kwargs):
         checked.append(args[2])
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(S, "code_problems", check)
+    monkeypatch.setattr(S, "code_findings", check)
     held = run()
     result = agents.scientific_gate(
         model(), "low", held, NO_IMAGE, science_pool(), "source", lambda _: None
@@ -199,7 +203,10 @@ def test_targeted_revision_can_split_a_figure_and_keeps_real_slide_numbers():
     reply = "<!-- replaces slide 3 -->\n" + old[1] + "\n\n---\n\n" + old[2]
     result, _, fake = revise(
         reply,
-        [S.ScientificProblem(where="Slide 3", problem="Too shallow", fix="Teach setup first")],
+        [S.ScientificProblem(
+            where="The figure", problem="Too shallow", fix="Teach setup first",
+            route="slides", slides=[3],
+        )],
     )
     parts = fmt.split_slides(result)
     assert len(parts) == 5 and parts[:2] == old[:2] and parts[-1] == old[-1]
@@ -216,9 +223,13 @@ def test_structural_omission_after_targeted_problem_can_insert_new_figure():
     result, _, fake = revise(
         reply,
         [
-            S.ScientificProblem(where="Slide 2", problem="Shallow method", fix="Explain mechanism"),
             S.ScientificProblem(
-                where="Figure 3", problem="Never taught", fix="Insert figure walkthrough"
+                where="The method", problem="Shallow method", fix="Explain mechanism",
+                route="slides", slides=[2],
+            ),
+            S.ScientificProblem(
+                where="Figure 3", problem="Never taught", fix="Insert figure walkthrough",
+                route="deck",
             ),
         ],
         NO_IMAGE,
@@ -227,16 +238,22 @@ def test_structural_omission_after_targeted_problem_can_insert_new_figure():
     assert "deck slide numbers all" in request_text(fake.requests[0])
 
 
-def test_revision_accepts_slide_ranges_and_records_rejections():
+def test_revision_uses_typed_slide_numbers_and_records_rejections():
     old = fmt.split_slides(DECK)
     result, _, fake = revise(
         "\n\n---\n\n".join(old[1:3]),
-        [S.ScientificProblem(where="Slides 2–3", problem="Too shallow", fix="Explain")],
+        [S.ScientificProblem(
+            where="Method and figure", problem="Too shallow", fix="Explain",
+            route="slides", slides=[2, 3],
+        )],
     )
     assert fmt.split_slides(result) == old
     assert "deck slide numbers 2, 3" in request_text(fake.requests[0])
     result, agents, _ = revise(
-        old[1], [S.ScientificProblem(where="Slide 3", problem="Too shallow", fix="Explain")]
+        old[1],
+        [S.ScientificProblem(
+            where="The figure", problem="Too shallow", fix="Explain", route="slides", slides=[3],
+        )],
     )
     assert result == DECK and any("rejected" in row["label"] for row in agents.skipped)
 
@@ -288,7 +305,9 @@ def test_resume_restores_review_types_and_changed_plan_invalidates_draft(tmp_pat
     _, agents, fake, saved = make(tmp_path)
     assert {r["kind"] for r in saved["reviews"]} == {"scientific", "learner", "coverage"}
     fake.requests.clear()
-    built = agents.make(model(), "low", run().spec, science_pool(), Notes(), resume=saved)
+    built = build_studio(
+        agents, model(), "low", run().spec, science_pool(), Notes(), resume=saved,
+    )
     assert any("answers" in r for r in built.approach["reviews"])
     assert any("unexplained" in r for r in built.approach["reviews"])
     assert any("coverage_problems" in r for r in built.approach["reviews"])
@@ -297,7 +316,9 @@ def test_resume_restores_review_types_and_changed_plan_invalidates_draft(tmp_pat
     changed["coverage_plan"]["figures"] = []  # Missing inventory forces a regenerated plan.
     changed["draft"] = DECK.replace("What remains unresolved", "STALE DRAFT")
     fake.requests.clear()
-    built = agents.make(model(), "low", run().spec, science_pool(), Notes(), resume=changed)
+    built = build_studio(
+        agents, model(), "low", run().spec, science_pool(), Notes(), resume=changed,
+    )
     assert "STALE DRAFT" not in built.content
     assert any("Write the scientific explanation" in request_text(r) for r in fake.requests)
 
@@ -411,40 +432,35 @@ def test_a_cover_question_wrapped_over_two_lines_keeps_all_of_it():
         "图1A和图1B比较两种滤波器。",
     ],
 )
-def test_panels_named_the_way_people_write_them_count_as_identified(said):
-    slide = f"<!-- layout: figure -->\n## Evidence\n![Data](gunther-asset:ast_signal)\n{said}"
+def test_prose_mentions_do_not_assign_read_panels(said):
+    slide = f"{FIGURE_SLIDE}\n{said}"
     study = S.StudyMap.model_validate(STUDY)
-    assert S.content_problems(study, run().figure_readings, slide) == []
+    [problem] = S.content_problems(study, run().figure_readings, slide)
+    assert "panels A and B are not identified" in problem
 
 
-def test_a_panel_named_in_the_title_counts_and_a_word_that_looks_like_a_label_does_not():
+def test_only_an_explained_bold_lead_identifies_a_panel():
     study = S.StudyMap.model_validate(STUDY)
     readings = run().figure_readings
-    titled = "<!-- layout: figure -->\n## Panels A and B: drift\n![Data](gunther-asset:ast_signal)"
-    assert S.content_problems(study, readings, titled) == []
-    # "a" as an article, or "B" inside a word, does not name a panel.
-    loose = (
-        "<!-- layout: figure -->\n## Evidence\n![Data](gunther-asset:ast_signal)\nA baseline Beats"
-    )
-    assert "panels A and B" in S.content_problems(study, readings, loose)[0]
+    titled = FIGURE_SLIDE.replace("## Evidence", "## Panels A and B compare the filters")
+    incomplete = titled + "\n- **A**: Compare the filters under noise\n- **B**:"
+    [problem] = S.content_problems(study, readings, incomplete)
+    assert "central panel B is not identified" in problem
+    assert S.content_problems(study, readings, titled + PANEL_ROWS) == []
 
 
 def test_one_crop_identifies_only_its_own_panel():
-    both = deepcopy(STUDY)
-    both["claims"][0]["figures"][0]["panels"] = ["A", "B"]
-    study = S.StudyMap.model_validate(both)
-    slide = (
-        "<!-- layout: figure -->\n## Evidence\n"
-        "![Data](gunther-asset:ast_signal#x=0,y=0,w=0.5,h=1)"
-    )
+    study = S.StudyMap.model_validate(STUDY)
+    slide = FIGURE_SLIDE.replace(
+        "gunther-asset:ast_signal", "gunther-asset:ast_signal#x=0,y=0,w=0.5,h=1",
+    ) + PANEL_ROWS
     problems = S.content_problems(study, run().figure_readings, slide)
     assert len(problems) == 1 and "central panel B is not identified" in problems[0]
 
 
 def test_an_unnamed_panel_is_delivered_as_an_open_problem_not_a_failed_build(tmp_path):
-    # Every model reply is ready, but the deck never names a central panel: the build is
-    # delivered with the problem recorded, and nothing is re-reviewed from scratch.
-    unnamed = DECK.replace("- A: fixed", "- Fixed").replace("- B: feedback", "- Feedback")
+    # The figure is visible, and the model reviews return ready. Its rows have no assignments.
+    unnamed = DECK.replace("- **A**: ", "- ").replace("- **B**: ", "- ")
     assert unnamed != DECK
     built, agents, fake, _ = make(tmp_path, first=unnamed, revised=unnamed)
     record = built.approach or {}
@@ -459,13 +475,14 @@ def test_a_code_problem_rewrites_only_the_slides_showing_its_figure():
     deck = (
         "<!-- layout: title -->\n# Study\nWhy it matters [1]\n\n---\n\n"
         "<!-- layout: points -->\n## Method\n- Step [1]\n\n---\n\n"
-        "<!-- layout: figure -->\n## Evidence\n![Data](gunther-asset:ast_signal)\nA baseline [1]"
+        f"{FIGURE_SLIDE}\n- **A**: Compare the filters under noise [1]"
     )
-    problem = (
-        "Figure gunther-asset:ast_signal: central panel B is not identified on a visible slide."
+    held = run()
+    [problem] = S.code_findings(
+        held.study, held.figure_readings, deck, science_pool().items,
     )
-    _, _, fake = revise("<!-- layout: figure -->\n## Evidence\n"
-                          "![Data](gunther-asset:ast_signal)\nPanel B: the ablation [1]",
-                          [problem], deck)
+    assert problem.route == "slides" and problem.slides == [3]
+    revised, _, fake = revise(FIGURE_SLIDE + PANEL_ROWS, [problem], deck)
+    assert S.content_problems(held.study, held.figure_readings, revised) == []
     asked = request_text(fake.requests[0])
     assert "Slide 3:" in asked and "Slide 1:" not in asked and "Slide 2:" not in asked

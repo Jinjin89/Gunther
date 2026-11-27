@@ -5,9 +5,9 @@ from dataclasses import replace
 
 import pytest
 from fake_models import FakeProvider, gateway, is_sentence_checking, studio_task
-from test_artifact_agent import done, turn
-from test_output_cards import EVIDENCE, checks_in, conversation, document
-from test_outputs import app_for, read_events, route, workspace
+from test_artifact_agent import done
+from test_output_cards import EVIDENCE, checks_in, conversation, coverage_reply, document
+from test_outputs import app_for, plan_and_approve, read_events, route, workspace
 from test_tts import wav
 
 from gunther.agent import AskAgent
@@ -40,6 +40,8 @@ def model_reply(request):
     task = studio_task(request)
     if "lead analyst" in task:
         return json.dumps({"title": "Cell fates", "answer": EVIDENCE})
+    if task.startswith("Propose the direction"):
+        return coverage_reply()
     if "Write the complete Audio overview" in task:
         return SCRIPT
     if is_sentence_checking(request):
@@ -77,7 +79,9 @@ def configure(client, monkeypatch, probe, *, fail=False):
 
 def build(client, **options):
     base, cid = conversation(client)
-    events = turn(client, base, cid, "", "build", build={"type": "audio_overview", **options})
+    events = plan_and_approve(
+        client, base, {"type": "audio_overview", **options}, conversation_id=cid,
+    )
     return base, done(events)["artifact"], events
 
 
@@ -126,10 +130,33 @@ def test_audio_build_batches_checks_and_attaches_contiguous_wav(tmp_path, monkey
         assert not list((tmp_path / "assets").rglob("*.wav"))
 
 
-def test_unconfigured_tts_still_saves_the_checked_script(tmp_path):
-    with app_for(tmp_path, FakeProvider(model_reply), ai_summaries="off") as client:
+def test_audio_approval_requires_available_voices(tmp_path):
+    fake = FakeProvider(model_reply)
+    with app_for(tmp_path, fake, ai_summaries="off") as client:
+        base, cid = conversation(client)
+        events = plan_and_approve(client, base, {"type": "audio_overview"}, conversation_id=cid)
+        name, error = events[-1]
+        assert name == "error" and (error["status"], error["code"]) == (409, "plan_changed")
+        detail = client.get(
+            f"/api/knowledge-bases/{base}/artifact-conversations/{cid}", headers=workspace(client),
+        ).raise_for_status().json()
+        [work] = detail["works"]
+        assert work["versionId"] is None
+        assert work["plan"]["blocker"] == error["detail"] == "Choose available voices for A and B."
+        assert not any("Write the complete" in studio_task(call) for call in fake.requests)
+
+
+def test_provider_removed_after_approval_still_saves_the_checked_script(tmp_path, monkeypatch):
+    def lose_provider(request):
+        if "Write the complete Audio overview" in studio_task(request):
+            monkeypatch.setattr(client.app.state.service_settings, "tts", lambda: {})
+
+    fake = FakeProvider(model_reply, rule=lose_provider)
+    with app_for(tmp_path, fake, ai_summaries="off") as client:
+        calls = configure(client, monkeypatch, tmp_path / "gunther.sqlite")
         base, built, _ = build(client)
         reopened = client.get(route(base, built["id"]), headers=workspace(client)).json()
+    assert calls == []
     assert reopened["content"] == SCRIPT and all(s["checked"] for s in reopened["sections"])
     assert reopened["audio"]["status"] == "needs_tts"
     assert reopened["audio"]["audioAssetId"] is None

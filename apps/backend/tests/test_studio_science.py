@@ -8,7 +8,7 @@ from dataclasses import replace
 import pytest
 from fake_models import FakeProvider, gateway, model
 from PIL import Image, ImageDraw
-from test_studio_pipeline import request_text, router
+from test_studio_pipeline import build_studio, request_text, router
 
 from gunther.evidence import Evidence, ToolFailure
 from gunther.llm import ModelError
@@ -113,8 +113,8 @@ Feedback reduces drift in controlled synthetic experiments [1]
 ## Noise challenge and feedback ablation
 ![Controlled experiments](gunther-asset:ast_signal)
 Adaptive filtering reduces drift; disabling feedback weakens it [1][2]
-- A: fixed vs adaptive; x is noise, y is drift in mV; blue means adaptive [1]
-- B: feedback on vs off tests the proposed mechanism [2]
+- **A**: fixed vs adaptive; x is noise, y is drift in mV; blue means adaptive [1]
+- **B**: feedback on vs off tests the proposed mechanism [2]
 - These are simulated conditions; no field validation [2]
 
 ---
@@ -256,29 +256,30 @@ def science_router(study=None, *, first=DECK, revised=DECK, reading=READING, rea
             return json.dumps(reading)
         if task.startswith("Plan a scientific explanation deck"):
             assert "ast_signal" in task or not any(c.get("figures") for c in study["claims"])
+            slides = [fmt.parse_slide(slide) for slide in fmt.split_slides(first)]
             return json.dumps(
                 {
-                    "title": "Learning the adaptive filter study",
+                    "title": slides[0].title,
                     "slides": [
-                        {"title": "Learning the study", "layout": "title"},
+                        {"title": slides[0].title, "layout": "title"},
                         {
-                            "title": "How the filter works",
-                            "layout": "process",
+                            "title": slides[1].title,
+                            "layout": None,
                             "purpose": "Teach mechanism",
                             "role": "Method enabling the result",
                             "refs": [1],
                             "takeaway": "Error adjusts gain",
                         },
                         {
-                            "title": "Noise challenge and ablation",
-                            "layout": "figure",
+                            "title": slides[2].title,
+                            "layout": None,
                             "refs": [1, 2],
                             "purpose": "Explain both controlled experiments",
                             "role": "Evidence for contribution",
                             "figures": study["claims"][0].get("figures", []),
                             "takeaway": "Feedback matters",
                         },
-                        {"title": "What remains unresolved", "layout": "points", "refs": [1, 2]},
+                        {"title": slides[3].title, "layout": None, "refs": [1, 2]},
                     ],
                 }
             )
@@ -329,6 +330,10 @@ def science_router(study=None, *, first=DECK, revised=DECK, reading=READING, rea
         if task.startswith("Write the scientific explanation deck"):
             return first
         if task.startswith("Revise only the scientific slides"):
+            if "Return exactly one replacement slide" in task:
+                slides = fmt.split_slides(revised)
+                positions = re.findall(r"^<!-- replaces slide (\d+) -->$", task, re.M)
+                return "\n\n---\n\n".join(slides[int(number) - 1] for number in positions)
             return revised
         if task.startswith("Check whether a targeted revision resolved"):
             # Nothing confirmed: every problem stays open (unknown counts as open).
@@ -362,7 +367,8 @@ def make(
         gateway(fake, writer), use="read", design=design, asset_reader=pixels(tmp_path)
     )
     saved = {}
-    built = agents.make(
+    built = build_studio(
+        agents,
         writer,
         "low",
         Spec("slides", "Researchers", brief="Explain this study", language=language),
@@ -446,7 +452,8 @@ def test_unavailable_vision_never_invents_a_reading(tmp_path, failure):
     writer = model("deepseek-v4-pro") if failure == "blind" else model()
     reader = {"no_pixels": None, "missing_file": missing}.get(failure, pixels(tmp_path))
     agents = StudioAgents(gateway(fake, writer), use="read", design=False, asset_reader=reader)
-    built = agents.make(
+    built = build_studio(
+        agents,
         writer, "low", Spec("slides", "Readers", brief="Explain the study"), science_pool(), Notes()
     )
     assert built.approach["figure_readings"] == []
@@ -462,7 +469,8 @@ def test_a_central_figure_still_missing_after_revision_is_delivered_as_an_open_p
     # A teaching gap is revised once, then delivered and listed: never a lost build.
     fake = FakeProvider(science_router(first=NO_IMAGE, revised=NO_IMAGE))
     agents = StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path))
-    built = agents.make(
+    built = build_studio(
+        agents,
         model(),
         "low",
         Spec("slides", "Readers", brief="Explain the study"),
@@ -482,7 +490,8 @@ def test_an_image_from_outside_the_material_is_removed_and_the_deck_still_delive
     outside = DECK.replace("gunther-asset:ast_signal", "gunther-asset:ast_elsewhere")
     fake = FakeProvider(science_router(first=outside, revised=outside))
     agents = StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path))
-    built = agents.make(
+    built = build_studio(
+        agents,
         model(),
         "low",
         Spec("slides", "Readers", brief="Explain the study"),
@@ -499,8 +508,9 @@ def test_an_image_from_outside_the_material_is_removed_and_the_deck_still_delive
 
 def test_failed_purpose_or_review_is_not_replaced_by_a_general_or_ready_answer(tmp_path):
     with pytest.raises(ModelError, match="purpose unavailable"):
-        StudioAgents(gateway(FakeProvider(ModelError("purpose unavailable")))).make(
-            model(), "low", Spec("slides", "Readers"), science_pool(), Notes()
+        agents = StudioAgents(gateway(FakeProvider(ModelError("purpose unavailable"))))
+        build_studio(
+            agents, model(), "low", Spec("slides", "Readers"), science_pool(), Notes(),
         )
     route = science_router()
 
@@ -511,7 +521,7 @@ def test_failed_purpose_or_review_is_not_replaced_by_a_general_or_ready_answer(t
 
     # An unavailable review is recorded as such with the deck, never as a ready verdict.
     agents = StudioAgents(gateway(FakeProvider(failing)), use="read", asset_reader=pixels(tmp_path))
-    built = agents.make(model(), "low", Spec("slides", "Readers"), science_pool(), Notes())
+    built = build_studio(agents, model(), "low", Spec("slides", "Readers"), science_pool(), Notes())
     assert any("review-ready" in reason for reason in built.approach["limitations"])
     assert built.approach["review_status"] == "unavailable"
     assert any(s["label"] == "Scientific review unavailable" for s in agents.skipped)
@@ -523,8 +533,9 @@ def test_unselected_figure_link_is_rejected_before_pixels_are_read(tmp_path):
     study["claims"][0]["figures"][0]["asset_id"] = "ast_unselected"
     fake = FakeProvider(science_router(study))
     with pytest.raises(ModelError, match="not retained with the passages"):
-        StudioAgents(gateway(fake), asset_reader=pixels(tmp_path)).make(
-            model(), "low", Spec("slides", "Readers"), science_pool(), Notes()
+        agents = StudioAgents(gateway(fake), asset_reader=pixels(tmp_path))
+        build_studio(
+            agents, model(), "low", Spec("slides", "Readers"), science_pool(), Notes(),
         )
     # The wrong link was sent back once with what is wrong, then the step failed.
     maps = [r for r in fake.requests if "Build the study map" in request_text(r)]
@@ -572,7 +583,8 @@ def test_review_problems_left_after_revision_are_recorded_with_the_deck(tmp_path
 
     fake = FakeProvider(picky)
     agents = StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path))
-    built = agents.make(
+    built = build_studio(
+        agents,
         model(),
         "low",
         Spec("slides", "Readers", brief="Explain the study"),
@@ -919,6 +931,29 @@ def test_figure_in_notes_does_not_satisfy_the_visible_content_gate():
     )
 
 
+def test_panel_assignments_require_the_correct_visible_figure_or_verified_crop():
+    data = deepcopy(STUDY)
+    data["claims"][0]["figures"][0]["panels"] = ["α-I"]
+    reading = deepcopy(READING)
+    reading["panels"][0]["label"] = "α-I"
+    study = S.StudyMap.model_validate(data)
+    figure = S.FigureReading.model_validate(reading)
+    whole = "<!-- layout: figure -->\n## Evidence\n![Comparison](gunther-asset:ast_signal)"
+    explanations = "\n- **α-I**: First comparison\n- **B**: Second comparison"
+    different = whole.replace(figure.asset_id, "other")
+    unbound = whole + "\nNote: Details" + explanations + "\n---\n" + different + explanations
+    [problem] = S._content_findings(study, [figure], unbound, None)
+    assert "α-I" in problem.problem and "B" in problem.problem
+    assert problem.slides == [1] and problem.route == "slides" and problem.fix
+    bound = whole + explanations
+    assert not S.content_problems(study, [figure], bound)
+    cropped = bound.replace("gunther-asset:ast_signal", S.crop_reference(
+        figure.asset_id, figure.panels[0].box,
+    ))
+    [remaining] = S.content_problems(study, [figure], cropped)
+    assert "central panel B" in remaining
+
+
 def test_scientific_design_cannot_drop_a_method_explanation_with_no_numbers():
     from gunther.studio import design as D
 
@@ -942,7 +977,8 @@ def test_explicit_business_purpose_uses_the_existing_general_prompts(tmp_path):
     # A different requested purpose wins even with study-like material in scope.
     from test_studio_pipeline import pool as general_pool
 
-    built = agents.make(
+    built = build_studio(
+        agents,
         model(),
         "low",
         Spec("slides", "Board", brief="Make a business decision deck"),
@@ -960,7 +996,15 @@ def test_explicit_business_purpose_uses_the_existing_general_prompts(tmp_path):
 def test_artifact_conversation_edit_keeps_the_study_workflow(tmp_path, restyle):
     from fake_models import orchestrator_replies
     from test_artifact_agent import done, kept, turn
-    from test_outputs import app_for, built, library, read_events, workspace
+    from test_outputs import (
+        app_for,
+        built,
+        library,
+        plan_and_approve,
+        read_events,
+        slide_outline,
+        workspace,
+    )
     from test_outputs import route as output_route
 
     study = deepcopy(STUDY)
@@ -979,20 +1023,7 @@ def test_artifact_conversation_edit_keeps_the_study_workflow(tmp_path, restyle):
             )
         return route(request)
 
-    fake = FakeProvider(
-        orchestrator_replies(
-            [
-                {
-                    "actions": [
-                        {"do": "select", "artifact": "new:slides"},
-                        {"do": "make"},
-                        {"do": "save", "text": "Explained the study."},
-                    ]
-                }
-            ],
-            inner,
-        )
-    )
+    fake = FakeProvider(inner)
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(
             client, notes={f"Experiment {i}": e.text for i, e in enumerate(science_pool().items, 1)}
@@ -1002,7 +1033,11 @@ def test_artifact_conversation_edit_keeps_the_study_workflow(tmp_path, restyle):
             headers=workspace(client),
             json={"id": "study", "title": "Study explanation"},
         )
-        result = done(turn(client, base_id, "study", "Explain the study as a reading deck"))
+        result = done(plan_and_approve(
+            client, base_id,
+            {"type": "slides", "use": "read", "focus": "Explain the study as a reading deck"},
+            conversation_id="study", outline=slide_outline(NO_IMAGE),
+        ))
         assert result["outcome"] == "saved", json.dumps(result, ensure_ascii=False)
         held, _ = kept(client, "study")
         assert held.works[0].approach["purpose"] == "explain_study"
@@ -1067,10 +1102,12 @@ def test_artifact_conversation_edit_keeps_the_study_workflow(tmp_path, restyle):
             next_writer,
         )]
         events = turn(client, base_id, "study", "Make it again with the approved plan")
-        story = next(t for t in _tasks(fake.requests[before:]) if t.startswith("Plan a scientific"))
-        assert heading in story and goal in story
         result = done(events)
         assert result["outcome"] == "saved", result["reply"]
+        tasks = _tasks(fake.requests[before:])
+        writer = next(t for t in tasks if t.startswith("Write the scientific explanation deck"))
+        assert heading in writer and goal in writer
+        assert not any(t.startswith("Plan a scientific") for t in tasks)
         next_outline = result["artifact"]["outline"]
         assert [item["id"] for item in next_outline] == ids
         assert (next_outline[1]["heading"], next_outline[1]["goal"]) == (heading, goal)
@@ -1144,7 +1181,8 @@ def test_blank_model_answers_are_not_success(tmp_path):
         return route(request)
 
     agents = StudioAgents(gateway(FakeProvider(blank)), use="read", asset_reader=pixels(tmp_path))
-    built = agents.make(
+    built = build_studio(
+        agents,
         model(),
         "low",
         Spec("slides", "Readers", brief="Explain the study"),
@@ -1173,7 +1211,8 @@ def test_a_saved_study_map_is_reused_only_for_the_same_passages(tmp_path, change
     )
     assert S.pool_print(other.items) != saved["pool"]
     fake.requests.clear()
-    agents.make(
+    build_studio(
+        agents,
         model(),
         "low",
         Spec("slides", "Researchers", brief="Explain this study"),
@@ -1187,7 +1226,8 @@ def test_a_saved_study_map_is_reused_only_for_the_same_passages(tmp_path, change
     other_pool = Pool(50)
     for item in other.items:
         other_pool.adopt(item)
-    agents.make(
+    build_studio(
+        agents,
         model(),
         "low",
         Spec("slides", "Researchers", brief="Explain this study"),
@@ -1200,20 +1240,21 @@ def test_a_saved_study_map_is_reused_only_for_the_same_passages(tmp_path, change
 
 
 def test_recovering_a_figure_refreshes_coverage_and_limitations(tmp_path):
-    _, agents, fake, saved = make(tmp_path, first=NO_IMAGE, revised=NO_IMAGE, read_error=True)
+    fake = FakeProvider(science_router(first=NO_IMAGE, revised=NO_IMAGE))
+    agents = StudioAgents(gateway(fake), use="read", design=False)
+    saved = {}
+    spec = Spec("slides", "Researchers", brief="Explain this study")
+    build_studio(agents, model(), "low", spec, science_pool(), Notes(), checkpoint=saved.update)
     assert saved["figure_readings"] == []
-    assert any("Synthetic image read failed" in note for note in saved["limitations"])
+    assert any("not read" in note for note in saved["limitations"])
     fake.requests.clear()
-    fake.replies[:] = [science_router(first=NO_IMAGE, revised=NO_IMAGE)]
-    resumed = StudioAgents(
-        gateway(fake), use="read", design=False, asset_reader=agents.asset_reader,
-    ).make(
-        model(), "low", Spec("slides", "Researchers", brief="Explain this study"),
-        science_pool(), Notes(), resume=saved,
+    resumed = build_studio(
+        StudioAgents(gateway(fake), use="read", design=False, asset_reader=pixels(tmp_path)),
+        model(), "low", spec, science_pool(), Notes(), resume=saved,
     )
     assert [row["asset_id"] for row in resumed.approach["figure_readings"]] == ["ast_signal"]
     assert any(t.startswith("Make the journal-club coverage plan") for t in _tasks(fake.requests))
-    assert all("image read failed" not in note for note in resumed.approach["limitations"])
+    assert all("not read" not in note for note in resumed.approach["limitations"])
 
 
 def test_an_edit_may_only_show_the_builds_own_images(tmp_path):
@@ -1363,7 +1404,8 @@ def test_stop_at_last_verification_progress_prevents_refit(tmp_path, monkeypatch
 
     spec = Spec("slides", "Readers", brief="Explain the study")
     with stopping_on(stopped), pytest.raises(Stopped):
-        agents.make(
+        build_studio(
+            agents,
             model(), "low", spec, science_pool(), Notes(), hear,
             checkpoint=checkpoint.update if save_checkpoint else None,
         )
@@ -1381,7 +1423,8 @@ def test_a_stopped_build_carries_on_where_it_stopped(tmp_path):
     spec = Spec("slides", "Readers", brief="Explain the study")
     saved: dict = {}
     with pytest.raises(_Stopped):
-        StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)).make(
+        build_studio(
+            StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)),
             model(), "low", spec, science_pool(), Notes(), _stop_after_verify,
             checkpoint=saved.update,
         )
@@ -1389,14 +1432,16 @@ def test_a_stopped_build_carries_on_where_it_stopped(tmp_path):
     before = len(fake.requests)
     next_checkpoint: dict = {}
     with pytest.raises(_Stopped):
-        StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)).make(
+        build_studio(
+            StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)),
             model(), "low", spec, science_pool(), Notes(), _stop_after_verify, resume=saved,
             checkpoint=next_checkpoint.update,
         )
     assert next_checkpoint["checked"] == saved["checked"]
     events: list[dict] = []
     completed: dict = {}
-    built = StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)).make(
+    built = build_studio(
+        StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)),
         model(), "low", spec, science_pool(), Notes(), events.append, resume=next_checkpoint,
         checkpoint=completed.update,
     )
@@ -1425,10 +1470,11 @@ def test_a_stopped_build_carries_on_where_it_stopped(tmp_path):
     assert built.approach["review_status"] in ("ready", "open_problems")
 
 
-def test_a_reworded_brief_keeps_the_reading_of_the_study_and_replans_the_story(tmp_path):
+def test_a_reworded_brief_reuses_figure_readings_and_updates_study_preparation(tmp_path):
     fake = FakeProvider(science_router())
     saved: dict = {}
-    StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)).make(
+    build_studio(
+        StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)),
         model(),
         "low",
         Spec("slides", "Readers", brief="Explain the study"),
@@ -1437,7 +1483,8 @@ def test_a_reworded_brief_keeps_the_reading_of_the_study_and_replans_the_story(t
         checkpoint=saved.update,
     )
     before = len(fake.requests)
-    StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)).make(
+    build_studio(
+        StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)),
         model(),
         "low",
         Spec("slides", "Readers", brief="Explain the study, for a journal club"),
@@ -1447,8 +1494,8 @@ def test_a_reworded_brief_keeps_the_reading_of_the_study_and_replans_the_story(t
     )
     redone = _tasks(fake.requests[before:])
     assert not any(t.startswith("Read the attached original source figure pixels") for t in redone)
-    assert not any(t.startswith("Make the journal-club coverage plan") for t in redone)
-    assert not any(t.startswith("Build the study map") for t in redone)
+    assert sum(t.startswith("Build the study map") for t in redone) == 1
+    assert sum(t.startswith("Make the journal-club coverage plan") for t in redone) == 1
     assert any(t.startswith("Plan a scientific explanation deck") for t in redone)
     assert any(t.startswith("Write the scientific explanation deck") for t in redone)
 
@@ -1456,7 +1503,8 @@ def test_a_reworded_brief_keeps_the_reading_of_the_study_and_replans_the_story(t
 def test_review_and_design_think_little_and_say_what_they_are_doing(tmp_path):
     fake = FakeProvider(science_router(first=NO_IMAGE, revised=NO_IMAGE))
     events: list[dict] = []
-    StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)).make(
+    build_studio(
+        StudioAgents(gateway(fake), use="read", asset_reader=pixels(tmp_path)),
         model(),
         "high",
         Spec("slides", "Readers", brief="Explain the study"),

@@ -20,7 +20,7 @@ import re
 import unicodedata
 from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
@@ -28,6 +28,9 @@ from gunther.citations import citation_numbers, has_unsourced, strip_citations
 from gunther.llm import ModelError
 from gunther.studio import format as fmt
 from gunther.studio import prompts as P
+
+if TYPE_CHECKING:
+    from gunther.outputs import Spec
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +84,10 @@ def load_style(name: str) -> tuple[str, str]:
 # Choosing the style ------------------------------------------------------------------------
 
 
-def pick_style(agents, model, *, title: str, subtitle: str, brief: str, audience: str) -> str:
+def pick_style(
+    agents, model, *, title: str, subtitle: str, brief: str, audience: str,
+    spec: Spec | None = None,
+) -> str:
     """One short call: light, dark or bold, from the title, the brief and the audience. A
     reply that is not one of them (or no reply) is light."""
 
@@ -90,7 +96,7 @@ def pick_style(agents, model, *, title: str, subtitle: str, brief: str, audience
         f"Audience: {audience}"
     )
     try:
-        pick = agents._json(model, StylePick, P.STYLE_PICK, prompt, "low")
+        pick = agents._json(model, StylePick, P.STYLE_PICK, P.with_preferences(prompt, spec), "low")
     except ModelError as error:
         logger.info("Choosing a style failed: %s", error)
         return "light"
@@ -239,6 +245,7 @@ def design_slides(
     requests: Mapping[int, str] | None = None,
     keep_on_fail: bool = False,
     progress: Callable[[int, int], None] | None = None,
+    spec: Spec | None = None,
 ) -> tuple[list[str], int, list[dict[str, str]]]:
     """Warm with one slide, then design the remaining slides in parallel. Back: the slides
     (each that passed the guard now ends with its design block), how many were designed, and
@@ -293,7 +300,7 @@ def design_slides(
                 else ""
             )
             try:
-                reply = agents._text(model, system, prompt, "low", 16_000)
+                reply = agents._text(model, system, P.with_preferences(prompt, spec), "low", 16_000)
             except ModelError as error:
                 logger.info("Designing slide %d failed: %s", index + 1, error)
                 problems = [f"The model could not answer: {error}"]
@@ -352,7 +359,7 @@ def apply_style(slides: list[str], style: str) -> list[str]:
 
 
 def restyle(
-    agents, model, slides: Sequence[str], style: str, *, workers: int
+    agents, model, slides: Sequence[str], style: str, *, workers: int, spec: Spec | None = None,
 ) -> tuple[list[str], int, list[dict[str, str]]]:
     """The whole deck in another style: ``style`` goes in the title marker and every slide is
     designed again from its stored content (the words never change). A slide that fails the
@@ -360,7 +367,9 @@ def restyle(
 
     if style not in fmt.STYLES:
         raise ValueError(f"“{style}” is not a style; choose one of {', '.join(fmt.STYLES)}.")
-    return design_slides(agents, model, apply_style(list(slides), style), style, workers=workers)
+    return design_slides(
+        agents, model, apply_style(list(slides), style), style, workers=workers, spec=spec,
+    )
 
 
 def redesign(
@@ -372,6 +381,7 @@ def redesign(
     workers: int,
     style: str | None = None,
     keep_on_fail: bool = True,
+    spec: Spec | None = None,
 ) -> tuple[list[str], int, list[dict[str, str]]]:
     """The slides at these positions (from 0) designed again in the deck's style, each with
     what was asked of its look. Everything else is untouched. A deck with no style is drawn in
@@ -386,4 +396,5 @@ def redesign(
         only=set(requests),
         requests=requests,
         keep_on_fail=keep_on_fail,
+        spec=spec,
     )

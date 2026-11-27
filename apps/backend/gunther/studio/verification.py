@@ -8,6 +8,7 @@ import re
 from collections.abc import Mapping
 from copy import copy
 from dataclasses import replace
+from itertools import accumulate
 from typing import Any
 
 from gunther.checks import Verdicts, finding, verdicts_of
@@ -25,13 +26,13 @@ from gunther.markup import markdown_lines
 from gunther.output_checks import check_part, check_projected_parts, output_claim_inventory
 from gunther.output_shapes import OutputUnit, cited_value_lines, lend_refs, prose_numbers
 from gunther.output_types import SHAPES
-from gunther.outputs import Draft, Events, Issue, Pool, _marked, split_document
+from gunther.outputs import Draft, Events, Issue, Pool, Spec, _marked, layout_of, split_document
 from gunther.skill_checks import CHARTS
 from gunther.studio import design as D
 from gunther.studio import format as fmt
 from gunther.studio import prompts as P
 from gunther.studio import science as S
-from gunther.studio.drafting import source_images_kept
+from gunther.studio.drafting import report_exhibit_counts, source_images_kept
 from gunther.studio.requests import WORKERS, material_request, warm_map
 from gunther.studio.state import Run, _keeps_heading, _matches_plan, _no_events
 
@@ -75,11 +76,17 @@ def _chart_rows_supported(
     if len(tables) != 1:
         return False
     index, table = tables[0]
-    rows = [
-        (row_index, row)
-        for row_index, line in enumerate(collapse_citations(table[0]).split("\n"))
-        for row in fmt.read_table([line.strip()])[0]
-    ]
+    rows: list[tuple[int, list[str]]] = []
+    saw_separator = False
+    for row_index, line in enumerate(collapse_citations(table[0]).split("\n")):
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = fmt.table_cells(stripped)
+        if len(rows) == 1 and not saw_separator and fmt.is_table_separator(cells):
+            saw_separator = True
+            continue
+        rows.append((row_index, cells))
     if len(rows) < 3 or not 2 <= len(rows[0][1]) <= 4:
         return False
     (_, head), *data = rows
@@ -122,6 +129,17 @@ def _stating(issues, by_ref: dict[int, Evidence], most: int = 6) -> set[int]:
     return set(found[:most])
 
 
+def _exhibit_source_lines(body: str, evidence: list[Evidence]) -> set[int]:
+    """Locate exhibit source fields that name material in the current evidence pool."""
+
+    names = {item.title for item in evidence}
+    names.update(" · ".join(filter(None, S.cover_metadata([item]))) for item in evidence)
+    return {
+        exhibit.attribution[0] for exhibit in fmt.report_exhibits(body)
+        if exhibit.attribution is not None and exhibit.attribution[1] in names
+    }
+
+
 class StudioVerification:
     # 5. Verifying -------------------------------------------------------------------------
 
@@ -142,11 +160,12 @@ class StudioVerification:
         units = unit if len(parts) == 1 else f"{unit}s"
         self._stage(emit, "verify", label, "running", f"{len(parts)} {units}")
         by_ref = pool.by_ref()
+        evidence = run.evidence_material or material
         valid = set(by_ref)
         if shape.batch_checks:
             texts = [check_citations(shape.markup(text), valid)[0] for text in parts]
             checked = check_projected_parts(
-                self._checker(by_ref, material), model, shape.id, shape.units(texts), by_ref,
+                self._checker(by_ref, evidence), model, shape.id, shape.units(texts), by_ref,
                 limit=self.limits.sentences,
             )
             drafts = [Draft(text, state) for text, state in zip(texts, checked, strict=True)]
@@ -154,6 +173,7 @@ class StudioVerification:
             return drafts
 
         rest = "\n".join(parts[1:])
+        exhibit_counts = report_exhibit_counts(run)
 
         def check(unit: OutputUnit) -> Draft:
             text = unit.text
@@ -162,17 +182,18 @@ class StudioVerification:
             text, _ = check_citations(shape.markup(text), valid)
             claim = replace(unit, text=text) if unit.ancestors else text
             return Draft(text, self._claims(
-                model, claim, by_ref, rest, material=material, kind=shape.id,
+                model, claim, by_ref, rest, material=evidence, kind=shape.id,
             ))
 
-        def check_and_fix(unit: OutputUnit) -> Draft:
+        def check_and_fix(section: tuple[int, OutputUnit]) -> Draft:
+            number, unit = section
             text = unit.text
             draft = check(unit)
             if not any(issue.verdict in FIXABLE for issue in draft.issues or []):
                 return draft
             title = fmt.MARK.match(text) and fmt.parse_slide(text).layout == "title"
             fixed = self._fix_claims(
-                model, [draft], by_ref, rest if title else "", material=material
+                model, [draft], by_ref, rest if title else "", material=material, spec=run.spec,
             )
             if not fixed:
                 return draft
@@ -182,16 +203,28 @@ class StudioVerification:
                     return draft
                 if shape.unit_problem and shape.unit_problem(repaired[0]):
                     return draft
+                if run.reviewed and run.spec.kind == "slides" and (
+                    layout_of(text)[0] != layout_of(repaired[0])[0]
+                ):
+                    return draft
                 if shape.node:
                     if shape.node(repaired[0]) is None:
                         return draft
                     fixed = shape.at_depth(text, repaired)
+                if number <= len(exhibit_counts) and (problem := fmt.planned_exhibit_problem(
+                    fmt.report_exhibits(repaired[0]), exhibit_counts[number - 1], number,
+                )):
+                    self.skipped.append({
+                        "step": "verify", "label": f"Section {number} claim repair rejected",
+                        "reason": problem,
+                    })
+                    return draft
             return check(replace(unit, text=fixed[0]))
 
         original = shape.units(parts)
         drafts = warm_map(
             check_and_fix,
-            original,
+            enumerate(original, 1),
             WORKERS,
             lambda done, total: self._progress(
                 emit, "verify", label, f"{done} of {total} {units} checked"
@@ -237,7 +270,8 @@ class StudioVerification:
         follow from cited facts are the author's judgement, not findings; what is flagged is a
         cited claim its passages do not state, and a specific fact (a number) with no source."""
 
-        body = _marked(text.text if isinstance(text, OutputUnit) else text).body
+        marked = _marked(text.text if isinstance(text, OutputUnit) else text)
+        body = marked.body
         projected, active = output_claim_inventory(
             kind, text, by_ref, prior, rest=rest, scientific=bool(self.scientific_context),
         )
@@ -262,11 +296,18 @@ class StudioVerification:
         # Syntax findings come from the current section independently of its model verdicts.
         held = {row["issue"]["claim"][:80] for row in checked.values() if "issue" in row}
         findings = []
-        lines = [line for line, protected in markdown_lines(projected if direct else body)
-                 if not protected and not line.startswith(":::")]
+        evidence = list(by_ref.values())
+        source_lines = _exhibit_source_lines(body, evidence) if kind == "report" else set()
+        if marked.layout == "title":
+            metadata = " · ".join(filter(None, S.cover_metadata(evidence)[1:]))
+            if metadata and body.rstrip().endswith("\n" + metadata):
+                source_lines.add(body.rstrip().count("\n"))
+        lines = [line for index, (line, protected) in enumerate(
+            markdown_lines(projected if direct else body),
+        ) if not protected and not line.startswith(":::") and index not in source_lines]
         for line in fmt.uncited_lines(lines):
             plain = strip_citations(line, bare_only=True, trim_space=True).strip()
-            if plain[:80] not in held and not re.match(r"^(Source|Sources|来源)\s*[:：]", plain):
+            if plain[:80] not in held:
                 issue = Issue(plain[:300], "unsourced", "A number with no citation.")
                 findings.append(finding(issue.out()))
         return checked | verdicts_of(*findings)
@@ -284,7 +325,8 @@ class StudioVerification:
         return checker
 
     def _cover(
-        self, model, drafts: list[Draft], pool: Pool, material: str | None = None
+        self, model, drafts: list[Draft], pool: Pool, material: str | None = None, *,
+        spec: Spec | None = None, evidence: str | None = None,
     ) -> list[Draft]:
         """The subtitle is the deck's core message: after the slides are final, it is made to
         state what their titles say (claim fixes can move a title away from it), then the
@@ -311,7 +353,7 @@ class StudioVerification:
         )
         system, prompt = material_request(
             material if material is not None else self._material(list(pool.by_ref().values())),
-            system + "\n\nReply now.",
+            P.with_preferences(system + "\n\nReply now.", spec),
         )
         try:
             line = _unfence(self._text(model, system, prompt, "low", 2000)).strip()
@@ -328,7 +370,7 @@ class StudioVerification:
         text = drafts[0].text.replace(body[0], line, 1)
         by_ref = pool.by_ref()
         text, _ = check_citations(text, set(by_ref))
-        draft = Draft(text, self._claims(model, text, by_ref, rest, material=material))
+        draft = Draft(text, self._claims(model, text, by_ref, rest, material=evidence or material))
         if any(i.verdict in ("unsupported", "contradicted") for i in draft.issues or []):
             logger.info("The aligned subtitle is not supported; keeping the old one")
             return drafts
@@ -362,7 +404,9 @@ class StudioVerification:
         rest = "\n".join(fitted[1:])
 
         def check(text: str) -> Draft:
-            return Draft(text, self._claims(model, text, by_ref, rest, material=material))
+            return Draft(text, self._claims(
+                model, text, by_ref, rest, material=run.evidence_material or material,
+            ))
 
         again = warm_map(check, [fitted[i] for i in changed], WORKERS)
         for index, draft in zip(changed, again, strict=True):
@@ -376,25 +420,28 @@ class StudioVerification:
         source = D.visible_content(draft.text) if is_chart else draft.text
         tables = list(enumerate(markdown_tables(source)))
 
-        def exhibit(match: re.Match[str]) -> str:
-            attrs = match["attrs"]
-            if not fmt.EXHIBIT_CHART.search(attrs):
-                return match[0]
-            inside = [
-                (i, table) for i, table in tables
-                if match.start("body") <= table.start() < match.end("body")
-            ]
-            if _chart_rows_supported(inside, draft.coverage):
-                return match[0]
-            return match[0].replace(attrs, fmt.EXHIBIT_CHART.sub("", attrs).rstrip(), 1)
-
         if is_chart:
             if _chart_rows_supported(tables, draft.coverage):
                 return draft
             fallback = "compare" if layout in CHARTS else "table"
             text = fmt.with_marker(fmt.without_design(draft.text), fallback)
         else:
-            text = fmt.EXHIBIT.sub(exhibit, draft.text)
+            parsed = markdown_lines(draft.text, keepends=True)
+            lines = [line for line, _ in parsed]
+            offsets = list(accumulate(map(len, lines), initial=0))
+            for exhibit in fmt.report_exhibits(parsed):
+                attrs = exhibit.attrs
+                if not fmt.EXHIBIT_CHART.search(attrs):
+                    continue
+                inside = [
+                    (i, table) for i, table in tables
+                    if offsets[exhibit.start + 1] <= table.start() < offsets[exhibit.end]
+                ]
+                if not _chart_rows_supported(inside, draft.coverage):
+                    lines[exhibit.start] = lines[exhibit.start].replace(
+                        attrs, fmt.EXHIBIT_CHART.sub("", attrs).rstrip(), 1,
+                    )
+            text = "".join(lines)
         if text == draft.text:
             return draft
         self.skipped.append({
@@ -412,6 +459,7 @@ class StudioVerification:
         rest: str = "",
         *,
         material: str | None = None,
+        spec: Spec | None = None,
     ) -> list[str] | None:
         parts = []
         refs: set[int] = set()
@@ -440,7 +488,7 @@ class StudioVerification:
             )
         system, prompt = material_request(
             material if material is not None else self._material(list(by_ref.values())),
-            system + "\n\nRewrite them now.",
+            P.with_preferences(system + "\n\nRewrite them now.", spec),
         )
         try:
             # Repairing listed sentences from given passages is constrained work: on DeepSeek
@@ -464,7 +512,7 @@ class StudioVerification:
 
             # Asked again one part at a time; a part whose fix fails keeps its text.
             def single(draft: Draft) -> str:
-                one = self._fix_claims(model, [draft], by_ref, rest, material=material)
+                one = self._fix_claims(model, [draft], by_ref, rest, material=material, spec=spec)
                 return one[0] if one else draft.text
 
             return warm_map(single, drafts, WORKERS)
@@ -486,7 +534,9 @@ class StudioVerification:
         if not run.study:
             # The subtitle restates what the action titles claim; a scientific deck's
             # titles may name topics, so its subtitle stays as written and reviewed.
-            aligned = self._cover(model, drafts, pool, material)
+            aligned = self._cover(
+                model, drafts, pool, material, spec=run.spec, evidence=run.evidence_material,
+            )
             if _matches_plan(run, [d.text for d in aligned]):
                 drafts = aligned
         drafts = self._refit(model, effort, run, drafts, pool, material)

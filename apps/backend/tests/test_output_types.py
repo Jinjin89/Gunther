@@ -1,18 +1,21 @@
 import json
+from dataclasses import replace
 
 import pytest
 from fake_models import FakeProvider, gateway, model
 from pydantic import ValidationError
 from test_outputs import app_for, body, build, built, library, route, workspace
 from test_studio_pipeline import DECK, PASSAGES, pool, request_text, router
+from test_studio_plan_stages import dispatch, generate, options_for, prepare, propose
 
 from gunther.artifact_manifest import artifact_manifest_hash
 from gunther.artifact_workspace import ConversationBrief, load_workspace, spec_of
 from gunther.llm import ModelError
 from gunther.models import Artifact
+from gunther.output_types import OUTPUT_TYPES
 from gunther.outputs import Notes, Planned, Spec
 from gunther.schemas import BuildOutputInput
-from gunther.studio.format import SUMMARY_MARK
+from gunther.studio.format import LAYOUTS, SUMMARY_MARK
 from gunther.studio.pipeline import StudioAgents
 from gunther.studio.prompts import LANGUAGE_FALLBACK
 from gunther.studio.state import ReportStory, Run, _validate_storyline
@@ -38,6 +41,38 @@ def test_the_catalog_publishes_shape_capabilities(tmp_path):
     assert types["mind_map"] == {
         "unitLabel": "node", "outline": False, "design": False, "exports": ["markdown", "pdf"],
     }
+    assert {row["id"]: row["outlineLayouts"] for row in catalog if "outlineLayouts" in row} == {
+        "slides": list(LAYOUTS),
+    }
+    assert {row["id"]: row["minParts"] for row in catalog} == {
+        key: item.min_parts for key, item in OUTPUT_TYPES.items()
+    }
+    assert OUTPUT_TYPES["audio_overview"].min_parts == 2
+    assert OUTPUT_TYPES["flashcards"].min_parts == 1
+    assert {item["id"]: item["firstPartRole"] for item in catalog if item["firstPartRole"]} == {
+        "report": "Summary section", "briefing": "Summary section", "slides": "Title slide",
+    }
+
+
+@pytest.mark.parametrize(("length", "target"), [("short", 10), (None, 20), ("long", 40)])
+def test_direct_automatic_targets_follow_the_catalog_limit(length, target):
+    item = OUTPUT_TYPES["flashcards"]
+    assert item.automatic_target(length) == target
+    assert item.part_count_error(item.min_parts) is None
+    assert item.part_count_error(item.part_limit) is None
+    assert item.part_count_error(0) is not None
+    assert item.part_count_error(item.part_limit + 1) is not None
+
+
+def test_automatic_target_keeps_the_shape_minimum_when_the_limit_is_divided():
+    item = replace(OUTPUT_TYPES["audio_overview"], max_parts=4)
+    assert item.automatic_target("short") == item.min_parts == 2
+
+
+def slides_reply(request, *, deck=DECK):
+    if "presentation strategist" in request_text(request):
+        return dispatch("slides")(request)
+    return router(request, deck=deck)
 
 
 @pytest.mark.parametrize(
@@ -76,7 +111,7 @@ def test_catalog_types_build_with_their_recipe_and_save_their_label(
             return json.dumps(story)
         if "Write the report" in task:
             return report
-        return router(request, deck=DECK.replace("[2]", "[1]"))
+        return slides_reply(request, deck=DECK.replace("[2]", "[1]"))
 
     fake = FakeProvider(reply)
     with app_for(tmp_path, fake) as client:
@@ -129,6 +164,13 @@ def test_catalog_types_build_with_their_recipe_and_save_their_label(
         assert any("add at least 1 exhibit" in task for task in tasks) == summary
         [preview] = [event["sections"] for name, event in events if name == "outline"]
         assert len(preview) == len(result["outline"]) == story["requested_count"]
+        if summary:
+            sealed = result["provenance"]["creationPlan"]
+            assert sealed["outline"][0]["id"] == result["outline"][0]["id"]
+            assert sealed["outline"][0]["heading"] == result["sections"][0]["heading"]
+            assert sealed["proposal"]["count"] == {
+                "mode": "exact", "value": len(result["sections"]),
+            }
 
 
 @pytest.mark.parametrize(
@@ -144,7 +186,7 @@ def test_slides_use_language_and_soft_length_are_explicit(
     tmp_path, options, memo_language, expected_use, expected_length, expected_language,
 ):
     def reply(request):
-        response = router(request)
+        response = slides_reply(request)
         if "lead analyst" in request_text(request):
             return json.dumps(json.loads(response) | {"language": memo_language})
         return response
@@ -179,7 +221,7 @@ def test_approved_outlines_use_the_types_ceiling():
         BuildOutputInput.model_validate(body(kind="slides", style="slides", outline=outline))
 
 
-def test_model_outline_and_report_can_exceed_the_submitted_outline_limit(tmp_path):
+def test_catalog_limit_includes_the_summary_section(tmp_path):
     summary = "Results in brief"
     headings = [f"Results in district {number}" for number in range(1, 9)]
     story = {
@@ -202,11 +244,8 @@ def test_model_outline_and_report_can_exceed_the_submitted_outline_limit(tmp_pat
 
     with app_for(tmp_path, FakeProvider(reply)) as client:
         base, _ = library(client)
-        first = built(build(client, base, body()))
-        rebuilt = built(build(client, base, body(supersedesArtifactId=first["id"])))
-    for version in (first, rebuilt):
-        assert [part["heading"] for part in version["outline"]] == [summary, *headings]
-        assert len(version["sections"]) == 9
+        name, error = build(client, base, body())[-1]
+        assert name == "error" and error["detail"] == "The limit for Report is 8 sections."
 
 
 def test_replanning_a_faq_keeps_the_first_question():
@@ -262,7 +301,10 @@ def test_a_guessed_legacy_structure_builds_a_default_report():
     assert work.spec.output_type is None
     spec = spec_of(ConversationBrief(), work)
 
-    built = StudioAgents(gateway(FakeProvider(router))).make(model(), "low", spec, pool(), Notes())
+    agents = StudioAgents(gateway(FakeProvider(router)))
+    options = options_for("report")
+    prepared = prepare(agents, "report", spec=spec)
+    built = generate(agents, prepared, options, propose(agents, prepared, options))
     assert SUMMARY_MARK in built.content
 
 
@@ -271,9 +313,13 @@ def test_rebuild_with_a_new_language_plans_new_headings(tmp_path):
         task = request_text(request)
         if "Write in French." in task:
             if "planning a written report" in task:
-                return '{"title": "Résultats", "sections": [{"heading": "Bilan"}]}'
+                return json.dumps({
+                    "title": "Résultats", "summary_heading": "En bref",
+                    "sections": [{"heading": "Bilan"}],
+                })
             if "Write the report" in task:
-                return "# Résultats\n\n## Bilan\nLes résultats sont confirmés [1]."
+                return ("# Résultats\n\n## En bref\nLes résultats sont confirmés [1]."
+                        "\n\n## Bilan\nLe contrôle a confirmé la mesure [1].")
         return router(request)
 
     with app_for(tmp_path, FakeProvider(replies)) as client:
@@ -281,8 +327,8 @@ def test_rebuild_with_a_new_language_plans_new_headings(tmp_path):
         first = built(build(client, base, body()))
         request = body(supersedesArtifactId=first["id"], language="French")
         rebuilt = built(build(client, base, request))
-    assert first["outline"][0]["heading"] == "Results"
-    assert rebuilt["outline"][0]["heading"] == "Bilan"
+    assert [row["heading"] for row in first["outline"]] == ["The trial has an outcome", "Results"]
+    assert [row["heading"] for row in rebuilt["outline"]] == ["En bref", "Bilan"]
     assert rebuilt["provenance"]["language"] == "French"
 
 

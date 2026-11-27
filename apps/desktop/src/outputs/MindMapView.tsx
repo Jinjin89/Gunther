@@ -283,7 +283,7 @@ export function MindMapView(props: OutputContentProps) {
   };
 
   return <CitationDetails.Provider value={artifact.citations}>
-    <section className="mind-map-reader" aria-label="Mind map">
+    <section className="mind-map-reader reader-track" data-track="full" aria-label="Mind map">
       {roots.length > 0 ? <>
         <div className="mind-map-modes" role="group" aria-label="View">
           <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" aria-pressed={!isOutline} onClick={() => switchMode("map")}>Map</button>

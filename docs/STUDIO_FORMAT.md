@@ -4,6 +4,32 @@ Studio stores Markdown with a defined grammar for each layout. The backend write
 in-app renderer and exporters use that content for citations, checking and editing.
 Saved markers select the format and renderer for each version. [Outputs](OUTPUTS.md)
 
+## Plans and outlines
+
+A Studio proposal records a title, summary, angle, ordered coverage topics, a count with its mode and value, and a target duration when available. It is reviewed against the effective options, preferences and pinned evidence for that revision. An explicit approval binds the exact revision before generation. [Plan and approval API](OUTPUTS.md#api-boundaries)
+
+Slides and the five report types have an ordered outline. Each `PlanPart` has a stable `id`, a nonblank single-line `heading`, a `goal`, nullable `layout`, and `notes` for the writer. A heading can have up to 160 characters. Goal and notes can be empty or up to 400 characters each. `editedFields` names the user-authored `heading`, `goal`, `layout` or `notes` to carry into another planning round. Row IDs survive reordering, and dependencies refer to IDs. A valid edit keeps compatible row metadata by ID.
+
+The outline sets the exact count and heading order. The catalog's `firstPartRole` reserves row 1 as **Title slide** for Slides or **Summary section** for Report and Briefing doc. Each reserved row has its own stable ID and is included in the count. Slide layouts come from the catalog. `layout: null` delegates the choice to the writer, and the first slide uses `title`. Generation checks the decoded draft and assembled output against the approved count, headings and specified layouts. The saved outline editor supplies stable IDs, layouts and writer notes when rebuilding a verified current version. [Contracts](../packages/contracts/src/index.ts) · [Type catalog](../apps/backend/gunther/output_types.py)
+
+Flashcards, Quiz, Mind map and Audio overview use one to eight ordered coverage topics with stable IDs and up to 300 characters per topic. The plan controls size by decoded unit.
+
+| Count mode | Meaning |
+| --- | --- |
+| `auto` | An aim based on the type's part limit, divided by 4, 2 or 1 for Short, Standard or Long and rounded down. A mutation uses `{ "mode": "auto" }`. The reviewed plan shows the resulting value. |
+| `target` | An explicit aim within the catalog range. A valid draft can differ from that aim. |
+| `exact` | The shape decoder must find exactly the approved number of units. A mismatch uses the format-repair attempt before generation can report failure. |
+
+The permitted ranges are 1–40 cards, 1–60 map nodes including the root, and 2–120 dialogue lines with both speakers represented. A user-set target or exact count survives a change in length. [Direct output validation](../apps/backend/gunther/output_shapes.py)
+
+The effective conversation preferences are `emphasize` and `avoid`. Each list accepts up to eight entries of 300 characters and stores `{ id, text, mark }`. IDs are unique across the two lists. Marks are `you` for a preference attributed to the user, `edited` for a direct addition or edit, and `guessed` for a model suggestion. The content-changing stages receive the preferences as instructions. Claim verification uses the cited evidence. [Studio preferences](OUTPUTS.md#preferences)
+
+### Approved plan provenance
+
+Version 2 provenance can carry `creationPlan`. The first approved version seals `planId`, `revision`, `approvalMessageId`, `approvedAt`, `materialKey`, `options`, `preferences`, `proposal` and `outline`. A direct plan stores a null outline. A descendant seals a reference to the verified first version and its own effective preferences. The API resolves that reference to the original `creationPlan` and exposes `creationVersionId`, so **Approved plan** can show the snapshot alongside current **Preferences for future changes**.
+
+Historical seals retain their original fields and format markers. Saved style aliases and absent creation metadata remain readable. When an older outline lacks IDs, the editor can use stored part positions or derive IDs from the verified version and row position. The saved reader supports the version's original grammar, including historic report summary sections and slide markers. [Verified reads](../apps/backend/gunther/artifact_read.py) · [Version seals](../apps/backend/gunther/artifact_versions.py)
+
 ## 1. Decks (design v2)
 
 A deck is slides separated by a line `---`. Each slide starts with a marker line:
@@ -235,9 +261,7 @@ An unknown style uses the general report reader. Reading, Edit preview and A4 pr
 same report body. Print includes the complete text and shows citation numbers beside the relevant
 text, with the saved sources listed after the body.
 
-**Executive summary for Report and Briefing doc.** The first section is `## <heading>` immediately followed by the marker
-line `<!-- block: summary -->`. The renderer draws it as a summary box. It holds 1 short
-paragraph (the answer) and 3–5 bullets `**finding**: detail [n]`.
+**Executive summary for Report and Briefing doc.** The writer uses row 1's approved heading, goal and writer notes for the first `##` section. Studio adds `<!-- block: summary -->` below its heading so the reader and exporters display it as the summary. The decoded draft and assembled report must match the approved section count and heading order and contain summary text under the first heading. The preamble holds the title and an optional introductory line. Place callouts within sections. [Report validation](../apps/backend/gunther/studio/drafting.py) · [Report assembly](../apps/backend/gunther/studio/pipeline.py)
 
 Study guide, FAQ and Timeline start with their first topic, question or dated event. The
 summary marker and numeric exhibit requirement apply to Report and Briefing doc.

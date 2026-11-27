@@ -8,7 +8,15 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from fake_models import FakeProvider, gateway, model
 from pydantic import BaseModel
-from test_studio_pipeline import DECK, UNSUPPORTED_DECK, FakeRenderer, pool, request_text, router
+from test_studio_pipeline import (
+    DECK,
+    UNSUPPORTED_DECK,
+    FakeRenderer,
+    build_studio,
+    pool,
+    request_text,
+    router,
+)
 
 from gunther.llm import Turn
 from gunther.outputs import Notes, Spec
@@ -80,6 +88,9 @@ def build_router(request):
         return json.dumps(
             {
                 "title": "Plan with the adjusted saving",
+                "summary_heading": "Cool roofs save less after adjustment",
+                "summary_job": "Lead with the adjusted saving and the size of the trial",
+                "summary_refs": [2, 1],
                 "sections": [
                     {"heading": "Weather adjustment changes the estimate", "refs": [2]},
                     {"heading": "Reflectivity falls over time", "refs": [3]},
@@ -123,9 +134,8 @@ def test_build_requests_share_material_and_warm_workers(kind, tmp_path):
     notes = Notes(knowledge=[("Preference", "Keep the distinction between raw and adjusted")])
     material = agents._notes_text(notes) + agents._material(sources.items)
     assert all(material.count(item.text) == 1 for item in sources.items)
-    built = agents.make(
-        model(), "high", Spec(kind, "collaborator", brief="A short briefing"), sources, notes
-    )
+    spec = Spec(kind, "collaborator", brief="A short briefing")
+    built = build_studio(agents, model(), "high", spec, sources, notes)
     assert built.content
     expected_system, expected_prompt = material_request(material, "")
     material_calls = []
@@ -238,14 +248,23 @@ def test_large_material_keeps_original_passages_and_fixed_order(monkeypatch):
     agents = StudioAgents(gateway(fake), design=False)
     sources = pool()
     sources.items.reverse()
-    agents.make(model(), "high", Spec("report", "collaborator"), sources, Notes())
+    build_studio(agents, model(), "high", Spec("report", "collaborator"), sources, Notes())
     calls = [r for r in fake.requests if "research analyst reading part" not in request_text(r)]
     prefix = calls[0]["messages"][1]["content"].split(P.TASK_BOUNDARY)[0]
     assert "Reading note" in prefix
     for item in sources.items:
         assert agents._passage(item) in prefix
     assert prefix.index("[1] (Source") < prefix.index("[2] (Source") < prefix.index("[3] (Source")
-    assert all(r["messages"][1]["content"].split(P.TASK_BOUNDARY)[0] == prefix for r in calls)
+    raw = "The material:\n\n" + agents._material(sorted(sources.items, key=lambda item: item.ref))
+    checks = []
+    for request in calls:
+        seen = request["messages"][1]["content"].split(P.TASK_BOUNDARY)[0]
+        if step_of(request) == "claim check":
+            checks.append(seen)
+            assert seen == raw
+        else:
+            assert seen == prefix
+    assert checks
 
 
 def test_concurrent_checks_do_not_replace_asks_gateway():

@@ -3,8 +3,9 @@
 import hashlib
 from threading import Event
 
-from fake_models import FakeProvider, agent_replies, output_replies
+from fake_models import FakeProvider, agent_replies
 from sqlalchemy import select, text
+from test_artifact_agent import done
 from test_outputs import (
     ONE_SECTION,
     SIDECAR,
@@ -15,10 +16,14 @@ from test_outputs import (
     built,
     in_background,
     library,
+    output_replies,
+    output_turn,
+    plan_and_approve,
     route,
     saved_output,
     workspace,
 )
+from test_plan_approval import plan_request, plan_worker
 
 from evals.sse import ask_turn
 from gunther.models import (
@@ -56,10 +61,20 @@ def test_trashing_an_old_version_hides_the_lineage_and_restores_all_three(tmp_pa
     with app_for(tmp_path, FakeProvider(report_reply())) as client:
         base, _ = library(client)
         headers = workspace(client)
-        payload = body(conversationId="field-report")
-        first = built(build(client, base, payload, headers))
+        request_id = body()["clientRequestId"]
+        first = built(plan_and_approve(
+            client, base, {"type": "report"}, conversation_id="field-report",
+            request_id=request_id, headers=headers,
+        ))["artifact"]
+        creation = first["provenance"]["creationPlan"]
+        approval = {
+            "kind": "approve", "clientRequestId": request_id, "planId": creation["planId"],
+            "planRevision": creation["revision"],
+        }
         second = edit(client, base, first, headers)
         third = edit(client, base, second, headers)
+        replayed = built(output_turn(client, base, "field-report", approval, headers))
+        assert replayed["artifact"] == first
         versions = [first, second, third]
         paths = [route(base, v["id"]) for v in versions]
         history = conversation_path(base, "field-report")
@@ -71,6 +86,11 @@ def test_trashing_an_old_version_hides_the_lineage_and_restores_all_three(tmp_pa
         assert (entry["kind"], entry["title"], entry["outputType"], entry["versionCount"]) == (
             "output", third["title"], third["outputType"], 3,
         )
+        assert entry["open"] == {
+            "view": "library", "libraryId": base, "tab": "outputs",
+            "artifactId": first["id"], "lineageId": first["lineageId"],
+            "conversationId": "field-report", "typeId": "report", "planId": creation["planId"],
+        }
         assert client.get("/api/trash", headers=headers).json() == [entry]
         assert client.get(f"/api/knowledge-bases/{base}/artifacts", headers=headers).json() == []
         for path in paths:
@@ -81,7 +101,7 @@ def test_trashing_an_old_version_hides_the_lineage_and_restores_all_three(tmp_pa
         )
         assert render.status_code == 404 and "Artifact" in render.json()["detail"]
         assert client.post(f"{paths[2]}/check", headers=headers).status_code == 404
-        replay = build(client, base, payload, headers)
+        replay = output_turn(client, base, "field-report", approval, headers)
         assert replay[-1][0] == "error" and replay[-1][1]["status"] == 404
         assert "output-conv:field-report" not in activity_of(client)
         hidden = client.get(history, headers=headers).raise_for_status().json()
@@ -89,11 +109,38 @@ def test_trashing_an_old_version_hides_the_lineage_and_restores_all_three(tmp_pa
         [summary] = client.get(conversation_path(base), headers=headers).json()
         assert summary["artifactCount"] == 0 and summary["lineageId"] is None
 
-        restore(client, entry, headers)
+        assert restore(client, entry, headers)["open"] == entry["open"]
         assert client.get("/api/trash", headers=headers).json() == []
         for path, saved in zip(paths, versions, strict=True):
             assert client.get(path, headers=headers).raise_for_status().json() == saved
         assert client.get(history, headers=headers).json() == before
+
+
+def test_restore_keeps_the_unsaved_plan_address_after_restart(tmp_path):
+    cid = "trashed_unsaved_plan"
+    with app_for(tmp_path, FakeProvider(plan_worker)) as client:
+        base, _ = library(client)
+        headers = workspace(client)
+        plan = done(output_turn(client, base, cid, plan_request(), headers))["plan"]
+        entry = client.post(
+            conversation_path(base, cid) + "/trash", headers=headers,
+        ).raise_for_status().json()
+        expected = {
+            "view": "library", "libraryId": base, "tab": "outputs", "conversationId": cid,
+            "typeId": "report", "planId": plan["planId"], "artifactId": None, "lineageId": None,
+        }
+        assert entry["open"] == expected
+
+    fake = FakeProvider([])
+    with app_for(tmp_path, fake) as client:
+        headers = workspace(client)
+        assert client.get("/api/trash", headers=headers).json() == [entry]
+        assert restore(client, entry, headers)["open"] == expected
+        reopened = client.get(
+            conversation_path(base, cid), headers=headers,
+        ).raise_for_status().json()
+        assert reopened["works"][0]["plan"] == plan
+        assert not fake.requests and activity_of(client) == {}
 
 
 def test_an_output_run_refuses_trash_of_both_the_output_and_conversation(tmp_path):

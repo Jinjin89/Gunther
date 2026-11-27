@@ -9,7 +9,14 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
+
+from markdown_it import MarkdownIt
+from markdown_it.rules_block import StateBlock
+from mdit_py_plugins.dollarmath import dollarmath_plugin
+from mdit_py_plugins.footnote import footnote_plugin
+from mdit_py_plugins.footnote.index import footnote_def
 
 from gunther.citations import citation_numbers, has_markers, marker_spans, strip_citations
 from gunther.markup import Markup, markdown_lines, parse_markup, prose_lines
@@ -178,13 +185,47 @@ def _items(body: list[str]) -> tuple[list[str], list[str]]:
     return items, other
 
 
+_TABLE_DELIMITER = re.compile(r":?-+:?")
+
+
+def table_cells(line: str) -> list[str]:
+    """Split one Markdown table line into trimmed cells, keeping escaped pipes."""
+    text = line.strip()
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|") and not text.endswith(r"\|"):
+        text = text[:-1]
+    cells: list[str] = []
+    current: list[str] = []
+    index = 0
+    while index < len(text):
+        if text[index] == "\\" and index + 1 < len(text) and text[index + 1] == "|":
+            current.append("|")
+            index += 2
+        elif text[index] == "|":
+            cells.append("".join(current).strip())
+            current = []
+            index += 1
+        else:
+            current.append(text[index])
+            index += 1
+    cells.append("".join(current).strip())
+    return cells
+
+
+def is_table_separator(cells: Sequence[str]) -> bool:
+    return bool(cells) and all(_TABLE_DELIMITER.fullmatch(cell) for cell in cells)
+
+
 def read_table(body: list[str]) -> tuple[list[list[str]], list[str]]:
     """Return the table rows and remaining lines; the separator isn't a row."""
     rows, other = [], []
+    saw_separator = False
     for line in body:
         if line.startswith("|"):
-            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-            if all(re.fullmatch(r":?-{2,}:?", cell) for cell in cells if cell):
+            cells = table_cells(line)
+            if len(rows) == 1 and not saw_separator and is_table_separator(cells):
+                saw_separator = True
                 continue
             rows.append(cells)
         else:
@@ -551,18 +592,176 @@ EXHIBIT = re.compile(
     re.M | re.S,
 )
 EXHIBIT_CHART = re.compile(r"\bchart\s*=\s*(?:" + "|".join(CHART_KINDS) + r")\b")
+_REPORT_BLOCK = re.compile(r"[ \t]*:::(?P<kind>exhibit|callout)(?=\s|$)(?P<attrs>.*)")
+_ATTRIBUTION = re.compile(r"([^:：]+)[:：](.*)")
+_GFM_FOOTNOTE = re.compile(r"\[\^((?:\\[\[\]\\]|\\(?![\[\]\\])|[^\[\]\\ \t])+)\]:")
+
+
+def _gfm_footnote_def(state: StateBlock, start: int, end: int, silent: bool) -> bool:
+    """Use the footnote parser with GFM's label rules, including escaped brackets."""
+
+    source = state.src
+    label = _GFM_FOOTNOTE.match(
+        source, state.bMarks[start] + state.tShift[start], state.eMarks[start],
+    )
+    if label is None or len(label[1]) > 999:  # GFM uses the CommonMark label length limit.
+        return False
+    if "]" not in label[1]:
+        return footnote_def(state, start, end, silent)
+    # Hide escaped closing brackets from markdown-it-footnote without changing source offsets.
+    # Only the visibility of the call matters here, so its label can stay in the original text.
+    begin, after = label.span(1)
+    state.src = source[:begin] + label[1].replace("]", "］") + source[after:]
+    try:
+        return footnote_def(state, start, end, silent)
+    finally:
+        state.src = source
+
+
+_REPORT_MARKDOWN = (
+    MarkdownIt().enable("table")
+    .use(dollarmath_plugin, allow_labels=False, double_inline=True)
+    .use(footnote_plugin, inline=False, move_to_end=False)
+)
+_REPORT_MARKDOWN.block.ruler.at(
+    "footnote_def", _gfm_footnote_def, {"alt": ["paragraph", "reference"]},
+)
+_VISIBLE_TOKENS = {
+    "text", "code_inline", "code_block", "fence", "math_inline", "math_inline_double", "math_block",
+}
+
+
+def _report_blocks(
+    lines: Sequence[tuple[str, bool]],
+) -> Iterator[tuple[re.Match[str], int, int]]:
+    """Find the opening and closing lines of report blocks in decoded Markdown."""
+
+    index = 0
+    while index < len(lines):
+        line, protected = lines[index]
+        opening = None if protected else _REPORT_BLOCK.fullmatch(line.rstrip("\r\n"))
+        if opening is None:
+            index += 1
+            continue
+        end = next((at for at in range(index + 1, len(lines))
+                    if not lines[at][1] and lines[at][0].strip() == ":::"), len(lines))
+        yield opening, index, end
+        index = end + 1
+
+
+@dataclass(frozen=True)
+class ReportExhibit:
+    start: int
+    end: int
+    attrs: str
+    caption: int | None
+    rows: tuple[int, ...]
+    attribution: tuple[int, str] | None
+
+
+def report_exhibits(lines: str | Sequence[tuple[str, bool]]) -> Iterator[ReportExhibit]:
+    """Decode exhibit fields by their positions, keeping the original line indices."""
+
+    if isinstance(lines, str):
+        lines = markdown_lines(lines)
+    for opening, start, end in _report_blocks(lines):
+        if opening["kind"] != "exhibit":
+            continue
+        body = [(index, lines[index][0].strip(), lines[index][1])
+                for index in range(start + 1, end) if lines[index][0].strip()]
+        caption = None
+        if body and not body[0][2] and not body[0][1].startswith("|"):
+            caption = body.pop(0)[0]
+        table_end = next((at for at, (_, line, protected) in enumerate(body)
+                          if protected or not line.startswith("|")), len(body))
+        rows_list: list[int] = []
+        saw_separator = False
+        for at, line, _ in body[:table_end]:
+            cells = table_cells(line)
+            if len(rows_list) == 1 and not saw_separator and is_table_separator(cells):
+                saw_separator = True
+                continue
+            rows_list.append(at)
+        rows = tuple(rows_list)
+        attribution = None
+        trailing = body[table_end:]
+        if rows and len(trailing) == 1:
+            at, line, protected = trailing[0]
+            field = None if protected else _ATTRIBUTION.fullmatch(line)
+            if field and field[1].strip() and field[2].strip():
+                attribution = at, field[2].strip()
+        yield ReportExhibit(start, end, opening["attrs"], caption, rows, attribution)
+
+
+def planned_exhibit_problem(
+    exhibits: Iterable[ReportExhibit], wanted: int, section: int,
+) -> str | None:
+    if not wanted:
+        return None
+    complete = sum(
+        exhibit.caption is not None and len(exhibit.rows) >= 2 and exhibit.attribution is not None
+        for exhibit in exhibits
+    )
+    if complete >= wanted:
+        return None
+    return (
+        f"Section {section} plans {wanted} exhibit(s) and has {complete}. "
+        "Include the planned exhibits in this section, with a caption, "
+        "Markdown table and trailing attribution."
+    )
+
+
+def _visible_markdown(text: str) -> bool:
+    # A rendered footnote begins with a call in visible Markdown. References inside hidden
+    # definitions cannot make those definitions visible, even when they refer to each other.
+    footnotes = 0
+    for token in _REPORT_MARKDOWN.parse(text):
+        if token.type in ("footnote_reference_open", "footnote_reference_close"):
+            footnotes += token.nesting
+        elif not footnotes and any(
+            leaf.type in ("image", "footnote_ref")
+            or (leaf.type in _VISIBLE_TOKENS and leaf.content.strip())
+            for leaf in (token.children or [token])
+        ):
+            return True
+    return False
+
+
+def report_section_has_content(section: str) -> bool:
+    """Check the rendered Markdown blocks below the section heading."""
+
+    body = section.partition("\n")[2]
+    lines = markdown_lines(body, keepends=True)
+    content = [line for line, _ in lines]
+    first = 0
+    for opening, start, end in _report_blocks(lines):
+        if _visible_markdown("".join(content[first:start])):
+            return True
+        inside = "".join(content[start + 1:end])
+        if opening["kind"] == "callout":
+            if _visible_markdown(opening["attrs"].strip()):
+                return True
+            inside = inside.strip()
+        if _visible_markdown(inside):
+            return True
+        first = end + 1
+    return _visible_markdown("".join(content[first:]))
 
 
 def check_report(
     text: str, *, require_exhibits: bool = True, summary_box: bool = True,
+    exhibit_counts: Sequence[int] = (),
 ) -> list[str]:
     """What is wrong with a report as a whole, as instructions the writer can act on."""
 
+    from gunther.output_shapes import split_headed
+
     problems: list[str] = []
-    headings = re.findall(r"^##[ \t]+(.*)$", text, re.M)
-    if not headings:
+    preamble, sections = split_headed(text)
+    if not sections:
         return ['The report has no "## " sections.']
-    for number, heading in enumerate(headings, 1):
+    for number, section in enumerate(sections, 1):
+        heading = section.partition("\n")[0].removeprefix("##").strip()
         size = units(heading)
         if not size:
             problems.append(f'Section {number} needs text after "## ".')
@@ -572,8 +771,34 @@ def check_report(
                 f"Section {number} heading is {size} units; the limit is {REPORT_HEADING_UNITS}. "
                 f'{instruction}: "{heading[:80]}"'
             )
-    body_text = re.sub(r"^:::exhibit.*?^:::\s*$", "", text, flags=re.M | re.S)
-    body_text = re.sub(r"^#{1,2}[ \t]+.*$", "", body_text, flags=re.M)
+    prose = []
+    exhibit_number = 0
+    for number, part in enumerate((preamble, *sections)):
+        lines = markdown_lines(part)
+        excluded: set[int] = set()
+        exhibits = list(report_exhibits(lines))
+        for exhibit in exhibits:
+            exhibit_number += 1
+            excluded.update(range(exhibit.start, exhibit.end + 1))
+            if exhibit.caption is None:
+                problems.append(f"Exhibit {exhibit_number} needs a caption line before its table.")
+            if len(exhibit.rows) < 2:
+                problems.append(f"Exhibit {exhibit_number} needs a Markdown table with data rows.")
+            if exhibit.attribution is None:
+                problems.append(
+                    f"Exhibit {exhibit_number} needs an attribution line after the table "
+                    'in the form "Label: source details".'
+                )
+        if (
+            require_exhibits and 1 <= number <= len(exhibit_counts)
+            and (problem := planned_exhibit_problem(exhibits, exhibit_counts[number - 1], number))
+        ):
+            problems.append(problem)
+        prose.extend(
+            line for index, (line, protected) in enumerate(lines)
+            if not protected and index not in excluded and not line.startswith(("# ", "## "))
+        )
+    body_text = "\n".join(prose)
     for match in META.finditer(body_text):
         problems.append(
             f'"{match.group(0)}": write about the world, not about the material — state the '
@@ -585,30 +810,6 @@ def check_report(
             'Summary bullets start with a label ("**Finding**"); make each bold lead the '
             "finding itself."
         )
-    exhibits = EXHIBIT.findall(text)
-    if require_exhibits:
-        numeric_sections = sum(
-            1
-            for chunk in re.split(r"^## ", text, flags=re.M)[2 if summary_box else 1:]
-            if len(re.findall(
-                r"\d[\d.,]*\s?(?:%|°C|€|\$|m²|kWh|million|billion|万|亿)", chunk,
-            )) >= 3
-        )
-        wanted = min(4, (numeric_sections + 1) // 2)
-        if len(exhibits) < wanted:
-            problems.append(
-                f"The report has {len(exhibits)} exhibits but {numeric_sections} sections rest on "
-                f"compared numbers: add at least {wanted - len(exhibits)} exhibit(s) "
-                "(:::exhibit chart table with caption and Source line) where numbers are compared."
-            )
-    for number, (_attrs, body) in enumerate(exhibits, 1):
-        lines = [line for line in body.split("\n") if line.strip()]
-        if not lines or lines[0].startswith("|"):
-            problems.append(f"Exhibit {number} needs a caption line before its table.")
-        if not any(line.startswith("|") for line in lines):
-            problems.append(f"Exhibit {number} needs a Markdown table.")
-        if not lines or not re.match(r"^(Source|Sources|来源)\s*[:：]", lines[-1]):
-            problems.append(f'Exhibit {number} ends with a "Source: …" line.')
     return problems
 
 
@@ -658,52 +859,45 @@ def cite_captions(text: str) -> str:
     """An exhibit caption that states numbers cites what its table cites: the caption reads
     them off the table."""
 
-    def fix(match: re.Match[str]) -> str:
-        block = match.group(0)
-        lines = block.split("\n")
-        if len(lines) < 3:
-            return block
-        caption = lines[1]
+    parsed = markdown_lines(text, keepends=True)
+    lines = [line for line, _ in parsed]
+    for exhibit in report_exhibits(parsed):
+        index = exhibit.caption
+        if index is None:
+            continue
+        caption = lines[index]
         body = re.sub(r"^(?:Exhibit|图表|图)\s*\d+", "", caption)
         if has_markers(caption) or not re.search(r"\d", body):
-            return block
-        refs = citation_numbers("\n".join(lines[2:]), bare_only=True)
-        if not refs:
-            return block
-        lines[1] = caption.rstrip() + " " + "".join(f"[{n}]" for n in refs)
-        return "\n".join(lines)
-
-    return parse_markup(text).map_prose(lambda prose: EXHIBIT.sub(fix, prose), include_inline=True)
+            continue
+        refs = citation_numbers("".join(lines[index + 1:exhibit.end]), bare_only=True)
+        if refs:
+            content = caption.rstrip("\r\n")
+            lines[index] = (
+                content.rstrip() + " " + "".join(f"[{n}]" for n in refs) + caption[len(content):]
+            )
+    return "".join(lines)
 
 
 def cite_exhibit_rows(text: str) -> str:
-    """An exhibit row with numbers and no citation cites what the exhibit's Source line cites:
-    the table is read off those sources, and each value must be checkable against them."""
+    """Bind otherwise uncited numeric rows to the exhibit's trailing attribution."""
 
-    def fix(match: re.Match[str]) -> str:
-        lines = match.group(0).split("\n")
-        source = next(
-            (ln for ln in reversed(lines) if re.match(r"^(Source|Sources|来源)\s*[:：]", ln)), ""
-        )
+    parsed = markdown_lines(text, keepends=True)
+    lines = [line for line, _ in parsed]
+    for exhibit in report_exhibits(parsed):
+        if exhibit.attribution is None:
+            continue
+        _, source = exhibit.attribution
         refs = "".join(f"[{n}]" for n in citation_numbers(source, bare_only=True))
         if not refs:
-            return match.group(0)
-        out = []
-        for line in lines:
-            cells = line.strip().strip("|").split("|") if line.startswith("|") else []
-            data = (
-                cells
-                and not all(re.fullmatch(r"\s*:?-{2,}:?\s*", c) for c in cells)
-                and re.search(r"\d", "".join(cells[1:]))
-                and not has_markers(line)
-                and line is not lines[0]
-            )
-            if data and out and any(o.startswith("|") for o in out):
-                line = line.rstrip().rstrip("|").rstrip() + f" {refs} |"
-            out.append(line)
-        return "\n".join(out)
-
-    return parse_markup(text).map_prose(lambda prose: EXHIBIT.sub(fix, prose), include_inline=True)
+            continue
+        for index in exhibit.rows[1:]:
+            raw = lines[index]
+            cells = raw.strip().strip("|").split("|")
+            if re.search(r"\d", "".join(cells[1:])) and not has_markers(raw):
+                content = raw.rstrip("\r\n")
+                row = content.rstrip().rstrip("|").rstrip()
+                lines[index] = f"{row} {refs} |{raw[len(content):]}"
+    return "".join(lines)
 
 
 def _overlap(one: str, two: str) -> float:
@@ -826,8 +1020,8 @@ def table_separators(text: str) -> str:
         out.append(line)
         starts = rows[index] and (index == 0 or not rows[index - 1])
         following = rows[index + 1] if index + 1 < len(rows) else ""
-        if starts and following and not re.fullmatch(r"\|?[\s:|-]+\|?", following):
-            columns = len(rows[index].strip("|").split("|"))
+        if starts and following and not is_table_separator(table_cells(following)):
+            columns = len(table_cells(rows[index]))
             ending = line[len(line.rstrip("\r\n")):]
             out.append("|" + " --- |" * columns + ending)
     return "".join(out)

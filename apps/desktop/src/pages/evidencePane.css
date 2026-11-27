@@ -1,4 +1,5 @@
 .evidence-overview { flex: 1; min-height: 0; overflow: auto; padding: 14px; color: var(--gx-muted); font-size: var(--gx-text-xs); }
+.library-inspector .evidence-overview.evidence-bands { grid-template-columns: minmax(0, 45rem); justify-content: center; }
 .evidence-overview h3 { margin: 0 0 8px; color: var(--gx-ink); font-size: var(--gx-text-sm); font-weight: 650; }
 .evidence-overview p { margin: 6px 0; line-height: 1.5; }
 .evidence-cited-header { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }

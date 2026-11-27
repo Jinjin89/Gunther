@@ -3,16 +3,21 @@
 from fastapi import APIRouter, Request, status
 from fastapi.responses import Response, StreamingResponse
 
+from gunther.answer_runs import Stopped
 from gunther.api_common import _service, _sse
 from gunther.artifact_api_common import (
     WorkspaceHeader,
     _artifact_http_errors,
     _conversation_run,
     _output_error,
+    _output_event,
     _output_run,
 )
+from gunther.artifact_plans import PlanConflictError
+from gunther.artifact_read import ArtifactIntegrityError
 from gunther.artifact_versions import ArtifactConflictError
 from gunther.schemas import (
+    ApprovePlanTurnInput,
     ArtifactBriefStateOut,
     ArtifactConversationOut,
     ArtifactConversationSummaryOut,
@@ -20,7 +25,10 @@ from gunther.schemas import (
     CreateArtifactConversationInput,
     EditArtifactBriefInput,
     ImportArtifactConversationsInput,
+    InitialPlanTurnInput,
+    SavedArtifactTurnInput,
     UpdateArtifactConversationInput,
+    WorkPlanPatchInput,
 )
 
 turn_router = APIRouter()
@@ -40,25 +48,52 @@ def artifact_turn_stream(
     """Send a turn and hear its progress, followed by ``done``, ``error`` or ``stopped``."""
 
     service = _service(request)
+    command = payload.root
+    initial = command if isinstance(command, InitialPlanTurnInput) else None
+    saved = command if isinstance(command, SavedArtifactTurnInput) else None
+    plan_id = command.plan_id if saved is None else None
+    text = getattr(command, "text", "") or (initial.setup.focus if initial else "")
     try:
-        title = service.artifact_conversation_title(
-            knowledge_base_id, workspace_id, conversation_id, payload.text
+        earlier = service.artifact_turn_replay(
+            knowledge_base_id, workspace_id, conversation_id, payload,
         )
-    except LookupError as error:
+        if earlier is not None:
+            return _output_event("done", earlier.model_dump(mode="json", by_alias=True))
+        if saved and saved.build and saved.target_lineage_id is None:
+            raise PlanConflictError(
+                "plan_required", "Plan this output in Studio and choose Approve & Generate.",
+            )
+        title = service.artifact_conversation_title(
+            knowledge_base_id, workspace_id, conversation_id, text, initial=initial,
+        )
+        about = service.library_title(knowledge_base_id)
+    except Stopped:
+        return _output_event("stopped", {"type": "stopped"})
+    except (ArtifactIntegrityError, LookupError, ValueError) as error:
         return _output_error(error)
+    if isinstance(command, ApprovePlanTurnInput):
+        words = (f"Generating {title}", "Output ready", "Couldn't generate")
+    elif plan_id is not None:
+        words = (f"Planning {title}", "Plan updated", "Couldn't plan")
+    else:
+        words = (f"Working on {title}", "Done", "Couldn't finish")
     return _output_run(
         request,
         workspace_id,
         knowledge_base_id,
-        payload.text or (payload.build.focus if payload.build else ""),
-        lambda hear: service.artifact_turn(
-            knowledge_base_id, workspace_id, conversation_id, payload, hear
+        text or words[0],
+        lambda hear, run: service.artifact_turn(
+            knowledge_base_id, workspace_id, conversation_id, payload, hear, run=run,
         ),
-        (f"Working on {title}", "Done", "Couldn't finish"),
-        service.library_title(knowledge_base_id),
+        words,
+        about,
         conversation_id=conversation_id,
-        type_id=payload.build.type if payload.build else None,
-        lineage_id=payload.target_lineage_id,
+        type_id=(
+            initial.setup.type if initial else saved.build.type if saved and saved.build else None
+        ),
+        lineage_id=saved.target_lineage_id if saved else None,
+        plan_id=plan_id,
+        request_id=command.client_request_id,
     )
 
 
@@ -190,4 +225,22 @@ def edit_artifact_brief(
     with _artifact_http_errors(ValueError):
         return _service(request).edit_artifact_brief(
             knowledge_base_id, workspace_id, conversation_id, payload
+        )
+
+
+@router.patch(
+    "/knowledge-bases/{knowledge_base_id}/artifact-conversations/{conversation_id}/works/{work_key}",
+    response_model=ArtifactConversationOut,
+)
+def patch_artifact_work(
+    knowledge_base_id: str,
+    conversation_id: str,
+    work_key: str,
+    payload: WorkPlanPatchInput,
+    request: Request,
+    workspace_id: WorkspaceHeader,
+) -> ArtifactConversationOut:
+    with _artifact_http_errors(ValueError):
+        return _service(request).patch_artifact_work(
+            knowledge_base_id, workspace_id, conversation_id, work_key, payload,
         )

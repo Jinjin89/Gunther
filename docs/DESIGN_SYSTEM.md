@@ -25,11 +25,9 @@ Use neutral page surfaces and ink for actions. Green marks Gunther and grounded 
 
 Choose tokens from the CSS when adding surfaces. Use `--gx-hover` and `--gx-active` for hover and selection, `--gx-ghost` for placeholders or disabled states, and `--gx-danger` for errors and destructive actions. Apply the selected Light, Dark or Match system appearance before paint. Use tabular figures for counters and times.
 
-The Library workspace uses `--gx-sidebar` for Library, `--gx-canvas` for the middle, and `--gx-surface-2` with `--gx-surface` cards for Inspector. Their 44 px headers share a hairline; Chat uses neutral ink and focus treatments.
+The Library workspace uses `--gx-sidebar` for Library, `--gx-canvas` for the middle, and `--gx-surface-2` with `--gx-surface` cards for Inspector. Their 44px headers share a hairline. Chat uses neutral ink and focus treatments.
 
 Studio rows use a 16 px catalog icon, a 14 px semibold title and 12 px details. Titles and details wrap as the Inspector resizes. The current row has a 2 px ink rule. Row menus appear on hover or keyboard focus and stay visible on touch. [Studio outputs](OUTPUTS.md#conversations-and-versions)
-
-Studio document readers use local Source Serif 4 for reading and Inter for controls. The controls honor the Serif and Rounded appearance choices. The title, reading and footer align to a centered column up to 66 characters wide, capped at the content width token. Verified exhibits can use the wider content area, and the map can use the middle pane. Heading size and Edit layout respond to the middle pane's available width. Citation numbers keep a visible keyboard focus indicator. Paper uses a white A4 page, 11 pt reading text and static numbered references. [Studio outputs](OUTPUTS.md#conversations-and-versions)
 
 The Inspector uses underlined tabs and tabular Evidence counts. Evidence opens with context and status, followed by cited sources, key results, or a passage. Supporting provenance uses foldable rows. The Brief uses serif for the goal, selectable text for reading, and inline fields in edit mode. [Conversation Brief](ASK.md#conversation-brief)
 
@@ -40,6 +38,42 @@ Lucide icons use a neutral stroke and the shared icon sizing. Use a library glyp
 Motion signals a change or work in progress. The fast, regular and slow tokens are 120, 180 and 280 ms. Use the common keyframes for entrances, menu popups, loading and the brand mark. Respect reduced motion.
 
 **Show in answer** scrolls within Chat and fades a 2 px ink outline over 1.2 seconds. With reduced motion, the outline holds for the same duration and clears without animation.
+
+## Library workspace widths
+
+The three columns are Library, middle and Inspector. Measure `W` from `.library-workspace` after app navigation and `L` from the Library track's outer width including its border. Observe both so a dock drag recalculates capacity even when the window stays the same. The Library dock is 200–360px, with a 260px default and 44px rail. The live Inspector calculation uses CSS pixels.
+
+```text
+R        = W - L
+Imax     = min(960, floor(R / 2), floor(R - 480))
+Idefault = clamp(336, round(R / 3), 400)
+I        = clamp(280, chosenInspectorWidth ?? Idefault, Imax)  when Imax >= 280
+M        = W - L - effectiveInspectorTrack
+```
+
+The sizing rule reserves 480px for the middle and gives the Inspector at most half the space left by the Library. Studio, Evidence Passage, images and Original PDF use the same dock bounds. Original uses the full Inspector panel and its measured Fit. A capacity clamp preserves the stored choice. Dock grips support 24px keyboard steps and double-click reset to the live default.
+
+Viewport collapse and overlay rules use 840px for Library, 1080px for Inspector and the 1200px Library rail preference for wide readers. Workspace capacity can force a rail sooner. At `W >= 568px`, a Library that cannot fit beside a 480px middle and the right rail uses the 44px track. An Inspector that cannot dock uses a 44px rail and opens as an overlay. At `W < 568px`, a single 44px **Workspace panels** strip above Chat, Source, Setup and Output holds the Library, Evidence and Studio controls. The side tracks become zero and overlays open below the strip within the workspace. One overlay opens at a time. Escape backs out of Evidence detail before closing an overlay and focus returns to its trigger. [Workspace columns](../apps/desktop/src/pages/KnowledgeBaseWorkspace.tsx) · [Inspector and Studio styles](../apps/desktop/src/pages/libraryWorkspace.css)
+
+Studio centers its sections at up to `45rem`. The tile grid uses `repeat(auto-fit, minmax(min(100%, 7.5rem), 1fr))` with an 8px gap. The output card grid uses `repeat(auto-fill, minmax(min(100%, 17rem), 1fr))` and retains newest-first order. Evidence passages and their context use a centered measure of up to `66ch`. [Evidence styles](../apps/desktop/src/design/evidence.css)
+
+## Output reader widths
+
+`.library-middle-page` owns scrolling and the `library-reader` inline-size container. The `article.output-reader` uses the middle pane's full width and an inline gutter of `clamp(16px, 2.5cqi, 32px)`. Each `.reader-track` is centered and capped by the available width inside that gutter. `data-kind` identifies the output shape, and `data-mode` identifies read, edit or plan. Reading uses local Source Serif 4 and controls use Inter with the appearance setting's overrides. Citation numbers retain a visible keyboard focus indicator.
+
+| `data-track` | Width and behavior |
+| --- | --- |
+| `prose` | Up to `min(66ch, 760px)` for narrative and conversation controls. |
+| `structured` | Up to 960px for flashcard and quiz surfaces, audio transport and voices. Prompts, explanations and transcript text use up to `66ch`. |
+| `report` | Up to 1280px for the report and exhibits. Headings, navigation and body text align to a nested prose column. Markdown wrappers in the preamble and sections, including the summary section, span the full grid. Their `.rp-table` children and structured `.rp-exhibit` blocks can use that width. Dense tables and display math scroll locally. |
+| `deck` | Up to `max(480px, (100vh - 240px) × 16/9)` for the 16:9 stage, toolbar, thumbnail strip and notes shell. Reveal uses 1280×720 internally. Notes text and fit notices cap at `66ch`. Present opens in a full-window layer. |
+| `review` | Up to 1320px with 20px inline insets. Full-size slide renders scroll inside the preview. |
+| `plan` | Up to 1200px. Above `64em` of reader width the review and settings use `2fr` and `1fr` tracks with a 24px gap. The layout is one column at `64em` and below. |
+| `full` | Uses the available inner width for the mind map and Edit. All Edit readers use two equal columns with a 24px gap and stack at `@container library-reader (max-width: 50em)`. |
+
+While you review a plan, its action bar sticks to the bottom of the middle pane's scroller. Its buttons wrap, and scroll padding keeps the feedback form and history reachable. Existing preference rows use textareas that wrap and grow with their content as the settings column narrows. [Planning styles](../apps/desktop/src/outputs/planning.css)
+
+Print uses a dedicated `#print-root`. A4 output prepares at 178mm with static numbered citations. Slide print uses the native 1280×720 stage. The screen tracks and container rules stay outside these print measurements. [Reader styles](../apps/desktop/src/outputs/outputs.css) · [Report styles](../apps/desktop/src/outputs/deck/report.css) · [Studio exports](STUDIO_FORMAT.md#6-exports-desktop)
 
 ## Panels and reading
 

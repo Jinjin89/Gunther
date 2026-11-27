@@ -8,6 +8,10 @@ import { parseReport, readBlocks } from "./parseReport";
 import { ReportView } from "../ReportView";
 import type { Artifact } from "@gunther/contracts";
 
+const artifact = (content: string) => ({
+  id: "r", kind: "report", title: "T", content, origin: "agent", sections: [], outline: [], citations: [],
+}) as unknown as Artifact;
+
 describe("a studio report", () => {
   it("is found by its marker line", () => {
     expect(isReportV2(fixture("report"))).toBe(true);
@@ -31,8 +35,33 @@ describe("a studio report", () => {
     expect(block?.t === "exhibit" && block.grid?.rows[0]?.cells).toEqual(["2021", "21 [1]"]);
   });
 
+  it.each(["来源：", "参照資料：", "Archival records: "])("renders trailing exhibit attribution with the label %s", (label) => {
+    const exhibit = [
+      ":::exhibit", "Comparison by season", "| Season | Value |", "| --- | --- |",
+      "| Spring | 7 |", "", `  ${label}Field archive: notebook 2`, "", ":::",
+    ].join("\n");
+    expect(readBlocks(exhibit)[0]).toMatchObject({
+      t: "exhibit", caption: "Comparison by season", source: "Field archive: notebook 2", grid: { layout: "table" },
+    });
+
+    const content = `<!-- report: v2 -->\n# T\n\n## Observations\n\n${exhibit}`;
+    const view = render(<ReportView artifact={artifact(content)} onCite={() => undefined} />);
+    expect(view.getByRole("table")).toBeVisible();
+    expect(view.getByText("Comparison by season")).toBeVisible();
+    expect(view.container.querySelector(".rp-source")).toHaveTextContent("Field archive: notebook 2");
+    expect(view.queryByText("Exhibit data could not be read.")).not.toBeInTheDocument();
+  });
+
+  it("keeps colons in the caption and table cells", () => {
+    const exhibit = [
+      ":::exhibit", "Results: afternoon", "| Sample | Time |", "| --- | --- |", "| A | 12:30 |", ":::",
+    ].join("\n");
+    expect(readBlocks(exhibit)[0]).toMatchObject({
+      t: "exhibit", caption: "Results: afternoon", source: null, grid: { rows: [{ cells: ["A", "12:30"] }] },
+    });
+  });
+
   it("renders structured and unmarked reports through the same rich Markdown body", () => {
-    const artifact = (content: string) => ({ id: "r", kind: "report", title: "T", content, origin: "agent", sections: [], outline: [], citations: [] }) as unknown as Artifact;
     const v2 = render(<ReportView artifact={artifact(fixture("report"))} onCite={() => undefined} />);
     expect(v2.container.querySelectorAll(".rp-summary").length).toBe(1);
     expect(v2.container.querySelectorAll(".rp-exhibit").length).toBe(4);

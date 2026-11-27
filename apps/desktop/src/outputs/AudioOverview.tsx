@@ -179,7 +179,10 @@ export function AudioScript(props: ScriptProps) {
   const measurement = useWavDuration(props.artifact);
   const script = readScript(props.artifact.content);
   const timings = props.presentation === "print" ? scriptTimings(props.artifact, script.lines, measurement?.duration) : [];
-  return <AudioTranscript {...props} script={script} timings={timings} list={list} />;
+  const transcript = <AudioTranscript {...props} script={script} timings={timings} list={list} />;
+  return props.presentation === "preview"
+    ? <div className="audio-overview reader-track" data-track="structured">{transcript}</div>
+    : transcript;
 }
 
 function AudioOverviewReader({ artifact, onCite, onPart, onAsk, changed, goTo, type, work }: ReaderProps) {
@@ -261,7 +264,7 @@ function AudioOverviewReader({ artifact, onCite, onPart, onAsk, changed, goTo, t
     {work && !enabled && (!needsSetup || options?.defaults) && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm"
       disabled={work.disabled} onClick={() => record()}>Retry audio</button>}
   </>;
-  return <section className="audio-overview" aria-label="Audio overview">
+  return <section className="audio-overview reader-track" data-track="structured" aria-label="Audio overview">
     {asset && <div ref={transport} className="audio-transport">
       <AudioPlayer player={player} volumeControls scopedShortcuts actions={
         active !== undefined && active === hiddenLine && <button type="button"

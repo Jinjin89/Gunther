@@ -32,6 +32,7 @@ export type ReaderProps = OutputContentProps & {
 type PrintProps = Pick<OutputContentProps, "artifact" | "type"> & { presentation: "print"; from: number; to: number };
 
 type OutputView = {
+  headingTrack: "prose" | "deck" | "structured" | "full";
   Reader: ComponentType<ReaderProps>;
   Print: ComponentType<PrintProps>;
   wide?: boolean;
@@ -52,7 +53,9 @@ function SlideReader({ onPart, design, presentation, ...props }: ReaderProps) {
 }
 
 function CardReader(props: ReaderProps) {
-  return props.presentation === "preview" ? <CardsList {...props} /> : <CardsView key={props.artifact.id} {...props} />;
+  return props.presentation === "preview"
+    ? <div className="reader-track" data-track="structured"><CardsList {...props} /></div>
+    : <CardsView key={props.artifact.id} {...props} />;
 }
 
 function MapReader(props: ReaderProps) {
@@ -114,12 +117,12 @@ function PrintAudio(props: PrintProps) {
 }
 
 export const outputViews: Record<OutputKind, OutputView> = {
-  report: { Reader: ReportView, Print: PrintReport, file: {
+  report: { headingTrack: "prose", Reader: ReportView, Print: PrintReport, file: {
     format: "docx", label: "Download Word", available: (artifact) => isReportV2(artifact.content), download: downloadDocx,
   } },
-  slides: { Reader: SlideReader, Print: PrintDeck, wide: true, Review: SlideReviewPanel, pageRule: "@page { size: 13.333in 7.5in; margin: 0; }",
+  slides: { headingTrack: "deck", Reader: SlideReader, Print: PrintDeck, wide: true, Review: SlideReviewPanel, pageRule: "@page { size: 13.333in 7.5in; margin: 0; }",
     file: { format: "pptx", label: "Download PowerPoint", available: (artifact) => isDeckV2(artifact.content), download: downloadPptx } },
-  cards: { Reader: CardReader, Print: PrintCards },
-  map: { Reader: MapReader, Print: PrintMap, wide: true },
-  audio: { Reader: AudioOverview, Print: PrintAudio, printLabel: "Print script", savedStage: "audio", file: audioFile },
+  cards: { headingTrack: "structured", Reader: CardReader, Print: PrintCards },
+  map: { headingTrack: "full", Reader: MapReader, Print: PrintMap, wide: true },
+  audio: { headingTrack: "structured", Reader: AudioOverview, Print: PrintAudio, printLabel: "Print script", savedStage: "audio", file: audioFile },
 };

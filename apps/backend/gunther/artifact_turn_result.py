@@ -2,43 +2,23 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from gunther.artifact_view import _one_line, ranges
-from gunther.artifact_workspace import ConversationBrief, Pending, Work, active_work, ready
+from gunther.artifact_workspace import (
+    CONVERSATION_PENDING,
+    Pending,
+    Work,
+    active_work,
+    pending_target,
+    ready,
+)
 from gunther.llm import ModelError
-from gunther.outputs import BuiltOutput
+from gunther.outputs import BuiltOutput, FirstWrite, ParentWrite, WriteAuthority
+from gunther.schemas import PlanDraftOut
 
-Audience = Literal["scientist", "student", "collaborator"]
-
-# What the audience of a version is called by the words the user gave (the version keeps only
-# three audiences; the words stay in the brief).
-STUDENTS = re.compile(
-    r"student|undergrad|pupil|learner|school|class\b|freshm|first[- ]year|beginner|novice|"
-    r"newcomer|trainee|学生|同学|新生|初学",
-    re.IGNORECASE,
-)
-
-COLLABORATORS = re.compile(
-    r"collaborat|colleague|team|partner|manager|stakeholder|client|funder|board|executive|"
-    r"decision[- ]maker|同事|合作|团队|经理|领导|客户",
-    re.IGNORECASE,
-)
-
-
-def audience_of(brief: ConversationBrief) -> Audience:
-    """Who a version is for, out of the three a version records, from the brief's free text.
-    No audience, or one that is neither, is a scientist."""
-
-    words = brief.audience.text if brief.audience else ""
-    if STUDENTS.search(words):
-        return "student"
-    if COLLABORATORS.search(words):
-        return "collaborator"
-    return "scientist"
-
+TurnOutcome = Literal["asked", "answered", "planned", "saved", "replied", "paused"]
 
 # One turn -----------------------------------------------------------------------------------------
 
@@ -51,19 +31,20 @@ class SaveRequest:
     built: BuiltOutput
     version_map: list[int]
     summary: str
-    # The change-log line after "v4 (deck): ".
+    # The change-log line after the version number.
     log: str
     changes: list[dict[str, Any]]
 
 
 @dataclass
 class TurnResult:
-    outcome: Literal["asked", "answered", "saved", "replied", "paused"]
+    outcome: TurnOutcome
     reply: str
     question: dict[str, Any] | None = None
     save: SaveRequest | None = None
     changes: list[dict[str, Any]] = field(default_factory=list)
     steps: list[dict[str, Any]] = field(default_factory=list)
+    draft: PlanDraftOut | None = None
 
 
 @dataclass
@@ -75,25 +56,62 @@ class Outcome:
     result: TurnResult | None = None
 
 
+def matches_parent(authority: WriteAuthority | None, work: Work | None) -> bool:
+    return (
+        isinstance(authority, ParentWrite)
+        and work is not None
+        and work.key == authority.lineage_id
+        and work.version_id is not None
+        and work.version_id == authority.parent_id
+    )
+
+
+def require_write(work: Work, authority: WriteAuthority | None) -> None:
+    if isinstance(authority, FirstWrite):
+        if work.key == authority.work_key and work.version_id is None:
+            return
+    elif matches_parent(authority, work):
+        return
+    raise ValueError("Writing requires approval of this plan or its verified current version.")
+
+
 class ArtifactTurnResults:
     # Endings ---------------------------------------------------------------------------------
 
     def _finish(
         self,
-        outcome: str,
+        outcome: TurnOutcome,
         reply: str,
         *,
         question: dict[str, Any] | None = None,
         save: tuple[Work, BuiltOutput, list[int]] | None = None,
+        draft: PlanDraftOut | None = None,
+        authority: WriteAuthority | None = None,
     ) -> TurnResult:
+        if save is not None:
+            parent = self.ctx.authority
+            if authority is None and isinstance(parent, ParentWrite):
+                authority = parent
+            require_write(save[0], authority)
         ws = self.workspace
-        self.asked = None
-        ws.pending = None
-        ws.asked_in_a_row = ws.asked_in_a_row + 1 if outcome == "asked" else 0
         if outcome == "asked" and question is not None:
+            ws.asked_in_a_row += 1
             ws.pending = Pending(
                 question=question["text"], options=question["options"], message_id=self.ctx.reply_id
             )
+        else:
+            work = active_work(ws)
+            pending = ws.pending_by_target
+            key = pending_target(work, work_key=ws.active)
+            if self.plan_key is None and key not in pending:
+                key = CONVERSATION_PENDING
+            # Plan admission consumes a bound answer or skip. Finishing an agent turn
+            # may only clear the question for a saved work or an unattached legacy turn.
+            if key == CONVERSATION_PENDING or (work is not None and work.version_id is not None):
+                pending.pop(key, None)
+            if key not in pending:
+                ws.asked_in_a_row = 0
+        self.asked = None
         request = None
         changes: list[dict[str, Any]] = []
         if save is not None:
@@ -104,7 +122,7 @@ class ArtifactTurnResults:
                 work, built, version_map, summary, self._log(summary, changes), changes
             )
             reply = summary
-        return TurnResult(outcome, reply, question, request, changes, list(self.steps))  # type: ignore[arg-type]
+        return TurnResult(outcome, reply, question, request, changes, list(self.steps), draft)
 
     def _changes(self, work: Work) -> list[dict[str, Any]]:
         """What the turn changed in an artifact, part by part."""
@@ -185,7 +203,7 @@ class ArtifactTurnResults:
 
     @staticmethod
     def _log(summary: str, changes: list[dict[str, Any]]) -> str:
-        """The change-log line after "v4 (deck): ": the summary, then what changed, by code."""
+        """Summarize the changes after the version number in the change log."""
 
         def places(*kinds: str) -> list[int]:
             return [
@@ -211,7 +229,10 @@ class ArtifactTurnResults:
 
         c = self.ctx
         work = active_work(self.workspace)
-        if work is not None and work.outline and not ready(work, self.brief):
+        if (
+            work is not None and matches_parent(c.authority, work)
+            and work.outline and not ready(work, self.brief)
+        ):
             try:
                 built, version_map = self._steps(work).assemble()
             except (ValueError, ModelError):
@@ -219,7 +240,7 @@ class ArtifactTurnResults:
             if built is not None and c.saved.get(work.key) != built.content:
                 return self._finish("saved", "", save=(work, built, version_map))
         left: list[str] = list(self.not_done)
-        if work is not None:
+        if work is not None and matches_parent(c.authority, work):
             left += ready(work, self.brief)
         said = " ".join(self.notes[-3:])
         decisions, calls, _ = self._left()

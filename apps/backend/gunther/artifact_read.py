@@ -7,11 +7,13 @@ import json
 import secrets
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from gunther import key_results
 from gunther.artifact_manifest import artifact_manifest_hash
+from gunther.artifact_plans import project_saved_outline
 from gunther.checks import complete, coverage_of, issue_view, read_verdicts
 from gunther.database import session_scope
 from gunther.library_lookup import annotate_library_sources
@@ -39,6 +41,7 @@ from gunther.schemas import (
     OutputProvenanceOut,
     OutputScope,
     OutputSectionOut,
+    PlanPreferencesOut,
 )
 
 
@@ -149,6 +152,56 @@ def _verified_payload(
     return snapshots, provenance, saved
 
 
+def creation_plan_reference(first: Artifact, provenance: OutputProvenanceOut) -> dict | None:
+    plan = provenance.creation_plan
+    return (
+        {"firstVersionId": first.id, "planId": plan.plan_id, "revision": plan.revision}
+        if plan is not None else None
+    )
+
+
+def _creation_provenance(
+    session: Session, artifact: Artifact, provenance: OutputProvenanceOut, saved: dict,
+) -> OutputProvenanceOut:
+    reference = saved.get("creationPlanRef")
+    plan = provenance.creation_plan
+    first_version_id = provenance.creation_version_id
+    if reference is not None:
+        first = (
+            session.get(Artifact, reference.get("firstVersionId"))
+            if isinstance(reference, dict) and isinstance(reference.get("firstVersionId"), str)
+            else None
+        )
+        if (
+            first is None or first.id == artifact.id or first.version_number != 1
+            or first.supersedes_artifact_id is not None
+            or (first.workspace_id, first.knowledge_base_id, first.lineage_id)
+            != (artifact.workspace_id, artifact.knowledge_base_id, artifact.lineage_id)
+        ):
+            raise ArtifactIntegrityError(f"Artifact {artifact.id} has an invalid creation plan.")
+        _, original, _ = _verified_payload(session, first)
+        if (
+            not isinstance(original, OutputProvenanceOut)
+            or creation_plan_reference(first, original) != reference
+        ):
+            raise ArtifactIntegrityError(f"Artifact {artifact.id} has an invalid creation plan.")
+        plan, first_version_id = original.creation_plan, first.id
+    elif plan is not None and artifact.version_number == 1:
+        first_version_id = artifact.id
+    try:
+        preferences = (
+            PlanPreferencesOut.model_validate(saved["effectivePreferences"])
+            if "effectivePreferences" in saved else provenance.preferences
+        )
+    except ValidationError as error:
+        raise ArtifactIntegrityError(
+            f"Artifact {artifact.id} has invalid effective preferences."
+        ) from error
+    return provenance.model_copy(update={
+        "creation_plan": plan, "creation_version_id": first_version_id, "preferences": preferences,
+    })
+
+
 def latest_check_records(session: Session, artifact: Artifact) -> dict[str, dict]:
     """Read the latest check once and decode saved verdicts at the storage boundary."""
 
@@ -243,6 +296,8 @@ def artifact_detail(
     session: Session, artifact: Artifact, *, check_records: dict[str, dict] | None = None
 ) -> ArtifactOut:
     snapshots, provenance, saved = _verified_payload(session, artifact)
+    if isinstance(provenance, OutputProvenanceOut):
+        provenance = _creation_provenance(session, artifact, provenance, saved)
     summary = _summary(artifact, provenance.accepted_unit_ids, saved)
     scope = json.loads(artifact.scope_json)
     inputs = json.loads(artifact.inputs_json)
@@ -257,7 +312,7 @@ def artifact_detail(
         if check_records is None:
             check_records = latest_check_records(session, artifact)
         sections = _output_sections(artifact, check_records)
-    return ArtifactOut(
+    shown = ArtifactOut(
         **summary.model_dump(),
         content=artifact.content,
         unit_snapshots=snapshots,
@@ -282,6 +337,9 @@ def artifact_detail(
         key_results=key_results.origin_states(session, "output", [artifact.id]).get(artifact.id),
         audio=_audio(session, artifact),
     )
+    if not shown.outline and SHAPES[shown.kind].outline:
+        shown.outline = project_saved_outline(shown)
+    return shown
 
 
 class ArtifactReader:

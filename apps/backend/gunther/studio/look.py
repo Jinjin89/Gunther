@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any, Literal
 
@@ -18,8 +18,9 @@ from pydantic import BaseModel, Field
 from gunther.citations import citation_numbers, strip_citations
 from gunther.llm import Image, ModelError, ModelInfo
 from gunther.model_profiles import Effort
-from gunther.outputs import BuiltOutput, Draft, Events, Pool
+from gunther.outputs import BuiltOutput, Draft, Events, Planned, Pool, Spec, heading_of
 from gunther.slide_inspection import measure_slides
+from gunther.slide_review import _checked_content
 from gunther.studio import format as fmt
 from gunther.studio import prompts as P
 from gunther.studio.reference import DECK_FORMAT, READ_NOTE
@@ -114,6 +115,8 @@ def look(
     emit: Events,
     unfence: Callable[[str], str],
     material: str | None = None,
+    spec: Spec | None = None,
+    approved: Sequence[Planned] = (),
 ) -> tuple[BuiltOutput, dict[str, Any], dict[str, Any] | None]:
     """The deck after one look, what happened, and the snapshot of the deck as returned."""
 
@@ -187,7 +190,7 @@ def look(
             eye,
             LookReview,
             system=system,
-            prompt="Slides:\n" + "\n".join(lines),
+            prompt=P.with_preferences("Slides:\n" + "\n".join(lines), spec),
             images=images,
             effort=eye_effort or "low",
             schema_at="end",
@@ -214,13 +217,6 @@ def look(
             failed += 1
         else:
             findings += part
-    for finding in findings:
-        if finding.action == "layout" and (
-            finding.layout not in TARGET_LAYOUTS
-            or finding.layout == parsed[finding.slide - 1].layout
-        ):
-            finding.action = "cut"
-            finding.fix = finding.fix or f"Shorten it ({finding.problem})"
     record["findings"] = [f.model_dump() for f in findings]
     record["reviewFailures"] = failed
     if failed and failed == len(batches):
@@ -229,8 +225,17 @@ def look(
         note_incomplete(f"Image review failed for {failed} of {len(batches)} slide batches.")
 
     # 2. Choose: what was measured wrong, then what the eye found; at most four slides.
-    wanted: dict[int, list[str]] = {}
+    wanted: dict[int, list[LookFinding]] = {}
     rank: dict[int, int] = {}
+
+    def add(finding: LookFinding, priority: int) -> None:
+        wanted.setdefault(finding.slide, []).append(finding)
+        rank[finding.slide] = rank.get(finding.slide, 0) + priority
+
+    def instruction(finding: LookFinding) -> str:
+        switch = f"Switch to the {finding.layout} layout." if finding.layout else ""
+        return " ".join(part for part in (finding.problem, switch, finding.fix) if part)
+
     for n, facts in enumerate(first, 1):
         if facts["score"] and fmt.design_of(slides[n - 1]):
             # A designed slide is drawn again: its words stay, only its look changes.
@@ -242,12 +247,11 @@ def look(
                 )
             if facts["small"]:
                 what.append("text under 18 px: " + "; ".join(facts["small"][:4]))
-            wanted.setdefault(n, []).append(
-                "; ".join(what) + ". Redraw it so everything fits inside its box and no text is "
-                "under 18 px (shrink boxes' content by simplifying the layout, never by cutting "
-                "or rewording the words)."
-            )
-            rank[n] = rank.get(n, 0) + 100 + facts["score"]
+            add(LookFinding(
+                slide=n, action="layout", problem="; ".join(what),
+                fix="Redraw it so everything fits inside its box and no text is under 18 px. "
+                    "Simplify the layout while keeping the existing words.",
+            ), 100 + facts["score"])
         elif facts["score"]:
             what = ["The renderer measured: "]
             if facts["fallback"]:
@@ -262,29 +266,28 @@ def look(
                 )
             if facts["small"]:
                 what.append("type below the readable size: " + "; ".join(facts["small"][:3]) + ". ")
-            wanted.setdefault(n, []).append(
-                "".join(what) + "Cut words or move detail into the notes until it fits."
-            )
-            rank[n] = rank.get(n, 0) + 100 + facts["score"]
+            add(LookFinding(
+                slide=n, action="layout", problem="".join(what).strip(),
+                fix="Choose a layout that fits the existing content.",
+            ), 100 + facts["score"])
     for finding in findings:
         # What the eye finds is acted on only when a viewer would notice at once; the rest is
         # recorded. (Models looking at a clean slide invent small complaints.)
         if finding.action == "none" or not finding.problem or finding.severity != "high":
             continue
         if fmt.design_of(slides[finding.slide - 1]):
-            # What the eye found on a designed slide is a design to change, not words to cut.
-            wanted.setdefault(finding.slide, []).append(f"{finding.problem} {finding.fix}".strip())
-            rank[finding.slide] = rank.get(finding.slide, 0) + 10
+            add(finding.model_copy(update={"action": "layout", "layout": ""}), 10)
             continue
-        how = {
-            "layout": f"switch to the {finding.layout} layout",
-            "cut": "cut words",
-            "notes": "move detail into the notes",
-        }[finding.action]
-        wanted.setdefault(finding.slide, []).append(
-            f"{finding.problem} Fix: {how}. {finding.fix}".strip()
-        )
-        rank[finding.slide] = rank.get(finding.slide, 0) + (10 if finding.severity == "high" else 3)
+        if finding.action == "layout":
+            if (
+                finding.layout in TARGET_LAYOUTS
+                and finding.layout != parsed[finding.slide - 1].layout
+            ):
+                add(finding, 10)
+        else:
+            action = "Cut words." if finding.action == "cut" else "Move detail into the notes."
+            fix = f"{action} {finding.fix}".strip()
+            add(finding.model_copy(update={"fix": fix, "layout": ""}), 10)
     targets = sorted(wanted, key=lambda n: (-rank[n], n))[:MAX_FIXED]
     targets.sort()
     record["targets"] = targets
@@ -300,19 +303,27 @@ def look(
         """The rewritten slides that passed every check, or why none did."""
 
         read = use == "read"
+        layout_only = {n for n in targets if all(f.action == "layout" for f in wanted[n])}
         asked = "\n\n".join(
             f"Slide {n} — what to fix:\n"
-            + "\n".join(f"- {text}" for text in wanted[n])
+            + "\n".join(f"- {instruction(f)}" for f in wanted[n])
+            + ("\nKeep the wording, notes and citations exactly as written."
+               if n in layout_only else "")
             + f"\n\nSlide {n} as written:\n{fmt.without_design(drafts[n - 1].text)}"
             for n in targets
         )
         fix_system = P.FIX_LOOK.format(
             format=DECK_FORMAT + ("\n\n" + READ_NOTE if read else ""), problems=""
         )
+        if approved:
+            fix_system += "\n" + P.APPROVED_OUTLINE
         try:
             fixed = fmt.split_slides(
                 unfence(
-                    agents._text(model, fix_system, asked + "\n\nRewrite them now.", "low", 12_000)
+                    agents._text(
+                        model, fix_system,
+                        P.with_preferences(asked + "\n\nRewrite them now.", spec), "low", 12_000,
+                    )
                 )
             )
         except ModelError as error:
@@ -331,6 +342,11 @@ def look(
                 text = fmt.with_marker(text, "title", **fmt.parse_slide(old).attrs)
             elif new.layout not in TARGET_LAYOUTS:
                 continue
+            if approved and (
+                heading_of(text).strip() != approved[n - 1].heading
+                or approved[n - 1].layout and fmt.parse_slide(text).layout != approved[n - 1].layout
+            ):
+                continue
             if (
                 _facts(text) - _facts(old)
                 or _refs(text) != _refs(old)
@@ -340,6 +356,11 @@ def look(
                     "Slide %d: the fix changed a number or dropped or added a citation; dropped", n
                 )
                 record.setdefault("rejected", []).append({"slide": n, "why": "changed a fact"})
+                continue
+            if n in layout_only and _checked_content(old) != _checked_content(text):
+                record.setdefault("rejected", []).append(
+                    {"slide": n, "why": "changed checked wording, notes or citations"}
+                )
                 continue
             # A slide the fix rewrote loses its design: the template draws it from the new words.
             if text.strip() != fmt.without_design(old).strip():
@@ -366,6 +387,8 @@ def look(
         by_ref = pool.by_ref()
 
         def recheck(n: int) -> Draft:
+            if n in layout_only:
+                return replace(drafts[n - 1], text=candidate[n - 1])
             return Draft(candidate[n - 1], agents._claims(
                 model, candidate[n - 1], by_ref, material=material
             ))
@@ -374,13 +397,17 @@ def look(
         revised = list(drafts)
         for n, draft in rechecked.items():
             was = sum(1 for i in drafts[n - 1].issues or [] if i.verdict in FIXABLE)
-            now_bad = sum(1 for i in draft.issues if i.verdict in FIXABLE)
+            now_bad = sum(1 for i in draft.issues or [] if i.verdict in FIXABLE)
             if now_bad > was:
                 record.setdefault("rejected", []).append(
                     {"slide": n, "why": "a claim lost its source"}
                 )
                 continue
-            revised[n - 1] = agents._chart_fallback(draft, n - 1)
+            revised_draft = agents._chart_fallback(draft, n - 1)
+            if n not in layout_only or (
+                _checked_content(revised_draft.text) == _checked_content(draft.text)
+            ):
+                revised[n - 1] = revised_draft
         changed = [n for n in changed if revised[n - 1] is not drafts[n - 1]]
         if not changed:
             return {}, ("", "the fix lost a claim's source; dropped")
@@ -417,10 +444,11 @@ def look(
                 agents,
                 model,
                 held,
-                {n - 1: " ".join(wanted[n]) for n in designed_targets},
+                {n - 1: " ".join(instruction(f) for f in wanted[n]) for n in designed_targets},
                 workers=WORKERS,
                 style=D.deck_style(slides),
                 keep_on_fail=True,
+                spec=spec,
             )
             agents.skipped += notes
         except Exception as error:  # noqa: BLE001 - never fail the build

@@ -5,6 +5,14 @@ every fact carries the number of the passage that states it. Checking is a separ
 (pipeline.verify); the writer is not asked to be afraid, only to be exact.
 """
 
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gunther.outputs import Spec
+
 TRUTH = """\
 The one rule about truth: every fact, number, name and date that comes from the material \
 carries the number of the passage that states it, like [3] or [3][7], right after the claim. \
@@ -35,6 +43,11 @@ LANGUAGE_FALLBACK = (
     "use the language most of the material is in."
 )
 TASK_BOUNDARY = "\n\n── Your task now ──\n\n"
+
+
+def with_preferences(task: str, spec: Spec | None) -> str:
+    preferences = {"emphasize": spec.emphasize if spec else (), "avoid": spec.avoid if spec else ()}
+    return task + "\n\nOutput preferences:\n" + json.dumps(preferences, ensure_ascii=False)
 
 
 def language_instruction(language: str | None, model_language: str | None = None) -> str:
@@ -95,6 +108,25 @@ or other contents inside the output. Set requested_minutes only for an explicitl
 presentation duration in whole minutes. Use null for any field without an explicit request. \
 Apply the latest request when it supersedes an earlier length. Honor the requested length \
 when planning the storyline."""
+
+OUTLINED_PROPOSAL = """\
+Also return summary, angle, and ordered coverage topics as {id, text} entries. Give a new topic
+a null ID. Keep the IDs of continuing rows or topics. Respect authored row fields and order in
+the review inputs below. An explicitly cleared layout delegates the choice to the writer.
+Review inputs:
+"""
+
+APPROVED_OUTLINE = """\
+Keep the approved headings verbatim and in their given order. Apply each row's writer notes.
+Use a specified layout exactly. For an automatic layout use a registered layout suited to the
+material. Use the title layout on the first slide when writing slides.
+"""
+
+REPORT_SUMMARY_PREAMBLE = """\
+Place the executive summary after the report title and before the first approved section,
+in a `:::callout Summary` block closed with `:::`. Cite its findings like any other text.
+The summary is part of the preamble. Give it no level-two heading.
+"""
 
 
 DECK_STORY = """\
@@ -585,7 +617,7 @@ limitations/open_questions. Return the structured StudyMap, with language and ti
 FIGURE_READ = """Read the attached original source figure pixels together with its caption and
 linked source passages. Return a FigureReading for the specified asset_id. Describe what it shows,
 each identifiable panel label, axes including units, legend, comparison/control, key observation,
-and which linked claim it supports (or fails to support). For each identifiable panel, when its
+and what the figure supports in the linked passages. For each identifiable panel, when its
 bounds can be located, return box as four decimals normalized to the whole attached image:
 [x, y, width, height]. Mark legible false when the central comparison cannot be read. List
 uncertain content, including cropped axes or legends. Include in
@@ -673,6 +705,8 @@ incompatible comparisons, overclaiming, missing limitations, unverified damaged 
 or an explanation carried only in presenter notes. No action-title, hero-number or recommendation
 requirements. Unavailable image readings limit what may be said; they do not authorize inventions.
 Return ScientificReview with answers, understood, verdict ready/revise, and concrete problems/fixes.
+For each problem, use route "slides" with the exact one-based slide numbers in slides, or
+route "deck" with an empty slides list for structural problems. Use where as a display label.
 A ready verdict requires all five questions to be adequately answered for this material.
 Study map and image readings:
 {memo}
@@ -734,6 +768,8 @@ observations, supported conclusions and unresolved issues. Missing, shallow, wro
 slide-unsupported reconstruction is a concrete learner problem. Also identify source content or
 planned figures omitted from the draft or explained too shallowly to teach; naming an experiment
 without its setup, comparison or observation is shallow. Return CoverageReview.
+For each problem, use route "slides" with the exact one-based slide numbers in slides, or
+route "deck" with an empty slides list for structural problems. Use where as a display label.
 """
 
 FLASHCARDS_RECIPE = """Write each flashcard as a level-two question and a short answer paragraph.
@@ -786,6 +822,22 @@ The analyst's memo:
 {truth}
 {header}
 Return only the completed Markdown."""
+
+DIRECT_PROPOSAL = """Propose the direction for {output_type}, for the user to review.
+Brief: {brief}
+Audience: {audience}
+{language}
+Planned size: {size}
+
+Return a title, short summary, angle and one to eight ordered coverage topics. Reuse a topic's
+ID from the previous proposal whenever it continues. Use null for a new topic's ID.
+Give target_minutes only for an explicitly requested duration. Return only the proposal.
+
+Use this recipe to plan coverage:
+{recipe}
+
+The analyst's memo:
+{memo}"""
 
 DIRECT_FIX = """Fix these format problems in the draft. Keep the supported facts and original
 citation numbers. Return the complete Markdown in the requested format.

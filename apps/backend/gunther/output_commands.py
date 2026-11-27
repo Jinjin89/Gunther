@@ -6,6 +6,8 @@ import hashlib
 import json
 from collections.abc import Callable
 
+from sqlalchemy.orm import Session
+
 from gunther import key_result_origins, usage
 from gunther.agent import AskAgent
 from gunther.artifact_read import artifact_detail, latest_check_records
@@ -16,16 +18,18 @@ from gunther.artifact_versions import (
     output_library,
     output_version,
 )
-from gunther.artifact_workspace import evidence_from_citation
+from gunther.artifact_workspace import evidence_from_citation, load_brief
 from gunther.checks import complete, merge_verdicts
 from gunther.database import session_scope
-from gunther.llm import ModelInfo
+from gunther.llm import ModelError, ModelInfo
 from gunther.model_profiles import Effort
-from gunther.models import ArtifactCheck
+from gunther.models import ArtifactCheck, ArtifactConversation
 from gunther.output_checks import check_projected_parts, check_saved_part
 from gunther.output_types import SHAPES, output_type_for
 from gunther.outputs import (
     OutputLimits,
+    Spec,
+    _marked,
     document_units,
     join_document,
     section_hash,
@@ -39,9 +43,12 @@ from gunther.schemas import (
     EditOutputInput,
     OutputModelOut,
     OutputRequestInput,
+    PlanPreferencesOut,
     RestyleSlidesInput,
 )
 from gunther.service_records import _id
+from gunther.studio import design as slide_design
+from gunther.studio import format as slide_format
 
 OUTPUTS_NEED_A_MODEL = "Outputs need a model. Set one up under Settings → Models."
 
@@ -50,6 +57,45 @@ def _canonical(value: object) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
         "utf-8"
     )
+
+
+def slide_cover_settings(cover: str) -> tuple[str | None, int]:
+    """Read the theme and design version from either saved deck format."""
+
+    marker = _marked(cover)
+    theme = slide_format.parse_slide(cover).attrs.get("theme")
+    return theme if theme in slide_format.THEMES else marker.theme, marker.design_version
+
+
+def _slide_spec(
+    session: Session, artifact: ArtifactOut, slides: list[str],
+) -> tuple[Spec, PlanPreferencesOut | None]:
+    provenance = artifact.provenance
+    preferences = getattr(provenance, "preferences", None)
+    if preferences is None and (plan := getattr(provenance, "creation_plan", None)) is not None:
+        preferences = plan.preferences
+    owner = artifact.conversation_id
+    row = session.get(ArtifactConversation, owner) if owner else None
+    if row is not None and row.trashed_at is None and (
+        row.workspace_id, row.knowledge_base_id
+    ) == (artifact.workspace_id, artifact.knowledge_base_id):
+        brief = load_brief(row.brief_json)
+        preferences = PlanPreferencesOut(emphasize=brief.emphasize, avoid=brief.avoid)
+    theme, design_version = slide_cover_settings(slides[0] if slides else "")
+    return Spec(
+        kind=artifact.kind,
+        audience=artifact.audience,
+        output_type=output_type_for(artifact.kind, artifact.style).id,
+        brief=artifact.brief,
+        title=artifact.title,
+        theme=theme,
+        design_version=design_version,
+        deck_style=slide_design.deck_style(slides),
+        length=getattr(provenance, "length", None),
+        language=getattr(provenance, "language", None),
+        emphasize=tuple(line.text for line in preferences.emphasize) if preferences else (),
+        avoid=tuple(line.text for line in preferences.avoid) if preferences else (),
+    ), preferences
 
 
 class OutputCommands:
@@ -115,21 +161,27 @@ class OutputCommands:
         )
         if earlier is not None:
             return earlier
-        model, effort = self._output_model(payload.model, payload.effort)
         with session_scope(self.sessions) as session:
             output_library(session, workspace_id, base_id)
             parent = output_version(session, workspace_id, base_id, artifact_id, latest=True)
             self._require_agent_output(parent)
             if parent.kind != "slides":
                 raise ValueError("Rendered-slide review is only available for decks.")
-            provenance = json.loads(parent.provenance_json)
+            records = latest_check_records(session, parent)
+            shown = artifact_detail(session, parent, check_records=records)
+            _, slides = split_document(shown.content, "slides")
+            spec, preferences = _slide_spec(session, shown, slides)
+            model, effort = self._output_model(payload.model, payload.effort)
             made_by = self._made_by(parent) or {}
-            previous_skill = provenance.get("skill") or {}
-            use = provenance.get("use") or "talk"
+            saved_skill = getattr(shown.provenance, "skill", None)
+            previous_skill = (
+                saved_skill.model_dump(mode="json", by_alias=True) if saved_skill else {}
+            )
+            use = getattr(shown.provenance, "use", None) or "talk"
             built = BuiltOutput(parent.title, parent.content, json.loads(parent.outline_json),
                 [ConversationCitationOut.model_validate(c)
                  for c in json.loads(parent.citations_json)],
-                list(latest_check_records(session, parent).values()), model, effort,
+                list(records.values()), model, effort,
                 skill={"name": "slides", "version": 11, **previous_skill})
             fields = {
                 "kind": parent.kind, "style": parent.style, "audience": parent.audience,
@@ -140,7 +192,12 @@ class OutputCommands:
             }
         with usage.job("outputs", "slides", ref=artifact_id):
             built = review_deck(built, self.slide_renderer, self.models, model, "medium",
-                                brief=fields["brief"], use=use, emit=events or (lambda _: None))
+                                brief=spec.brief, use=use, emit=events or (lambda _: None),
+                                spec=spec)
+        _, reviewed = split_document(built.content, "slides")
+        theme, _ = slide_cover_settings(reviewed[0] if reviewed else "")
+        if theme != spec.theme:
+            raise ModelError("The rendered-slide review changed the saved cover theme.")
         if events:
             events({"type": "saving"})
         return commit_version(self.sessions, workspace_id=workspace_id, base_id=base_id,
@@ -148,7 +205,9 @@ class OutputCommands:
             parent_id=artifact_id, title=built.title, origin="revise", content=built.content,
             outline=built.outline, citations=[c.model_dump() for c in built.citations],
             model=OutputModelOut(ref=model.ref, label=model.display, effort="medium"),
-            checks=built.checks, made_by={**made_by, "skill": built.skill, "use": use}, **fields)
+            checks=built.checks, made_by={
+                **made_by, "skill": built.skill, "use": use, "effective_preferences": preferences,
+            }, **fields)
 
     def restyle_output(
         self,
@@ -164,7 +223,6 @@ class OutputCommands:
         plain. The citation numbers are the version's own: the designer and the guard see the
         stored slides as they are."""
 
-        from gunther.studio import design as D
         from gunther.studio.pipeline import StudioAgents
         from gunther.studio.requests import WORKERS
 
@@ -183,7 +241,6 @@ class OutputCommands:
         )
         if earlier is not None:
             return earlier
-        model, effort = self._output_model(payload.model, payload.effort)
         with session_scope(self.sessions) as session:
             output_library(session, workspace_id, base_id)
             parent = output_version(session, workspace_id, base_id, artifact_id, latest=True)
@@ -191,8 +248,15 @@ class OutputCommands:
             if parent.kind != "slides":
                 raise ValueError("Only a deck has a style.")
             records = latest_check_records(session, parent)
+            shown = artifact_detail(session, parent, check_records=records)
+            owner = shown.conversation_id
+            if owner and payload.conversation_id not in (None, owner):
+                raise LookupError("This artifact was not found in this conversation.")
+            preamble, slides = split_document(shown.content, "slides")
+            if not slides:
+                raise ValueError("The deck has no slides.")
+            spec, preferences = _slide_spec(session, shown, slides)
             made_by = self._made_by(parent) or {}
-            content = parent.content
             fields = {
                 "kind": parent.kind,
                 "style": parent.style,
@@ -208,15 +272,13 @@ class OutputCommands:
                 "title": parent.title,
             }
             citations = json.loads(parent.citations_json)
-        preamble, slides = split_document(content, "slides")
-        if not slides:
-            raise ValueError("The deck has no slides.")
+        model, effort = self._output_model(payload.model, payload.effort)
         agents = StudioAgents(self.models, OutputLimits(), design=True)
         label = "Designing the slides"
         agents._stage(events or (lambda _event: None), "design", label, "running")
         with usage.job("outputs", "slides", ref=artifact_id):
-            designed, count, notes = D.restyle(
-                agents, model, slides, payload.style, workers=WORKERS
+            designed, count, notes = slide_design.restyle(
+                agents, model, slides, payload.style, workers=WORKERS, spec=spec,
             )
         plain = len(slides) - count
         agents._stage(
@@ -243,6 +305,7 @@ class OutputCommands:
         made_by = {
             **made_by,
             "skill": skill,
+            "effective_preferences": preferences,
             "conversation_id": payload.conversation_id,
             "conversation_title": payload.conversation_title,
             "request": f"Restyle: {payload.style}",
@@ -298,12 +361,13 @@ class OutputCommands:
             output_library(session, workspace_id, base_id)
             parent = output_version(session, workspace_id, base_id, artifact_id, latest=True)
             self._require_agent_output(parent)
+            records = latest_check_records(session, parent)
+            artifact_detail(session, parent, check_records=records)
             if SHAPES[parent.kind].pipeline == "direct":
                 item = output_type_for(parent.kind, parent.style)
                 problems = item.direct_problems(payload.content)
                 if problems:
                     raise ValueError("\n".join(problems))
-            records = latest_check_records(session, parent)
             hashes = dict.fromkeys(
                 section_hash(unit) for unit in document_units(payload.content, parent.kind)
             )
@@ -344,7 +408,6 @@ class OutputCommands:
         The version is not changed: the findings are stored beside it.
         """
 
-        model, _ = self._output_model()
         with session_scope(self.sessions) as session:
             output_library(session, workspace_id, base_id)
             artifact = output_version(
@@ -352,6 +415,7 @@ class OutputCommands:
             )
             self._require_agent_output(artifact)
             records = latest_check_records(session, artifact)
+            artifact_detail(session, artifact, check_records=records)
             known = {key: row["verdicts"] for key, row in records.items()}
             artifact_kind = artifact.kind
             sections = document_units(artifact.content, artifact.kind)
@@ -368,6 +432,7 @@ class OutputCommands:
                 )
                 if citation.ref is not None
             }
+        model, _ = self._output_model()
         with usage.job("outputs", artifact_kind, ref=artifact_id):
             checker = AskAgent(self.models)
             limit = OutputLimits().sentences

@@ -89,28 +89,43 @@ export function aboutOf(payload: Record<string, unknown>, unit: string): string 
   return typeof focus.section === "number" ? `${unit[0]!.toUpperCase()}${unit.slice(1)} ${focus.section}` : null;
 }
 
-const USER_WORDS: Record<string, string> = { start: "Just start", continue: "Continue" };
+const USER_WORDS: Record<string, string> = { start: "Just start", continue: "Continue", approve: "Approve & Generate" };
+
+function userWords(message: ArtifactConversationMessage, messages: ArtifactConversationMessage[]) {
+  const { answer, questionMessageId } = message.payload;
+  if (message.kind === "answer" && isRecord(answer)) {
+    if (answer.type === "use_settings") return "Use current settings";
+    if (answer.type === "text" && typeof answer.text === "string") return answer.text;
+    if (answer.type === "choice" && typeof answer.index === "number") {
+      const question = messages.find((entry) => entry.id === questionMessageId);
+      const choice = question && optionsOf(question.payload)[answer.index];
+      return choice ?? (message.text || `Choice ${answer.index + 1}`);
+    }
+  }
+  if (message.kind === "plan") return message.text || (isRecord(message.payload.setup) ? "Plan this output" : "Update plan");
+  return message.text || USER_WORDS[message.kind] || "";
+}
 
 /** The chat of an Artifacts conversation, as the service stored it. */
-export function ArtifactMessageList({ messages, pending, history, citations, kind, unitLabel, lineageId, busy, onOption, onStart, onContinue, onRetry, onOpenPart, onOpenVersion, onCite, earlier = false }: {
+export function ArtifactMessageList({ messages, pending, history = [], citations = [], kind, unitLabel, lineageId, busy, onOption, onStart, onContinue, onRetry, onOpenPart, onOpenVersion, onCite, earlier = false }: {
   messages: ArtifactConversationMessage[];
   /** The question waiting for an answer, if any: only that message offers its options. */
-  pending: ArtifactPending | null;
-  history: ArtifactSummary[];
+  pending?: ArtifactPending | null;
+  history?: ArtifactSummary[];
   /** The open version's sources: a number in an answer opens the one it names. */
-  citations: unknown[];
+  citations?: unknown[];
   /** What the conversation's artifact is made of (a deck's parts are slides). */
   kind: OutputKind | null;
   unitLabel: (kind: OutputKind | null) => string;
-  lineageId: string | null;
-  busy: boolean;
-  onOption: (text: string) => void;
-  onStart: () => void;
-  onContinue: () => void;
-  onRetry: (message: ArtifactConversationMessage) => void;
-  onOpenPart: (artifactId: string | null, position: number | null) => void;
-  onOpenVersion: (item: ArtifactSummary) => void;
-  onCite: (index: number) => void;
+  lineageId?: string | null;
+  busy?: boolean;
+  onOption?: (text: string) => void;
+  onStart?: () => void;
+  onContinue?: () => void;
+  onRetry?: (message: ArtifactConversationMessage) => void;
+  onOpenPart?: (artifactId: string | null, position: number | null) => void;
+  onOpenVersion?: (item: ArtifactSummary) => void;
+  onCite?: (index: number) => void;
   /** The conversation of versions that predate conversations: the messages made from them are not a record of what was said, so they are not shown. */
   earlier?: boolean;
 }) {
@@ -122,7 +137,7 @@ export function ArtifactMessageList({ messages, pending, history, citations, kin
     <div className="aw-messages" role="log" aria-label="Artifact messages">{shown.map((message) => {
     if (message.role === "user") {
       const about = aboutOf(message.payload, unitLabel(kind));
-      return <div key={message.id} className="aw-message is-user"><div><small>You</small><p>{message.text || USER_WORDS[message.kind] || ""}</p>{about && <small className="artifact-about">About {about}</small>}</div></div>;
+      return <div key={message.id} className="aw-message is-user"><div><small>You</small><p>{userWords(message, messages)}</p>{about && <small className="artifact-about">About {about}</small>}</div></div>;
     }
     const steps = stepsOf(message.payload);
     const version = message.artifactId ? history.find((item) => item.id === message.artifactId) ?? null : null;
@@ -131,27 +146,33 @@ export function ArtifactMessageList({ messages, pending, history, citations, kin
     const listed = changes.every((change) => change.what === "added") ? [] : changes;
     const unit = unitLabel(version?.kind ?? kind);
     const mine = message.id === last;
+    const request = typeof message.payload.to === "string"
+      ? messages.find((entry) => entry.id === message.payload.to)
+      : message.clientRequestId ? messages.find((entry) => entry.role === "user" && entry.clientRequestId === message.clientRequestId) : null;
+    const planning = request && (request.kind === "plan" || request.kind === "approve" || isRecord(request.payload.answer));
     return <div key={message.id} className="aw-message is-assistant"><span className="aw-agent-mark"><BrandMark size={17} /></span><div className="artifact-reply">
       <FoldedSteps steps={steps} />
       {message.kind === "answer"
-        ? <AnswerBody content={message.text} numbers={citationNumbers(citations)} onCitation={onCite} />
+        ? <AnswerBody content={message.text} numbers={citationNumbers(citations)} {...(onCite ? { onCitation: onCite } : {})} />
         : message.kind === "reply"
           ? <AnswerBody content={message.text} numbers={[]} />
           : message.kind === "stopped"
-            ? <p>Stopped. Nothing was saved.</p>
+            ? <p>{planning ? "Stopped." : "Stopped. Nothing was saved."}</p>
             : message.kind === "failed"
               ? <p className="artifact-failed" role="alert">{message.text || "The request wasn’t handled."}</p>
-              : <p>{message.text}</p>}
-      {message.kind === "question" && pending?.messageId === message.id && !busy && <div className="artifact-pills" role="group" aria-label="Answers">
-        {optionsOf(message.payload).map((option) => <button type="button" key={option} className="artifact-pill" onClick={() => onOption(option)}>{option}</button>)}
-        <button type="button" className="artifact-pill is-quiet" onClick={onStart}>Just start</button>
+              : <p>{message.text || (message.kind === "planned" ? "Plan updated." : "")}</p>}
+      {message.kind === "question" && !planning && pending?.messageId === message.id && !busy && onOption && <div className="artifact-pills" role="group" aria-label="Answers">
+        {optionsOf(message.payload).map((option, index) => <button type="button" key={index} className="artifact-pill" onClick={() => onOption(option)}>{option}</button>)}
+        {onStart && <button type="button" className="artifact-pill is-quiet" onClick={onStart}>Just start</button>}
       </div>}
       {message.kind === "result" && listed.length > 0 && <ul className="artifact-changes" aria-label="What changed">
-        {listed.map((change, index) => <li key={index}><button type="button" className="artifact-change-row" onClick={() => onOpenPart(message.artifactId, change.position)}>{describeChange(change, unit)}<ChevronRight size={11} aria-hidden="true" /></button></li>)}
+        {listed.map((change, index) => <li key={index}>{onOpenPart
+          ? <button type="button" className="artifact-change-row" onClick={() => onOpenPart(message.artifactId, change.position)}>{describeChange(change, unit)}<ChevronRight size={11} aria-hidden="true" /></button>
+          : describeChange(change, unit)}</li>)}
       </ul>}
-      {message.kind === "result" && version && <button type="button" className="artifact-result-link" onClick={() => onOpenVersion(version)}>{version.lineageId !== lineageId && <small>{version.title}</small>}Open v{version.versionNumber}<ChevronRight size={12} /></button>}
-      {message.kind === "paused" && mine && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy} onClick={onContinue}>Continue</button>}
-      {message.kind === "failed" && mine && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy} onClick={() => onRetry(message)}>Retry</button>}
+      {message.kind === "result" && version && onOpenVersion && <button type="button" className="artifact-result-link" onClick={() => onOpenVersion(version)}>{version.lineageId !== lineageId && <small>{version.title}</small>}Open v{version.versionNumber}<ChevronRight size={12} /></button>}
+      {message.kind === "paused" && mine && !planning && onContinue && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy} onClick={onContinue}>Continue</button>}
+      {message.kind === "failed" && mine && !planning && request?.kind !== "build" && onRetry && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={busy} onClick={() => onRetry(message)}>Retry</button>}
     </div></div>;
   })}</div>
   </>;

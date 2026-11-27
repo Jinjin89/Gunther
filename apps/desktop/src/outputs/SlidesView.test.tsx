@@ -3,8 +3,10 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SlideReviewPanel } from "./SlideReviewPanel";
 import { SlidesView } from "./SlidesView";
 import { fixture } from "./deck/fixtures";
+import outputStyles from "./outputs.css?raw";
 
 const setFullscreen = vi.fn(async () => undefined);
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ setFullscreen }) }));
@@ -53,6 +55,10 @@ describe("the slide viewer", () => {
 
     expect(document.querySelectorAll(".slides > section")).toHaveLength(3);
     const strip = screen.getByRole("list", { name: "Slides" });
+    const track = strip.closest(".reader-track");
+    expect(track).toHaveAttribute("data-track", "deck");
+    expect(track?.querySelector(".outputs-stage")).toBeInTheDocument();
+    expect(track).toContainElement(screen.getByRole("region", { name: "Speaker notes" }));
     expect(within(strip).getAllByRole("button")).toHaveLength(3);
     expect(screen.getByText("Slide 1 of 3")).toBeVisible();
     // The title slide has no notes; the second does.
@@ -65,6 +71,48 @@ describe("the slide viewer", () => {
     expect(screen.getByText("Not re-checked")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Go to slide 3" }));
     expect(screen.queryByText("Not re-checked")).not.toBeInTheDocument();
+  });
+
+  it("lets both rows of slide controls wrap within the deck track", async () => {
+    const { container } = await show(deck(), vi.fn(), { onAsk: vi.fn(), onAccent: vi.fn(), onTheme: vi.fn() });
+    const tools = screen.getByRole("button", { name: "Present" }).closest(".outputs-slides-tools");
+    const bar = tools?.closest(".outputs-slides-bar");
+    expect(bar).toContainElement(screen.getByRole("button", { name: "Ask about this slide" }));
+    expect(bar?.closest(".reader-track")).toBe(container.querySelector('[data-track="deck"]'));
+    // jsdom has no layout engine. Verify the wrap declaration used by both rows.
+    expect(outputStyles).toMatch(/\.outputs-slides-bar,\s*\.outputs-slides-tools\s*\{[^}]*flex-wrap:\s*wrap/);
+  });
+
+  it("fills the local preview width when compact", async () => {
+    const { container } = await show(deck(), vi.fn(), { compact: true });
+    expect(container.querySelector(".outputs-stage")?.closest(".reader-track")).toHaveAttribute("data-track", "full");
+  });
+
+  it("places full-size slide renders in a focusable review scroller", () => {
+    const artifact = deck({
+      provenance: {
+        schemaVersion: 2, generator: "studio", workspaceId: "workspace", knowledgeBaseId: "library",
+        knowledgeBaseQuestion: "", acceptedOnly: false, acceptedUnitIds: [], revisionIds: [],
+        skill: {
+          name: "slides", version: 1, skipped: [],
+          visualReview: {
+            version: 1, candidateHash: "reviewed", status: "clean", imageReview: "reviewed",
+            calls: 1, repairCycles: 0, repairedSlides: [], findings: [], history: [],
+          },
+          renderCheck: {
+            version: 1, candidateHash: "reviewed", status: "captured", id: "review",
+            slides: [{ id: "slide-1", index: 0, image: "slide-01.png", fit: 1, overflow: false, resolvedFonts: [] }],
+          },
+        },
+      },
+    });
+    render(<SlideReviewPanel artifact={artifact} baseId="library" workspaceId="workspace" disabled={false} onFollowUp={vi.fn()} />);
+    expect(screen.getByRole("region", { name: "Rendered-slide review" })).toHaveAttribute("data-track", "review");
+    fireEvent.click(screen.getByRole("button", { name: "Rendered slides reviewed" }));
+    fireEvent.click(screen.getByRole("button", { name: "Slide 1" }));
+    const scroll = screen.getByRole("region", { name: "Full-size inspected render" });
+    expect(scroll).toHaveAttribute("tabindex", "0");
+    expect(within(scroll).getByRole("img")).toHaveStyle({ width: "1280px" });
   });
 
   it("keeps citation numbering in thumbnails without adding citation buttons", async () => {

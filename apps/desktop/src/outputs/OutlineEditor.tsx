@@ -1,9 +1,17 @@
-import type { OutlineItem, SkillRun } from "@gunther/contracts";
-import { ArrowDown, ArrowUp, ChevronRight, Plus, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import type { ArtifactPart, OutlineItem, PlanPart, PlanPartEdit, SkillRun } from "@gunther/contracts";
+import { ArrowDown, ArrowUp, Plus, X } from "lucide-react";
+import { useId, useLayoutEffect, useRef } from "react";
+import { finishLineEdit, newPlanRowId } from "./PreferenceFields";
+import { sectionHash } from "./sections";
 
-/** Labels used when displaying saved legacy slide layouts. */
-export const SLIDE_LAYOUTS: Record<string, string> = {
+export interface OutlineEditorProps {
+  value: PlanPart[]; onChange: (next: PlanPart[]) => void;
+  unitLabel: string; max: number; layouts: readonly string[];
+  firstPartRole?: string | null | undefined;
+  readOnly: boolean; disabled: boolean; review?: SkillRun["outlineReview"];
+}
+
+const LAYOUT_LABELS: Record<string, string> = {
   title: "Title",
   composed: "Composed elements",
   big_number: "Big number",
@@ -21,84 +29,165 @@ export const SLIDE_LAYOUTS: Record<string, string> = {
   takeaways: "Takeaways",
 };
 
-const newOutlineId = () => `p_${Array.from(crypto.getRandomValues(new Uint8Array(12)), byte => byte.toString(16).padStart(2, "0")).join("")}`;
+const headingIssue = (heading: string) => !heading.trim() ? "Enter a heading." :
+  /[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029]/u.test(heading) ? "Use a single line for the heading." :
+    heading.trim().length > 160 ? "Use at most 160 characters." : "";
 
-/**
- * Show the saved plan and let Studio rebuild it from edited headings, goals and order.
- */
-export function OutlineEditor({ outline, label, max, busy, onRebuild, review }: {
-  outline: OutlineItem[];
-  /** "sections" or "slides". */
-  label: string;
-  max?: number | undefined;
-  busy: boolean;
-  onRebuild: (outline: OutlineItem[]) => void;
-  review?: SkillRun["outlineReview"];
-}) {
-  const [open, setOpen] = useState(true);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(outline);
-  useEffect(() => {
-    setDraft(outline);
-    setEditing(false);
-  }, [outline]);
+export async function normalizeSavedOutline(versionId: string, outline: OutlineItem[], parts: ArtifactPart[] = []): Promise<PlanPart[]> {
+  // Current reads already carry the version's canonical outline IDs.
+  const used = new Set<string>();
+  const reserved = new Set(outline.map((row) => row.id));
+  const positions = new Map(parts.map((part) => [part.position - 1, part.itemId]));
+  const validId = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+  const rows: PlanPart[] = [];
+  for (const [position, row] of outline.entries()) {
+    let id = row.id;
+    if (!id || !validId.test(id) || used.has(id)) {
+      // Older service responses may only have the saved row's position.
+      const stored = positions.get(position);
+      if (stored && validId.test(stored) && !reserved.has(stored) && !used.has(stored)) id = stored;
+      else {
+        let nonce = 0;
+        do {
+          const hash = await sectionHash(JSON.stringify([versionId, position, nonce++]));
+          id = `p_${hash.slice(0, 62)}`;
+        } while (reserved.has(id) || used.has(id));
+      }
+    }
+    used.add(id);
+    rows.push({ ...row, id, notes: row.notes ?? "", layout: row.layout ?? null });
+  }
+  return rows;
+}
 
-  const change = (index: number, item: Partial<OutlineItem>) =>
-    setDraft((current) => current.map((entry, at) => at === index ? { ...entry, ...item } : entry));
-  const move = (index: number, by: -1 | 1) => setDraft((current) => {
-    const to = index + by;
-    if (to < 0 || to >= current.length) return current;
-    const next = [...current];
-    [next[index], next[to]] = [next[to] as OutlineItem, next[index] as OutlineItem];
-    return next;
-  });
-  const usable = draft.filter((item) => item.heading.trim());
+export function partEdits(value: PlanPart[]): PlanPartEdit[] {
+  return value.map(({ id, heading, goal, layout, notes }) => ({
+    id, heading: heading.trim(), goal: goal.trim(), layout, notes: notes?.trim() ?? "",
+  }));
+}
 
-  if (outline.length === 0) return null;
-  return <section className="outputs-outline" aria-label="Outline">
-    <header>
-      <button type="button" className="outputs-outline-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <ChevronRight size={14} aria-hidden="true" />
-        <strong>Outline</strong>
-        <small>{outline.length} {label}</small>
-      </button>
-      {open && !editing && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => { setDraft(outline.map(item => label === "slides" && !item.id ? { ...item, id: newOutlineId() } : item)); setEditing(true); }}>Edit outline</button>}
-    </header>
-    {open && !editing && <ol className="outputs-outline-list">{outline.map((item, index) => <li key={index}>
-      <strong>{item.heading}</strong>{item.layout && <em>{SLIDE_LAYOUTS[item.layout] ?? item.layout}</em>}{item.goal && <small>{item.goal}</small>}{item.link && <small className="outputs-outline-link">From previous: {item.link}</small>}
-      {(item.message || item.question || item.requires?.length) && <div className="outputs-outline-purpose">{item.message && <span><b>Message:</b> {item.message}</span>}{item.question && <span><b>Audience question:</b> {item.question}</span>}{!!item.requires?.length && <span>Builds on: {item.requires.map(id => outline.findIndex(page => page.id === id) + 1).join(", ")}</span>}</div>}
-      {item.design && <details className="outputs-outline-design"><summary>Page design</summary><small><b>Intent:</b> {item.design.intent}</small><small><b>Visual:</b> {item.design.visual}</small><small><b>Composition:</b> {item.design.composition}</small>{item.design.emphasis && <small><b>Emphasis:</b> {item.design.emphasis}</small>}{item.design.notes && <small><b>Speaker notes:</b> {item.design.notes}</small>}</details>}
-      {item.designAttempted && !item.design && <small className="outputs-outline-design-failed">Page design did not complete; the original plan was kept.</small>}
-    </li>)}</ol>}
-    {open && !editing && review && <details className="outputs-outline-purpose">
-      <summary>Planning coverage</summary>
-      {review.requirements?.map((item,index) => <p key={index}><b>{item.requirement}</b> — {item.slides.length ? `slides ${item.slides.join(", ")}` : item.cards.length ? "not yet mapped" : "context or format requirement"}{item.basis === "inferred" ? " (inferred priority)" : ""}</p>)}
-      <p>{review.coverage.filter(item => item.slides.length > 0).length} of {review.coverage.length} evidence cards assigned to pages.</p>
-      {review.issues.length > 0 && <details><summary>{review.repaired ? "Initial review notes used for replanning" : "Review notes"}</summary>{review.issues.map((item,index) => <p key={index}>{item.problem} {item.fix}</p>)}</details>}
+export function outlineIssue(value: PlanPart[], max: number): string {
+  if (!value.length || value.length > max) return `Keep between 1 and ${max} outline items.`;
+  if (value.some((row) => headingIssue(row.heading) || row.goal.trim().length > 400 || (row.notes?.trim().length ?? 0) > 400)) {
+    return "Complete each outline heading and check the field lengths.";
+  }
+  return "";
+}
+
+function OutlineReview({ review }: { review: NonNullable<OutlineEditorProps["review"]> }) {
+  return <details className="outputs-outline-purpose">
+    <summary>Planning coverage</summary>
+    {review.requirements?.map((item, index) => <p key={index}><b>{item.requirement}</b> · {
+      item.slides.length ? `Slides ${item.slides.join(", ")}` : item.cards.length ? "Unmapped" : "Context or format requirement"
+    }{item.basis === "inferred" ? " (inferred priority)" : ""}</p>)}
+    <p>{review.coverage.filter((item) => item.slides.length > 0).length} of {review.coverage.length} evidence cards assigned to pages.</p>
+    {review.issues.length > 0 && <details><summary>{review.repaired ? "Initial review notes used for replanning" : "Review notes"}</summary>
+      {review.issues.map((item, index) => <p key={index}>{item.problem} {item.fix}</p>)}
     </details>}
-    {open && editing && <div className="outputs-outline-edit">
-      <ol>
-        {draft.map((item, index) => <li key={index}>
-          <div>
-            <input value={item.heading} onChange={(event) => change(index, { heading: event.target.value })} aria-label={`Heading ${index + 1}`} placeholder="Heading" maxLength={160} />
-            <input value={item.goal} onChange={(event) => change(index, { goal: event.target.value })} aria-label={`Goal ${index + 1}`} placeholder="What it is for" maxLength={400} />
+  </details>;
+}
+
+export function OutlineEditor({ value, onChange, unitLabel, max, layouts, firstPartRole, readOnly, disabled, review }: OutlineEditorProps) {
+  const hasTitle = layouts.includes("title");
+  const firstMovable = firstPartRole || hasTitle ? 1 : 0;
+  const uid = useId();
+  const headings = useRef(new Map<string, HTMLInputElement>());
+  const addButton = useRef<HTMLButtonElement>(null);
+  const focus = useRef<string | null | undefined>(undefined);
+  useLayoutEffect(() => {
+    const id = focus.current;
+    if (id === undefined) return;
+    focus.current = undefined;
+    (id === null ? addButton.current : headings.current.get(id))?.focus();
+  }, [value]);
+
+  const change = (id: string, edit: Partial<PlanPartEdit>) => onChange(value.map((row) => row.id === id ? { ...row, ...edit } : row));
+  const move = (index: number, to: number) => {
+    if (index < firstMovable || to < firstMovable || to >= value.length) return;
+    const next = value.slice();
+    const [row] = next.splice(index, 1);
+    if (!row) return;
+    next.splice(to, 0, row);
+    focus.current = row.id;
+    onChange(next);
+  };
+  const remove = (index: number) => {
+    if (value.length <= 1 || index < firstMovable) return;
+    focus.current = value[index + 1]?.id ?? value[index - 1]?.id ?? null;
+    onChange(value.filter((_, position) => position !== index));
+  };
+  const add = () => {
+    if (value.length >= max) return;
+    const row: PlanPart = { id: newPlanRowId(), heading: "", goal: "", layout: null, notes: "" };
+    focus.current = row.id;
+    onChange([...value, row]);
+  };
+
+  return <section className="outputs-outline" aria-labelledby={uid}>
+    <header>
+      <h2 id={uid}>Outline</h2>
+      <small>{value.length} {unitLabel}{value.length === 1 ? "" : "s"}</small>
+    </header>
+    {readOnly ? <ol className="outputs-outline-list">{value.map((row, index) => <li key={row.id}>
+      <strong>{row.heading}</strong>
+      {index === 0 && firstPartRole ? <em>{firstPartRole}</em> : row.layout && <em>{LAYOUT_LABELS[row.layout] ?? row.layout}</em>}
+      {row.goal && <small>{row.goal}</small>}
+      {row.notes && <small className="outputs-outline-notes"><b>Writer notes</b> {row.notes}</small>}
+      {row.link && <small>From previous · {row.link}</small>}
+      {(row.message || row.question || row.requires?.length) ? <div className="outputs-outline-purpose">
+        {row.message && <span><b>Message</b> {row.message}</span>}
+        {row.question && <span><b>Audience question</b> {row.question}</span>}
+        {!!row.requires?.length && <span>Builds on {row.requires.map((id) => {
+          const position = value.findIndex((part) => part.id === id);
+          return position === -1 ? id : `${unitLabel} ${position + 1}`;
+        }).join(", ")}</span>}
+      </div> : null}
+      {row.design && <details className="outputs-outline-design"><summary>Page design</summary>
+        <small><b>Intent</b> {row.design.intent}</small><small><b>Visual</b> {row.design.visual}</small>
+        <small><b>Composition</b> {row.design.composition}</small>
+        {row.design.emphasis && <small><b>Emphasis</b> {row.design.emphasis}</small>}
+        {row.design.notes && <small><b>Speaker notes</b> {row.design.notes}</small>}
+      </details>}
+      {row.designAttempted && !row.design && <small className="outputs-outline-design-failed">Page design did not complete. The original plan was kept.</small>}
+    </li>)}</ol> : <div className="outputs-outline-edit">
+      <ol>{value.map((row, index) => {
+        const position = index + 1;
+        const error = headingIssue(row.heading);
+        const errorId = `${uid}-${row.id}-heading`;
+        const choices = layouts.filter((layout) => !hasTitle || (layout === "title") === (index === 0));
+        return <li key={row.id}>
+          <div className="outputs-outline-fields">
+            {index === 0 && firstPartRole && <small className="outputs-outline-role">{firstPartRole}</small>}
+            <label>Heading<input ref={(element) => {
+              if (element) headings.current.set(row.id, element); else headings.current.delete(row.id);
+            }} value={row.heading} aria-label={`Heading ${position}`} aria-invalid={Boolean(error) || undefined}
+              aria-describedby={error ? errorId : undefined} maxLength={160} disabled={disabled}
+              onKeyDown={finishLineEdit} onChange={(event) => change(row.id, { heading: event.currentTarget.value })} /></label>
+            {error && <small className="plan-field-error" id={errorId}>{error}</small>}
+            <label>Goal<input value={row.goal} aria-label={`Goal ${position}`} maxLength={400} disabled={disabled}
+              onKeyDown={finishLineEdit} onChange={(event) => change(row.id, { goal: event.currentTarget.value })} /></label>
+            <label>Writer notes<textarea value={row.notes ?? ""} aria-label={`Writer notes ${position}`} rows={2} maxLength={400} disabled={disabled}
+              onChange={(event) => change(row.id, { notes: event.currentTarget.value })} /></label>
+            {layouts.length > 0 && <label>Layout<select value={row.layout ?? ""} aria-label={`Layout ${position}`} disabled={disabled}
+              onChange={(event) => change(row.id, { layout: event.currentTarget.value || null })}>
+              <option value="">Auto</option>
+              {row.layout && !choices.includes(row.layout) && <option value={row.layout}>{LAYOUT_LABELS[row.layout] ?? row.layout} (saved)</option>}
+              {choices.map((layout) => <option key={layout} value={layout}>{LAYOUT_LABELS[layout] ?? layout}</option>)}
+            </select></label>}
           </div>
-          <span>
-            <button type="button" className="gx-icon-button" aria-label={`Move ${index + 1} up`} disabled={index === 0} onClick={() => move(index, -1)}><ArrowUp size={13} /></button>
-            <button type="button" className="gx-icon-button" aria-label={`Move ${index + 1} down`} disabled={index === draft.length - 1} onClick={() => move(index, 1)}><ArrowDown size={13} /></button>
-            <button type="button" className="gx-icon-button" aria-label={`Remove ${index + 1}`} disabled={draft.length <= 1} onClick={() => setDraft((current) => current.filter((_, at) => at !== index))}><X size={13} /></button>
-          </span>
-        </li>)}
-      </ol>
-      <footer>
-        <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={max !== undefined && draft.length >= max} onClick={() => setDraft((current) => [...current, { ...(label === "slides" ? { id: newOutlineId() } : {}), heading: "", goal: "" }])}><Plus size={13} />Add</button>
-        <span>
-          <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => { setDraft(outline); setEditing(false); }}>Cancel</button>
-          <button type="button" className="gx-btn gx-btn-primary gx-btn-sm" disabled={busy || usable.length === 0} onClick={() => onRebuild(usable.map(({ id, heading, goal }) => ({
-            ...(id ? { id } : {}), heading: heading.trim(), goal: goal.trim(),
-          })))}>Rebuild with this outline</button>
-        </span>
-      </footer>
+          <div className="plan-row-actions">
+            <button type="button" className="gx-icon-button" aria-label={`Move up ${unitLabel} ${position}`} title="Move up"
+              disabled={disabled || index <= firstMovable} onClick={() => move(index, index - 1)}><ArrowUp size={14} aria-hidden="true" /></button>
+            <button type="button" className="gx-icon-button" aria-label={`Move down ${unitLabel} ${position}`} title="Move down"
+              disabled={disabled || index < firstMovable || index === value.length - 1} onClick={() => move(index, index + 1)}><ArrowDown size={14} aria-hidden="true" /></button>
+            <button type="button" className="gx-icon-button" aria-label={`Remove ${unitLabel} ${position}`} title="Remove"
+              disabled={disabled || value.length <= 1 || index < firstMovable} onClick={() => remove(index)}><X size={14} aria-hidden="true" /></button>
+          </div>
+        </li>;
+      })}</ol>
+      <button type="button" ref={addButton} className="gx-btn gx-btn-quiet gx-btn-sm" disabled={disabled || value.length >= max}
+        onClick={add}><Plus size={14} aria-hidden="true" />Add {unitLabel}</button>
     </div>}
+    {readOnly && review && <OutlineReview review={review} />}
   </section>;
 }

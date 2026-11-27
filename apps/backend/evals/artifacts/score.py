@@ -19,7 +19,7 @@ import json
 import re
 import tomllib
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -32,6 +32,7 @@ from gunther.llm import ModelError, ModelGateway, ModelInfo
 from gunther.markup import parse_markup
 from gunther.output_types import output_type_for
 from gunther.outputs import join_document, split_document
+from gunther.schemas import PlanSetupInput
 
 __all__ = ["LIBRARY_DIR", "library_texts"]
 
@@ -50,7 +51,7 @@ CATEGORIES = {
 }
 # The kind of output each artifact of a case is made of.
 ARTIFACTS = {"deck": "slides", "report": "report", "none": ""}
-INTENTS = ("ask", "answer", "make", "change")
+INTENTS = ("ask", "answer", "reply", "plan", "make", "change")
 ASKS = ("must", "may", "must_not")
 # What each placeholder in a case needs its setup to have made.
 PLACEHOLDERS = {"typo": "typo", "fixed": "typo", "quote": "quote"}
@@ -62,7 +63,7 @@ LAYOUT_MARK = re.compile(
     r"^[ \t\r\n]*<!--[ \t]*layout:[ \t]*([a-z][a-z0-9_]*)[^>]*-->[ \t]*(?:\r?\n|\Z)"
 )
 MARK_LINE = re.compile(r"<!--[^>]*-->")
-JUDGE = """You grade one reply from a document assistant. A person asked it to make or change a report or a slide deck, or asked it a question about one. You see the conversation, the document as it was before the last request (numbered parts, with what the Checker found in each), and what the assistant did: the changed document, its answer, or its question. Then one question to answer with yes or no.
+JUDGE = """You grade one reply from a document assistant. A person asked it to plan, make or change a report or a slide deck, or asked it a question about one. You see the conversation, the document as it was before the last request (numbered parts, with what the Checker found in each), and what the assistant did: its proposal, the saved document, its answer, or its question. Then one question to answer with yes or no.
 Judge only against the texts shown. Reply with the JSON object {"answer": true or false, "why": "one short sentence"}."""  # noqa: E501
 
 
@@ -130,6 +131,8 @@ class Case:
     history: tuple[Turn, ...] = ()
     focus: Focus | None = None
     setup: Setup = field(default_factory=Setup)
+    plan: PlanSetupInput | None = None
+    approve: bool = False
 
     def resolved(self, subs: dict[str, str]) -> Case:
         """The case with ``{typo}``, ``{fixed}`` and ``{quote}`` replaced by what the setup made."""
@@ -148,16 +151,7 @@ class Case:
             "gone": tuple(fill(x) for x in self.expect.gone),
             "judge": fill(self.expect.judge),
         }
-        return Case(
-            self.id,
-            self.category,
-            self.artifact,
-            fill(self.message),
-            Expect(**expect),
-            self.history,
-            focus,
-            self.setup,
-        )
+        return replace(self, message=fill(self.message), expect=Expect(**expect), focus=focus)
 
 
 @dataclass(frozen=True)
@@ -189,24 +183,29 @@ class Fixture:
         text = json.dumps(self.__dict__, default=lambda item: item.__dict__, sort_keys=True)
         return hashlib.sha256(text.encode()).hexdigest()[:12]
 
-    def request(self) -> dict[str, Any]:
-        """The options for the fixture's conversation build turn."""
+    def setup(self) -> dict[str, Any]:
+        """The options shown when planning the fixture."""
 
         body: dict[str, Any] = {
             "type": output_type_for(self.kind, self.style).id,
             "audience": self.audience,
             "focus": self.brief,
             "scope": {"mode": "library"},
-            "outline": [
-                {"heading": s.heading, "goal": s.goal, **({"layout": s.layout} if s.layout else {})}
-                for s in self.outline
-            ],
         }
         if self.kind == "slides" and self.use:
             body["use"] = self.use
         if self.title:
             body["title"] = self.title
         return body
+
+    def initial_outline(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": f"part_{number}", "heading": slot.heading, "goal": slot.goal,
+                "layout": slot.layout or None, "notes": "",
+            }
+            for number, slot in enumerate(self.outline, start=1)
+        ]
 
     def problems(self, parts: Sequence[str]) -> list[str]:
         """What the built parts lack that the cases rely on; empty when they will do."""
@@ -289,6 +288,8 @@ def load_cases(path: Path = CASES_FILE) -> list[Case]:
         "history",
         "focus",
         "setup",
+        "plan",
+        "approve",
         "expect",
     }
     cases = []
@@ -302,6 +303,10 @@ def load_cases(path: Path = CASES_FILE) -> list[Case]:
         setup = entry.get("setup", {})
         _fields(setup, {"typo", "quote"}, f"{where} setup")
         quote = setup.get("quote")
+        plan = entry.get("plan")
+        approve = entry.get("approve", False)
+        if type(approve) is not bool:
+            raise ValueError(f"{where}: approve must be true or false")
         case = Case(
             id=str(entry["id"]),
             category=str(entry["category"]),
@@ -311,6 +316,9 @@ def load_cases(path: Path = CASES_FILE) -> list[Case]:
             history=tuple(history),
             focus=_focus(entry.get("focus"), where),
             setup=Setup(setup.get("typo"), (int(quote[0]), int(quote[1])) if quote else None),
+            plan=PlanSetupInput.model_validate({"scope": {"mode": "library"}, **plan})
+            if plan is not None else None,
+            approve=approve,
         )
         if case.category not in CATEGORIES:
             raise ValueError(f"{where}: unknown category {case.category!r}")
@@ -405,6 +413,17 @@ def problems(cases: Sequence[Case], fixtures: dict[str, Fixture]) -> list[str]:
                 found.append(f"{where}: {{{name}}} is not set up")
         if case.artifact == "none" and (case.history or case.focus):
             found.append(f"{where}: nothing exists yet, so there is no history or focus")
+        if case.plan is not None and fixture is not None:
+            found.append(f"{where}: a creation plan requires an empty conversation")
+        if case.approve and case.plan is None:
+            found.append(f"{where}: scripted approval needs a plan")
+        if case.artifact == "none":
+            allowed = {"ask", "reply", "plan"}
+            if case.approve:
+                allowed.add("make")
+            if unexpected := set(expect.intent) - allowed:
+                intents = ", ".join(sorted(unexpected))
+                found.append(f"{where}: unexpected intent for creation: {intents}")
     return found
 
 
@@ -430,6 +449,7 @@ class Version:
     outline: list[dict[str, Any]] = field(default_factory=list)
     # What the Checker found in each part, as the app shows it: {"index", "checked", "issues"}.
     sections: list[dict[str, Any]] = field(default_factory=list)
+    conversation_id: str | None = None
 
     @property
     def parts(self) -> list[str]:
@@ -453,6 +473,7 @@ class Version:
             citations=data.get("citations", []),
             outline=data.get("outline", []),
             sections=data.get("sections", []),
+            conversation_id=data.get("conversationId"),
         )
 
 
@@ -460,7 +481,7 @@ class Version:
 class Outcome:
     """What one case produced: the document before and after, or an answer or a question."""
 
-    # What the assistant did: ask | answer | make | change ("" when it did not get that far).
+    # What the assistant did ("" when it did not get that far).
     intent: str = ""
     # The version the last message was sent on, and the one it saved (None: nothing saved).
     before: Version | None = None
@@ -478,6 +499,7 @@ class Outcome:
     # How the request was made, including the route in historical runs.
     route: str = ""
     notes: list[str] = field(default_factory=list)
+    plan: dict[str, Any] | None = None
 
 
 def plain(text: str) -> str:
@@ -780,17 +802,28 @@ def _bare(sentence: str) -> str:
     return folded(sentence).rstrip(" .!?。！？;:,，")
 
 
-def spoken_words(outcome: Outcome) -> list[str]:
-    """What the assistant said to the person, apart from the document."""
+def plan_words(outcome: Outcome) -> list[str]:
+    plan = outcome.plan or {}
+    proposal = plan.get("proposal") or {}
+    return [
+        *(proposal[key] for key in ("title", "summary", "angle") if proposal.get(key)),
+        *(topic["text"] for topic in proposal.get("coverage", [])),
+        *(row[key] for row in (plan.get("outline") or [])
+          for key in ("heading", "goal", "notes") if row.get(key)),
+    ]
 
-    return [outcome.reply, outcome.question, *outcome.options]
+
+def response_words(outcome: Outcome) -> list[str]:
+    """What the assistant showed apart from the saved document."""
+
+    return [outcome.reply, outcome.question, *outcome.options, *plan_words(outcome)]
 
 
 def _result_text(outcome: Outcome) -> str:
-    """Everything the assistant gave back: the document, and what it said or asked."""
+    """The saved document, reviewed plan and visible replies."""
 
-    said = spoken_words(outcome)
-    return plain(" ".join([outcome.after.content if outcome.after else "", *said]))
+    document = outcome.after.content if outcome.after else ""
+    return plain(" ".join([document, *response_words(outcome)]))
 
 
 def _cited_titles(part: str, citations: Sequence[dict[str, Any]]) -> set[str]:
@@ -809,6 +842,8 @@ def _invented(
     if case.focus and case.focus.quote:
         written.append(case.focus.quote)
     texts = [*written, outcome.before.content if outcome.before else ""]
+    if outcome.plan and outcome.plan["options"]["scope"]["mode"] == "library":
+        texts.extend(library.values())
     for version in versions:
         for citation in version.citations:
             texts.append(library.get(citation.get("sourceTitle", ""), ""))
@@ -822,7 +857,7 @@ def measure(case: Case, outcome: Outcome, library: dict[str, str]) -> dict[str, 
     version the message was sent on (from 1); positions count the version it saved."""
 
     before, after, expect = outcome.before, outcome.after, case.expect
-    spoken = [outcome.reply, outcome.question, *outcome.options]
+    spoken = response_words(outcome)
     result: dict[str, Any] = {"saved": after is not None, "asked": outcome.asked}
     if after is None:
         result["invented"] = _invented(case, outcome, library, [" ".join(spoken)])
@@ -923,7 +958,7 @@ def checks(case: Case, outcome: Outcome, measures: dict[str, Any]) -> dict[str, 
     for text in expect.must_not_contain:
         found[f"without {text!r}"] = folded(text) not in heard
     if expect.gone:
-        said = [outcome.after.content if outcome.after else "", *spoken_words(outcome)]
+        said = [outcome.after.content if outcome.after else "", *response_words(outcome)]
         sentences = {_bare(s) for text in said for s in sentences_of(text, notes=True)}
         for text in expect.gone:
             found[f"gone {text!r}"] = _bare(text) not in sentences
@@ -982,6 +1017,8 @@ def judge_prompt(case: Case, outcome: Outcome, measures: dict[str, Any]) -> str:
     lines = ["Conversation:"]
     lines += [f"Person: {turn.message}" for turn in case.history]
     lines.append(f"Person (the request): {case.message}")
+    if case.approve:
+        lines.append("(The script approves the reviewed plan when it is ready.)")
     if case.focus:
         where = f"part {case.focus.section}" if case.focus.section else "a part"
         how = "selected" if case.focus.selected else "only on screen"
@@ -1016,9 +1053,11 @@ def judge_prompt(case: Case, outcome: Outcome, measures: dict[str, Any]) -> str:
     else:
         if outcome.asked:
             lines.append(f"It asked: {outcome.question} Options: {'; '.join(outcome.options)}")
+        if outcome.plan:
+            lines += ["The proposed plan:", *plan_words(outcome)]
         if outcome.reply:
-            lines.append(f"It answered: {outcome.reply}")
-        if not (outcome.asked or outcome.reply):
+            lines.append(f"It replied: {outcome.reply}")
+        if not (outcome.asked or outcome.reply or outcome.plan):
             lines.append("It saved nothing and said nothing.")
     lines += ["", f"Question: {case.expect.judge}"]
     return "\n".join(lines)

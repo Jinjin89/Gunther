@@ -92,16 +92,20 @@ def render_audio(
 
     with session_scope(sessions) as session:
         session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        check_stop()
         current = live(session)
+        artifact = artifact_detail(session, current)
         row = session.get(ArtifactAudio, artifact.id)
         if row is None:
             row = ArtifactAudio(artifact_id=artifact.id, content_hash=artifact.content_hash)
             session.add(row)
-        elif not retry and row.status != "pending":
-            return artifact_detail(session, current)
-        elif row.content_hash == artifact.content_hash and voices is None:
-            saved = json.loads(row.voices_json)
-            voices = tuple(saved) if saved else None
+        elif row.content_hash == artifact.content_hash:
+            if not retry and row.status != "pending":
+                return artifact
+            if voices is None and artifact.audio is not None:
+                voices = artifact.audio.voices
+        if voices is None and (plan := getattr(artifact.provenance, "creation_plan", None)):
+            voices = plan.options.voices
         row.content_hash, row.attempt = artifact.content_hash, attempt
         row.status, row.error, row.asset_id = "pending", None, None
         row.voices_json, row.timings_json = json.dumps(voices), "[]"
@@ -138,6 +142,7 @@ def render_audio(
         check_stop()
 
         def attach(session: Session, asset: Asset) -> None:
+            check_stop()
             row = owned(session)
             if session.get(ArtifactAsset, (artifact.id, asset.id)) is None:
                 session.add(ArtifactAsset(artifact_id=artifact.id, asset_id=asset.id))
@@ -171,6 +176,7 @@ def render_audio(
 
     with session_scope(sessions) as session:
         session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        check_stop()
         if status != "ready":
             row = owned(session)
             row.status, row.error = status, problem

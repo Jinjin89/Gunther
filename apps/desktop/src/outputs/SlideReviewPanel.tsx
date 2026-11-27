@@ -19,10 +19,12 @@ export function SlideReviewPanel({ artifact, baseId, workspaceId, disabled, onFo
   const render = artifact.provenance.skill?.renderCheck;
   const visual = artifact.provenance.skill?.visualReview;
   if (artifact.kind !== "slides") return null;
-  if (!visual) return onReview ? <section className="outputs-slide-review"><button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={disabled} onClick={onReview}>Review rendered slides</button></section> : null;
+  if (!visual) return onReview ? <section className="outputs-slide-review reader-track" data-track="review">
+    <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={disabled} onClick={onReview}>Review rendered slides</button>
+  </section> : null;
   const label = { clean: "Rendered slides reviewed", repaired: "Rendered slides reviewed · layout repaired", needs_review: "Slides need visual review", unavailable: "Rendered-slide review unavailable", stale: "Slide review is out of date" }[visual.status];
   const url = (name: string) => artifactRenderUrl(baseId, artifact.id, workspaceId, render!.id!, name);
-  return <section className="outputs-slide-review" aria-label="Rendered-slide review">
+  return <section className="outputs-slide-review reader-track" data-track="review" aria-label="Rendered-slide review">
     <button className="gx-btn gx-btn-ghost gx-btn-sm" type="button" aria-expanded={open} onClick={() => setOpen(!open)}>{label}</button>
     {open && <div><p>{visual.reason ?? (visual.status === "clean" || visual.status === "repaired" ? "The saved candidate matches the inspected renders." : "The deck is saved. Resolve these findings before presenting.")}</p>
       {onReview && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={disabled} onClick={onReview}>Review current renders · save a version</button>}
@@ -33,9 +35,17 @@ export function SlideReviewPanel({ artifact, baseId, workspaceId, disabled, onFo
           {position > 0 && <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" disabled={disabled} onClick={() => onFollowUp(visualFollowUp(finding, position))}>{finding.route === "plan" ? "Replan with checks" : finding.route === "write" ? "Rewrite with checks" : "Request layout repair"}</button>}</li>;
       })}</ul>}
       {render?.id && render.status === "captured" && <><a href={url("deck.pdf")} download="gunther-reviewed-deck.pdf">Inspected PDF</a>
-        {imageFailed ? <p>Cached renders are unavailable. Rebuild to capture them again.</p> : <button type="button" aria-label="Inspect contact sheet at full size" onClick={() => setPreview("contact.png")} style={{ border: 0, padding: 0, background: "transparent", cursor: "zoom-in" }}><img src={url("contact.png")} alt="Contact sheet of the inspected slides" onError={() => setImageFailed(true)}/></button>}
+        {imageFailed ? <p>Cached renders are unavailable. Rebuild to capture them again.</p> :
+          <button type="button" className="outputs-slide-review-contact" aria-label="Inspect contact sheet at full size" onClick={() => setPreview("contact.png")}>
+            <img src={url("contact.png")} alt="Contact sheet of the inspected slides" onError={() => setImageFailed(true)} />
+          </button>}
         <div className="outputs-slide-review-images">{render.slides?.map(slide => <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" key={slide.id} onClick={() => setPreview(slide.image)}>Slide {slide.index+1}</button>)}</div>
-        {preview && <div role="region" aria-label="Full-size inspected render"><button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => setPreview(null)}>Close render</button><div style={{ overflow: "auto", maxHeight: "70vh" }}><img src={url(preview)} alt="Full-size inspected render" style={{ width: preview === "contact.png" ? 640 : 1280, maxWidth: "none", maxHeight: "none" }}/></div></div>}
+        {preview && <>
+          <button type="button" className="gx-btn gx-btn-ghost gx-btn-sm" onClick={() => setPreview(null)}>Close render</button>
+          <div className="outputs-slide-review-scroll" role="region" aria-label="Full-size inspected render" tabIndex={0}>
+            <img src={url(preview)} alt="Full-size inspected render" style={{ width: preview === "contact.png" ? 640 : 1280 }} />
+          </div>
+        </>}
       </>}
     </div>}
   </section>;

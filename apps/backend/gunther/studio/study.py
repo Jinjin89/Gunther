@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Sequence
 
-from gunther.citations import strip_citations
 from gunther.llm import Image, ModelError
 from gunther.llm import unfence as _unfence
 from gunther.outputs import BuiltOutput, Events, Pool
@@ -60,6 +60,8 @@ class StudioStudy:
     def _science_limit(self, run: Run, reason: str) -> None:
         if run.limitations is None:
             run.limitations = []
+        if reason in run.limitations:
+            return
         run.limitations.append(reason)
         self.skipped.append(
             {"step": "science", "label": "Scientific evidence limitation", "reason": reason}
@@ -75,6 +77,7 @@ class StudioStudy:
         system, prompt = material_request(
             material,
             P.STUDY_MAP.format(brief=run.spec.brief or "(none)", audience=run.spec.audience),
+            run.spec,
         )
         study = self._json(model, S.StudyMap, system, prompt, effort)
         if problems := S.map_problems(study, pool.items):
@@ -106,6 +109,7 @@ class StudioStudy:
                 figures=", ".join(S.figure_inventory(pool.items)) or "(none)",
                 memo=self._study_text(run),
             ),
+            run.spec,
         )
         plan = self._json(model, S.CoveragePlan, system, prompt, effort)
         if problems := S.coverage_problems(plan, pool.items):
@@ -135,7 +139,8 @@ class StudioStudy:
         return plan
 
     def read_figures(
-        self, model, effort, run: Run, pool: Pool, emit: Events = _no_events
+        self, model, effort, run: Run, pool: Pool, emit: Events = _no_events, *,
+        retained: Sequence[dict] = (),
     ) -> list[S.FigureReading]:
         assert run.study is not None
         linked = S.figure_inventory(pool.items)
@@ -152,6 +157,11 @@ class StudioStudy:
             return []
         eye, eye_effort = selected
         self._stage(emit, "figures", "Looking at the figures", "running")
+        reusable = {
+            row["source_fingerprint"]: row
+            for row in [*self.reusable_figures, *retained]
+            if isinstance(row, dict) and isinstance(row.get("source_fingerprint"), str)
+        }
 
         def read(asset_id: str) -> S.FigureReading | None:
             passages = [
@@ -159,23 +169,18 @@ class StudioStudy:
             ]
             source = next(f for f in figures_of(passages[0]) if f["assetId"] == asset_id)
             prompt = (
-                f"asset_id: {asset_id}\nLinked claims: "
-                + "\n".join(
-                    c.model_dump_json()
-                    for c in run.study.claims
-                    if any(f.asset_id == asset_id for f in c.figures)
-                )
-                + "\nCaption, provenance and linked passages:\n"
+                f"asset_id: {asset_id}\nCaption, provenance and linked passages:\n"
                 + self._material(passages)
             )
-            fingerprint = digest([prompt, S.pool_print(passages), eye.ref, eye_effort])
-            reusable = next(
-                (r for r in self.reusable_figures if r.get("source_fingerprint") == fingerprint),
-                None,
-            )
-            if reusable is not None:
+            fingerprint = digest([
+                P.FIGURE_READ, prompt, S.pool_print(passages, full=True), eye.ref, eye_effort,
+            ])
+            saved = reusable.get(fingerprint)
+            if saved is not None:
                 try:
-                    reading = S.FigureReading.model_validate(reusable)
+                    reading = S.FigureReading.model_validate(saved)
+                    if reading.asset_id != asset_id:
+                        raise ValueError("The saved figure reading has a different asset identity.")
                     if not reading.legible or reading.uncertain:
                         self._science_limit(
                             run,
@@ -227,7 +232,9 @@ class StudioStudy:
             coverage=(run.coverage_plan.model_dump_json() if run.coverage_plan else "(none)"),
             story=content,
         )
-        return self._json(model, S.ScientificReview, *material_request(material, task), "low")
+        return self._json(
+            model, S.ScientificReview, *material_request(material, task, run.spec), "low",
+        )
 
     @staticmethod
     def _plain_built(deck: str, run: Run, pool: Pool, model, effort) -> BuiltOutput:
@@ -305,8 +312,11 @@ class StudioStudy:
                 system=P.LEARNER_REVIEW.format(
                     brief=run.spec.brief or "(none)", audience=run.spec.audience
                 ),
-                prompt="Visible slides (notes are deliberately absent):\n\n"
-                + self._visible_slides(deck),
+                prompt=P.with_preferences(
+                    "Visible slides (notes are deliberately absent):\n\n"
+                    + self._visible_slides(deck),
+                    run.spec,
+                ),
                 images=images,
                 effort="low",
                 schema_at="end",
@@ -347,7 +357,9 @@ class StudioStudy:
             + deck
         )
         try:
-            return self._json(model, S.CoverageReview, *material_request(material, task), "low")
+            return self._json(
+                model, S.CoverageReview, *material_request(material, task, run.spec), "low",
+            )
         except ModelError as error:
             logger.info("Comparing the learner with the source failed: %s", error)
             self.skipped.append(
@@ -363,47 +375,12 @@ class StudioStudy:
         deck: str,
         pool: Pool,
         material: str,
-        problems: list[S.ScientificProblem | str],
+        problems: list[S.ScientificProblem],
     ) -> str:
         """Rewrite affected slides, allowing one slide to become several; structural omissions
         may still ask for the whole deck."""
 
         slides = fmt.split_slides(deck)
-        wanted: set[int] = set()
-        structural = False
-        for problem in problems:
-            references: set[int] = set()
-            if isinstance(problem, str):
-                # A code problem names its figure or its values: the slides showing them are
-                # rewritten. Only a figure no slide shows yet needs the whole deck (a new slide
-                # must be placed for it).
-                assets = re.findall(r"gunther-asset:([\w-]+)", problem)
-                stated = re.search(r"unreadable glyphs:\s*(.+?)\.\s+Omit", problem)
-                values = fmt.numbers_in(stated.group(1)) if stated else set()
-                showing = {
-                    number
-                    for number, slide in enumerate(slides, 1)
-                    if any(f"gunther-asset:{asset}" in slide for asset in assets)
-                    or values
-                    & fmt.numbers_in(re.sub(r"\(gunther-asset:[^)]*\)", "", strip_citations(slide)))
-                }
-                if showing:
-                    wanted |= showing
-                else:
-                    structural = True
-                continue
-            for low, high in re.findall(
-                r"slides?\s+(\d+)\s*(?:[-–]\s*(\d+))?", problem.where, re.I
-            ):
-                end_number = int(high) if high else int(low)
-                references.update(
-                    number for number in range(int(low), end_number + 1)
-                    if 1 <= number <= len(slides)
-                )
-            wanted |= references
-            if not references or problem.where.casefold() in {"overall", "document", "deck"}:
-                structural = True
-
         def rejected(reason: str) -> str:
             self.skipped.append(
                 {
@@ -414,8 +391,12 @@ class StudioStudy:
             )
             return deck
 
+        wanted = {number for problem in problems for number in problem.slides}
+        if any(number > len(slides) for number in wanted):
+            return rejected("the review named a slide outside the draft")
+        structural = any(problem.route == "deck" for problem in problems) or not wanted
         try:
-            if structural or not wanted:
+            if structural:
                 selected, numbers, labels = slides, list(range(1, len(slides) + 1)), "all"
             else:
                 numbers = sorted(wanted)
@@ -423,9 +404,7 @@ class StudioStudy:
                 labels = ", ".join(map(str, numbers))
             task = P.STUDY_REVISE.format(
                 problems="\n".join(
-                    f"- {p.where}: {p.problem} — {p.fix}"
-                    if isinstance(p, S.ScientificProblem)
-                    else f"- {p}"
+                    "- " + p.model_dump_json()
                     for p in problems
                 ),
                 slides="\n\n".join(
@@ -439,8 +418,13 @@ class StudioStudy:
                 "marker."
             )
             task += "\nStudy map, image readings and coverage plan:\n" + self._study_text(run)
+            if run.reviewed:
+                task += (
+                    "\n" + P.APPROVED_OUTLINE
+                    + "\nReturn exactly one replacement slide for each selected position."
+                )
             revised = _unfence(
-                self._text(model, *material_request(material, task), "low", 24_000)
+                self._text(model, *material_request(material, task, run.spec), "low", 24_000)
             )
         except ModelError as error:
             logger.info("The targeted scientific revision failed: %s", error)
@@ -448,7 +432,7 @@ class StudioStudy:
 
         pieces = fmt.split_slides(revised)
         if structural:
-            if len(pieces) < 2:
+            if len(pieces) < 2 or (run.reviewed and len(pieces) != len(slides)):
                 return rejected(f"revision returned {len(pieces)} slides")
             prior_errors = run.format_repair_errors
             candidate = self.fix_format(model, effort, run, revised, _no_events)
@@ -539,7 +523,7 @@ class StudioStudy:
         found: list[S.ScientificProblem] = list(review.problems if review is not None else [])
         if comparison is not None:
             found += comparison.coverage_problems + comparison.learner_problems
-        code = self._science_code(run, deck, pool)
+        code = self._science_findings(run, deck, pool)
         unavailable = review is None or learner is None or comparison is None
         verdicts_ready = bool(
             review and review.verdict == "ready" and comparison and comparison.verdict == "ready"
@@ -564,14 +548,14 @@ class StudioStudy:
                 still_open = self._recheck_science(model, run, revised, material, found)
                 fixed = len(found) - len(still_open)
             deck = revised
-            code = self._science_code(run, deck, pool)
+            code = self._science_findings(run, deck, pool)
         deck, healed = S.heal_images(deck, run.figure_readings or [], pool.items)
         if healed:
             for note in healed:
                 self._science_limit(run, note)
-            code = self._science_code(run, deck, pool)
+            code = self._science_findings(run, deck, pool)
         for problem in code:
-            self._science_limit(run, problem)
+            self._science_limit(run, problem.problem)
         if unavailable:
             run.review_status = "unavailable"
             self._science_limit(
@@ -605,12 +589,15 @@ class StudioStudy:
         return deck
 
     def _science_code(self, run: Run, deck: str, pool: Pool) -> list[str]:
+        return list(dict.fromkeys(p.problem for p in self._science_findings(run, deck, pool)))
+
+    def _science_findings(self, run: Run, deck: str, pool: Pool) -> list[S.ScientificProblem]:
         """Every code check of a scientific deck; cover metadata is noted, never revised."""
 
         assert run.study is not None
         for problem in S.cover_problems(deck, pool.items):
             self._science_limit(run, problem)
-        return S.code_problems(
+        return S.code_findings(
             run.study, run.figure_readings or [], deck, pool.items, plan=run.coverage_plan
         )
 
@@ -626,7 +613,9 @@ class StudioStudy:
             deck=deck,
         )
         try:
-            check = self._json(model, S.ProblemCheck, *material_request(material, task), "low")
+            check = self._json(
+                model, S.ProblemCheck, *material_request(material, task, run.spec), "low",
+            )
         except ModelError as error:
             logger.info("The scientific re-check failed: %s", error)
             self.skipped.append(

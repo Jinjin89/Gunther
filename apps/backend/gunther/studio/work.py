@@ -61,6 +61,7 @@ from gunther.studio import science as S
 from gunther.studio.drafting import source_images_kept
 from gunther.studio.pipeline import StudioAgents
 from gunther.studio.reference import DECK_FORMAT, READ_NOTE, STUDY_DECK_FORMAT, report_format
+from gunther.studio.stages import decode_stage
 from gunther.studio.state import DeckStory, Insight, Memo, Run
 
 logger = logging.getLogger(__name__)
@@ -201,33 +202,36 @@ class StudioWorkAgents(StudioAgents):
 
     def _science_run(self, spec: Spec, saved: dict | None = None) -> Run | None:
         data = (self.scientific_context if saved is None else saved) or {}
-        if (
-            spec.kind != "slides"
-            or data.get("purpose") != "explain_study"
-            or not data.get("study_map")
-        ):
+        if spec.kind != "slides" or data.get("purpose") != "explain_study":
             return None
+        study = decode_stage(S.StudyMap, data.get("study_map"))
+        if study is None:
+            return None
+        figures = data.get("figure_readings")
         return Run(
             spec,
             self.use or "talk",
             purpose=S.Purpose(
                 purpose="explain_study", reason=data.get("purpose_reason") or "Kept from this deck"
             ),
-            study=S.StudyMap.model_validate(data["study_map"]),
-            coverage_plan=(
-                S.CoveragePlan.model_validate(data["coverage_plan"])
-                if data.get("coverage_plan")
-                else None
-            ),
+            study=study,
+            coverage_plan=decode_stage(S.CoveragePlan, data.get("coverage_plan")),
             figure_readings=[
-                S.FigureReading.model_validate(r) for r in data.get("figure_readings") or []
+                reading for row in (figures if isinstance(figures, list) else [])
+                if (reading := decode_stage(S.FigureReading, row)) is not None
             ],
             limitations=list(data.get("limitations") or []),
         )
 
-    def understand_work(self, model, effort, spec, pool, notes, emit, purpose):
-        run, _, _, _ = self._prepare(model, effort, spec, pool, notes, emit, purpose=purpose)
-        return self._saved_approach(run, pool)
+    def understand_work(
+        self, model, effort, spec, pool, notes, emit, purpose, *,
+        manifest=None, resume=None, checkpoint=None,
+    ):
+        prepared = self.prepare(
+            model, effort, spec, pool, notes, manifest=manifest or {}, resume=resume,
+            emit=emit, checkpoint=checkpoint, purpose=purpose,
+        )
+        return self._saved_approach(prepared.run, pool)
 
     def replan_work(
         self, model, effort, spec, pool, notes, emit, saved: dict, cards: Sequence[CardRec],
@@ -245,13 +249,15 @@ class StudioWorkAgents(StudioAgents):
             )
         )
         if refreshed:
-            run, material, _, _ = self._prepare(
-                model, effort, spec, pool, notes, emit, purpose=saved.get("purpose"),
+            prepared = self.prepare(
+                model, effort, spec, pool, notes, manifest={}, resume=None,
+                emit=emit, checkpoint=None, purpose=saved.get("purpose"),
             )
+            run, material = prepared.run, prepared.material
         else:
             material = self._notes_text(notes) + self._material(pool.items)
         if run is None:
-            memo = Memo.model_validate(saved["memo"]) if saved.get("memo") else Memo(
+            memo = decode_stage(Memo, saved.get("memo")) or Memo(
                 answer=saved.get("answer", ""),
                 insights=[
                     Insight(claim=card.claim, so_what=card.note, refs=card.refs)
@@ -268,12 +274,13 @@ class StudioWorkAgents(StudioAgents):
         )
         if isinstance(run.story, DeckStory):
             planned = [
-                Planned(s.title.strip(), s.job, id=s.id or "", layout=s.layout, refs=tuple(s.refs))
+                Planned(s.title.strip(), s.job, id=s.id or "", layout=s.layout or "",
+                        refs=tuple(s.refs), notes=s.notes)
                 for s in run.story.slides
             ]
         else:
             planned = [
-                Planned(s.heading.strip(), s.job, id=s.id or "", refs=tuple(s.refs))
+                Planned(s.heading.strip(), s.job, id=s.id or "", refs=tuple(s.refs), notes=s.notes)
                 for s in run.story.parts(run.output_type.summary_box)
             ]
         if any(len(item.heading.splitlines()) != 1 for item in planned):
@@ -421,7 +428,9 @@ class StudioWorkAgents(StudioAgents):
         if scientific:
             system += "\n" + P.SCIENCE_TRUTH
         try:
-            fixed = _unfence(self._text(model, system, "Rewrite it now.", effort, 4000))
+            fixed = _unfence(self._text(
+                model, system, P.with_preferences("Rewrite it now.", spec), effort, 4000,
+            ))
             candidate = _single_part(fmt.strip_labels(fixed), spec.kind, index)
         except ModelError as error:
             _single_part(text, spec.kind, index)
@@ -448,6 +457,7 @@ class StudioWorkAgents(StudioAgents):
         *,
         goal: str = "",
         layout: str = "",
+        writer_notes: str = "",
         instruction: str | None = None,
         notes: Notes | None = None,
         refs: Sequence[int] = (),
@@ -482,6 +492,8 @@ class StudioWorkAgents(StudioAgents):
                 + (f" Its job: {goal}." if goal else "")
                 + (f" Layout: {layout}." if deck and layout else "")
             )
+        if writer_notes:
+            task += "\nWriter notes: " + writer_notes
         cited = [*refs, *citation_numbers(shape.markup(whole), bare_only=True)]
         material = self._part_material(pool, cited, f"{headings[index]} {goal} {instruction or ''}")
         scientific = self._science_run(spec)
@@ -528,6 +540,7 @@ class StudioWorkAgents(StudioAgents):
             f"The whole {self._what(spec)[2:]}:\n\n{whole}\n{context}"
             f"\n\nThe material:\n\n{material}"
         )
+        prompt = P.with_preferences(prompt, spec)
 
         def written(prompt: str) -> str:
             text = _unfence(self._text(model, system, prompt, effort, 6000, on_text=on_text))
@@ -561,6 +574,14 @@ class StudioWorkAgents(StudioAgents):
             if found := self._science_problems(text, pool, scientific):
                 raise ModelError("The edited slide breaks a scientific rule: " + found[0])
         return text
+
+    def rewrite_passage(self, model, effort, spec: Spec, schema, *, system: str, prompt: str):
+        """Return the checked replacement for a selected passage."""
+
+        replacement, _ = self.gateway.complete_json(
+            model, schema, system=system, prompt=P.with_preferences(prompt, spec), effort=effort,
+        )
+        return replacement
 
     def _part_material(self, pool: Pool, cited: list[int], about: str) -> str:
         """The passages a part may need: those the document cites, then the ones sharing the
@@ -612,7 +633,8 @@ class StudioWorkAgents(StudioAgents):
             )
         try:
             plan, _ = self.gateway.complete_json(
-                model, ReviewPlan, system=system, prompt=whole, effort="medium"
+                model, ReviewPlan, system=system, prompt=P.with_preferences(whole, spec),
+                effort="medium",
             )
         except ModelError as error:
             self.skipped.append({

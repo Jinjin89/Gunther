@@ -15,9 +15,11 @@ deleted the same way.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
 from collections.abc import Iterable
+from contextlib import suppress
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -27,6 +29,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from gunther import artifact_workspace, key_results, listen_copy, papers, vector_index
 from gunther.activity import Activity
 from gunther.answer_runs import AnswerRuns, output_key
+from gunther.artifact_conversations import ArtifactConversations
 from gunther.artifact_read import artifact_owner
 from gunther.artifact_versions import output_library
 from gunther.database import session_scope
@@ -55,9 +58,9 @@ from gunther.models import (
     WebSnapshot,
     utc_now,
 )
-from gunther.output_types import output_type_label
+from gunther.output_types import output_type_for, output_type_label
 from gunther.recording_metadata import recording_file_paths, source_recording_id
-from gunther.schemas import TrashItemKind, TrashItemOut
+from gunther.schemas import OutputActivityOpenOut, TrashItemKind, TrashItemOut
 
 logger = logging.getLogger(__name__)
 
@@ -242,13 +245,20 @@ class TrashService:
 
                 batch, now = new_id("trash"), utc_now()
                 if conversation:
+                    workspace = artifact_workspace.load_workspace(row.state_json)
+                    ArtifactConversations._reconcile_plan_publications(session, row, workspace)
+                    ArtifactConversations._settle_interrupted(workspace, set())
+                    row.state_json = artifact_workspace.dump_workspace(workspace)
                     self._mark(row, batch, now)
                 session.execute(
                     update(Artifact)
                     .where(*scope, Artifact.lineage_id.in_(lineages), Artifact.trashed_at.is_(None))
                     .values(trashed_at=now, trash_batch_id=batch)
                 )
-                self._record(session, "output", batch, "trashed")
+                self._record(
+                    session, "output", batch, "trashed",
+                    artifact_id=row.id if not conversation else None,
+                )
                 entry = self._root_entry(session, batch)
 
             self._dismiss_output_activity(
@@ -351,7 +361,18 @@ class TrashService:
         row.trash_batch_id = batch
 
     @staticmethod
-    def _record(session: Session, target_type: str, target_id: str, action: str) -> None:
+    def _record(
+        session: Session, target_type: str, target_id: str, action: str, *,
+        artifact_id: str | None = None,
+    ) -> None:
+        reason = {
+            "trashed": "Moved to Trash",
+            "restored": "Restored from Trash",
+            "deleted_forever": "Deleted from Trash",
+        }[action]
+        if artifact_id is not None:
+            # The Trash action knows which version the reader was on, across app restarts.
+            reason = json.dumps({"reason": reason, "artifactId": artifact_id})
         session.add(
             Revision(
                 id=new_id("rev"),
@@ -359,11 +380,7 @@ class TrashService:
                 target_id=target_id,
                 action=action,
                 actor="user",
-                reason={
-                    "trashed": "Moved to Trash",
-                    "restored": "Restored from Trash",
-                    "deleted_forever": "Deleted from Trash",
-                }[action],
+                reason=reason,
             )
         )
 
@@ -475,23 +492,87 @@ class TrashService:
         conversation = session.scalar(
             select(ArtifactConversation).where(ArtifactConversation.trash_batch_id == batch)
         )
+        targets = versions.with_only_columns(
+            Artifact.id, Artifact.knowledge_base_id, Artifact.workspace_id, Artifact.lineage_id,
+            Artifact.title, Artifact.trashed_at, Artifact.kind, Artifact.style,
+            artifact_owner().label("conversation_id"),
+        ).order_by(Artifact.version_number.desc(), Artifact.created_at.desc(), Artifact.id.desc())
+        target = None
+        work = None
         if conversation is not None:
             title, trashed_at = conversation.title, conversation.trashed_at
             label = "Output conversation"
+            state = artifact_workspace.load_workspace(conversation.state_json)
+            work = artifact_workspace.active_work(state)
+            if work is not None and work.version_id is None:
+                target = OutputActivityOpenOut(
+                    library_id=conversation.knowledge_base_id,
+                    conversation_id=conversation.id,
+                    type_id=output_type_for(work.spec.kind, work.spec.chosen_output_type).id,
+                    plan_id=artifact_workspace.pending_target(work),
+                )
+            elif work is not None:
+                head = session.execute(
+                    targets.where(Artifact.lineage_id == work.key).limit(1)
+                ).one_or_none()
+                if head is not None:
+                    target = OutputActivityOpenOut(
+                        library_id=conversation.knowledge_base_id, conversation_id=conversation.id,
+                        type_id=output_type_for(head.kind, head.style).id, artifact_id=head.id,
+                        lineage_id=head.lineage_id, plan_id=work.plan.id if work.plan else None,
+                    )
+            if target is None:
+                target = OutputActivityOpenOut(
+                    library_id=conversation.knowledge_base_id, conversation_id=conversation.id,
+                )
         else:
-            head = session.execute(
-                versions.with_only_columns(
-                    Artifact.title, Artifact.trashed_at, Artifact.kind, Artifact.style,
-                ).order_by(Artifact.version_number.desc()).limit(1)
-            ).one_or_none()
+            head = session.execute(targets.limit(1)).one_or_none()
             if head is None:
                 raise LookupError("That item is no longer in Trash")
             title, trashed_at = head.title, head.trashed_at
             label = output_type_label(head.kind, head.style)
+            record = session.scalar(select(Revision.reason).where(
+                Revision.target_id == batch, Revision.target_type == "output",
+                Revision.action == "trashed",
+            ).order_by(Revision.created_at.desc(), Revision.id.desc()).limit(1))
+            if record:
+                with suppress(ValueError):
+                    metadata = json.loads(record)
+                    if isinstance(metadata, dict) and isinstance(metadata.get("artifactId"), str):
+                        head = session.execute(targets.where(
+                            Artifact.id == metadata["artifactId"],
+                        ).limit(1)).one_or_none() or head
+            owners = select(ArtifactConversation).where(
+                ArtifactConversation.workspace_id == head.workspace_id,
+                ArtifactConversation.knowledge_base_id == head.knowledge_base_id,
+            )
+            if head.conversation_id:
+                owner = session.scalar(
+                    owners.where(ArtifactConversation.id == head.conversation_id)
+                )
+            else:
+                owner = session.scalar(
+                    owners.join(ArtifactMessage)
+                    .where(ArtifactMessage.artifact_id.in_(
+                        select(Artifact.id).where(Artifact.trash_batch_id == batch)
+                    ))
+                    .order_by(ArtifactMessage.created_at.desc(), ArtifactMessage.id.desc())
+                    .limit(1)
+                )
+            if owner is not None:
+                state = artifact_workspace.load_workspace(owner.state_json)
+                work = next((item for item in state.works if item.key == head.lineage_id), None)
+            target = OutputActivityOpenOut(
+                library_id=head.knowledge_base_id,
+                conversation_id=owner.id if owner is not None else head.conversation_id,
+                type_id=output_type_for(head.kind, head.style).id, artifact_id=head.id,
+                lineage_id=head.lineage_id, plan_id=work.plan.id if work and work.plan else None,
+            )
         return TrashItemOut(
             kind="output", id=batch, title=title, output_type=label,
             version_count=session.scalar(select(func.count()).select_from(versions.subquery())),
             trashed_at=_timestamp(trashed_at), expires_at=_timestamp(trashed_at + self.retention),
+            open=target,
         )
 
     def _delete_batch_by_id(self, batch: str) -> bool:

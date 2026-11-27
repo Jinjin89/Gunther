@@ -55,7 +55,7 @@ function answerCoverage({ coverage, checked }: ConversationContext) {
 
 export function EvidencePane({ session, selected, chatVisible, sources, selectedSourceIds, allSelected, webEnabled, onFocusSources, detail,
   output, partInView, baseId, workspaceId, sourceId, onSourceCount, brief, traceEnabled, onOpenTrace, onNotify,
-  onOpen, onStep, onBack, onOpenSource, onOpenLibrarySource, onOriginalPdfChange }: {
+  onOpen, onStep, onBack, onOpenSource, onOpenLibrarySource }: {
   session: KnowledgeSession | null;
   selected: SessionMessage | null;
   chatVisible: boolean;
@@ -86,7 +86,6 @@ export function EvidencePane({ session, selected, chatVisible, sources, selected
   onBack: () => void;
   onOpenSource: (id: string) => void;
   onOpenLibrarySource?: ((id: string) => void) | undefined;
-  onOriginalPdfChange: (original: boolean) => void;
 }) {
   const citations = selected?.citations ?? [];
   const briefCitations = useMemo(() => {
@@ -153,13 +152,13 @@ export function EvidencePane({ session, selected, chatVisible, sources, selected
     onBack={onBack} position={detail.index} total={detail.citations.length}
     onPrevious={detail.index > 0 ? () => onStep(detail.index - 1) : undefined}
     onNext={detail.index + 1 < detail.citations.length ? () => onStep(detail.index + 1) : undefined}
-    onOpenSource={onOpenSource} onOriginalPdfChange={onOriginalPdfChange} webImports={imports} />;
+    onOpenSource={onOpenSource} webImports={imports} />;
 
   if (output) return <OutputEvidence key={output.id} artifact={output} sources={sources} partInView={partInView ?? null} imports={imports} onOpen={onOpen} />;
   const source = sourceId ? sources.find((item) => item.id === sourceId) : undefined;
   if (source && baseId) return <SourceEvidence key={`${baseId}:${source.id}`} baseId={baseId} source={source}
     onCount={onSourceCount} onInspect={(passages) => onOpen(passages, 0, true)} />;
-  if (!chatVisible) return <div className="evidence-overview" aria-label="Evidence overview"><p>Loading evidence…</p></div>;
+  if (!chatVisible) return <div className="evidence-overview evidence-bands" aria-label="Evidence overview"><p>Loading evidence…</p></div>;
   const pendingBrief = session && pendingBriefs.get(session.id);
   const briefPanel = session && brief && <BriefPanel key={session.id}
     brief={pendingBrief ? { edited: [], error: null, ...session.brief, ...pendingBrief } : session.brief}

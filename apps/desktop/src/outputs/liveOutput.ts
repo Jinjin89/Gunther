@@ -1,8 +1,9 @@
-import type { BuildTurnInput } from "@gunther/contracts";
+import type { OutputTypeId, PlanAttempt } from "@gunther/contracts";
 import { useCallback, useRef, useState } from "react";
 import type { ArtifactTurnEvent, OutputEvent } from "../api";
 
 type SectionEvent = Extract<OutputEvent, { type: "section" }>;
+export type PlanEvent = Extract<ArtifactTurnEvent, { type: "plan" }>;
 type Running = { kind: "stage" | "action" | "section" | "step"; id: string; label: string };
 
 interface LiveOutputState {
@@ -10,9 +11,10 @@ interface LiveOutputState {
   headings: string[];
   running: Running[];
   reply: string;
+  plan: PlanEvent | null;
 }
 
-export const EMPTY_LIVE: LiveOutputState = { title: null, headings: [], running: [], reply: "" };
+export const EMPTY_LIVE: LiveOutputState = { title: null, headings: [], running: [], reply: "", plan: null };
 const sectionLabels: Record<Exclude<SectionEvent["state"], "done">, string> = {
   researching: "Reading sources", writing: "Writing", checking: "Checking sources", revising: "Revising",
 };
@@ -27,6 +29,8 @@ export function applyOutputEvent(state: LiveOutputState, event: ArtifactTurnEven
     return { ...state, running: label ? [...running, { kind, id, label }] : running };
   };
   switch (event.type) {
+    case "plan":
+      return state.plan && event.editVersion < state.plan.editVersion ? state : { ...state, plan: event };
     case "outline":
       return { ...state, title: event.title, headings: event.sections.map((section) => section.heading) };
     case "stage":
@@ -44,12 +48,15 @@ export function applyOutputEvent(state: LiveOutputState, event: ArtifactTurnEven
   }
 }
 
-interface OutputJob {
+export interface OutputJob {
   kind: "turn" | "version" | "follow";
   title?: string | undefined;
   lineageId?: string | undefined;
   artifactId?: string | undefined;
-  build?: BuildTurnInput | undefined;
+  planId?: string | undefined;
+  typeId?: OutputTypeId | undefined;
+  phase?: PlanAttempt["phase"] | undefined;
+  requestId?: string | undefined;
   startedAt: string;
   stop: () => Promise<void>;
   live: LiveOutputState;

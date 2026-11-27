@@ -18,9 +18,10 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -36,14 +37,10 @@ from evals.ask.run import (
     make_app,
     write_settings_file,
 )
-from gunther.artifact_read import latest_check_records
-from gunther.artifact_versions import commit_version
 from gunther.llm import ClientFactory, ModelGateway
 from gunther.model_profiles import EFFORTS, Effort
-from gunther.models import Artifact
-from gunther.outputs import section_hash, split_document
-from gunther.schemas import OutputModelOut
-from gunther.service import KnowledgeService
+from gunther.output_types import OUTPUT_TYPES
+from gunther.workspace_storage import snapshot_database
 
 # A fixture that lacks what the cases rely on is built again, this many times at most.
 FIXTURE_TRIES = 3
@@ -150,8 +147,7 @@ class Session:
     client: TestClient
     headers: dict[str, str]
     base_id: str
-    workspace_id: str
-    service: KnowledgeService
+    directory: Path
     gateway: ModelGateway
     counter: Counter
     config: Configuration
@@ -178,61 +174,54 @@ class Session:
                         trace += _traced(events[-1][1])
         return events[-1] if events else ("error", {"status": 0, "detail": "No result came back."})
 
-    def clone(self, saved: dict[str, Any], content: str | None = None) -> score.Version:
-        """A copy of a fixture as the first version of a new lineage.
-
-        ``content`` is the text to save instead of the fixture's (a case may break a word);
-        the Checker's findings stay with the parts whose text is unchanged.
-        """
-
-        text = saved["content"] if content is None else content
-        kept = {item["hash"]: item for item in saved["checks"]}
-        parts = split_document(text, saved["kind"])[1]
-        checks = [kept[h] for h in (section_hash(part) for part in parts) if h in kept]
-        nonce = secrets.token_hex(8)
-        model = saved.get("model")
-        artifact = commit_version(
-            self.service.sessions,
-            workspace_id=self.workspace_id,
-            base_id=self.base_id,
-            client_request_id=f"exam_clone_{nonce}",
-            fingerprint=self.service._output_fingerprint(
-                self.workspace_id, self.base_id, "exam-clone", {"nonce": nonce}
-            ),
-            parent_id=None,
-            kind=saved["kind"],
-            style=saved["style"],
-            audience=saved["audience"],
-            title=saved["title"],
-            brief=saved["brief"],
-            origin="build",
-            content=text,
-            scope=saved["scope"],
-            inputs=saved["inputs"],
-            outline=saved["outline"],
-            citations=saved["citations"],
-            snapshots=[],
-            model=OutputModelOut(**model) if model else None,
-            checks=checks,
-            made_by=saved["made_by"],
+    def artifact(self, artifact_id: str) -> dict[str, Any]:
+        response = self.client.get(
+            f"/api/knowledge-bases/{self.base_id}/artifacts/{artifact_id}", headers=self.headers,
         )
-        return score.Version.from_artifact(artifact.model_dump(mode="json", by_alias=True))
+        return response.raise_for_status().json()
+
+    def baseline(
+        self, artifact_id: str, case: score.Case
+    ) -> tuple[score.Version, dict[str, str]]:
+        """Read the fixture and use an exact-text edit if the case changes its baseline."""
+
+        artifact = self.artifact(artifact_id)
+        original = score.Version.from_artifact(artifact)
+        if original.number != 1 or not (artifact.get("provenance") or {}).get("creationPlan"):
+            raise ExamError("The cached fixture does not point to an approved first version.")
+        content, substitutions = score.prepare(case, original.content, original.kind)
+        if content != original.content:
+            response = self.client.post(
+                f"/api/knowledge-bases/{self.base_id}/artifacts/{artifact_id}/edits",
+                headers=self.headers,
+                json={"clientRequestId": f"exam_edit_{secrets.token_hex(8)}", "content": content},
+            )
+            edit = response.raise_for_status().json()
+            original = score.Version.from_artifact(self.artifact(edit["id"]))
+            if original.content != content:
+                raise ExamError("The saved baseline differs from the exact-text edit.")
+        return original, substitutions
 
     def head(self, version: score.Version) -> score.Version:
         """The newest version of the lineage a version belongs to."""
 
         listed = self.client.get(
             f"/api/knowledge-bases/{self.base_id}/artifacts", headers=self.headers
-        ).json()
+        ).raise_for_status().json()
         mine = next(item for item in listed if item["id"] == version.id)
         newest = max(
             (item for item in listed if item["lineageId"] == mine["lineageId"]),
             key=lambda item: item["versionNumber"],
         )
-        full = self.client.get(
-            f"/api/knowledge-bases/{self.base_id}/artifacts/{newest['id']}", headers=self.headers
-        )
-        return score.Version.from_artifact(full.json())
+        return score.Version.from_artifact(self.artifact(newest["id"]))
+
+
+def copy_library(source: Path, target: Path) -> None:
+    """Copy library files and take a SQLite backup that includes committed WAL data."""
+
+    database = "gunther.sqlite"
+    shutil.copytree(source, target, ignore=shutil.ignore_patterns(database, f"{database}-*"))
+    snapshot_database((source / database).absolute(), (target / database).absolute())
 
 
 @contextmanager
@@ -251,7 +240,7 @@ def open_session(
     headers = {"X-Gunther-Token": token}
     with tempfile.TemporaryDirectory(prefix="gunther-exam-") as scratch:
         copy = Path(scratch) / "library"
-        shutil.copytree(template, copy)
+        copy_library(template, copy)
         settings_file = write_settings_file(
             Path(scratch) / "service-settings.json", settings_source
         )
@@ -260,7 +249,7 @@ def open_session(
             settings_file,
             token,
             factory,
-            {**(overrides or {}), "processing_worker_enabled": False},
+            {**(overrides or {}), "library_root": None, "processing_worker_enabled": False},
         )
         with TestClient(app) as client:
             found = client.get("/api/workspace/bootstrap", headers=headers).json()["workspaceId"]
@@ -269,8 +258,7 @@ def open_session(
                 client,
                 {**headers, "X-Gunther-Workspace-Id": found},
                 info["knowledgeBaseId"],
-                found,
-                client.app.state.knowledge_service,
+                copy,
                 gateway,
                 Counter(gateway),
                 config,
@@ -285,73 +273,150 @@ def describe(name: str, data: dict[str, Any]) -> str:
 
     if name == "error":
         return f"HTTP {data.get('status')}: {str(data.get('detail', ''))[:300]}"
-    return "It was stopped." if name == "stopped" else f"The stream ended with {name}."
+    return data.get("detail") or (
+        "It was stopped." if name == "stopped" else f"The stream ended with {name}."
+    )
 
 
-def export_version(service: KnowledgeService, artifact_id: str) -> dict[str, Any]:
-    """Everything ``commit_version`` needs to save a copy of a version, as plain data."""
+Stream = Callable[[dict[str, Any]], tuple[str, dict[str, Any]]]
 
-    with service.sessions() as db:
-        row = db.get(Artifact, artifact_id)
-        assert row is not None
-        provenance = json.loads(row.provenance_json)
-        return {
-            "kind": row.kind,
-            "style": row.style,
-            "audience": row.audience,
-            "title": row.title,
-            "brief": row.brief,
-            "content": row.content,
-            "scope": json.loads(row.scope_json),
-            "inputs": json.loads(row.inputs_json),
-            "outline": json.loads(row.outline_json),
-            "citations": json.loads(row.citations_json),
-            "checks": list(latest_check_records(db, row).values()),
-            "model": provenance.get("model"),
-            "made_by": KnowledgeService._made_by(row),
-        }
+
+def plan_request(
+    setup: dict[str, Any], outline: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    nonce = secrets.token_hex(8)
+    body = {
+        "kind": "plan", "clientRequestId": f"exam_plan_{nonce}",
+        "planId": f"draft_{nonce}", "setup": setup,
+    }
+    if outline is not None:
+        body["initialOutline"] = outline
+    return body
+
+
+def _plan_problem(
+    planned: dict[str, Any], expected_outline: list[dict[str, Any]] | None
+) -> str:
+    plan = planned.get("plan") or {}
+    proposal = plan.get("proposal") or {}
+    if (
+        planned["outcome"] != "planned" or plan.get("planStatus") != "ready"
+        or not plan.get("planRevision") or plan.get("pending") or plan.get("blocker") is not None
+        or not proposal.get("coverage") or planned.get("artifact") is not None
+    ):
+        return f"The Plan turn did not leave a ready proposal. {planned.get('reply', '')}".strip()
+    outline = plan.get("outline")
+    if OUTPUT_TYPES[plan["options"]["type"]].capabilities.outline and (
+        not outline or proposal["count"] != {"mode": "exact", "value": len(outline)}
+        or any(not row.get("id") or not row.get("heading") for row in outline)
+    ):
+        return "The reviewed plan has an incomplete outline."
+    if expected_outline is not None and [
+        {field: row.get(field) for field in ("id", "heading", "goal", "layout", "notes")}
+        for row in outline or []
+    ] != expected_outline:
+        return "The reviewed outline differs from the fixture's fixed rows."
+    return ""
+
+
+def approve_plan(
+    send: Stream, planned: dict[str, Any], outline: list[dict[str, Any]] | None = None
+) -> tuple[str, dict[str, Any]]:
+    """Inspect the reviewed plan, then explicitly approve that exact revision."""
+
+    if problem := _plan_problem(planned, outline):
+        return "incomplete", {"detail": problem}
+    plan = planned["plan"]
+    name, data = send({
+        "kind": "approve", "clientRequestId": f"exam_approve_{secrets.token_hex(8)}",
+        "planId": plan["planId"], "planRevision": plan["planRevision"],
+    })
+    if name == "done":
+        artifact = data.get("artifact") or {}
+        creation = (artifact.get("provenance") or {}).get("creationPlan") or {}
+        if (
+            data["outcome"] != "saved" or artifact.get("versionNumber") != 1
+            or creation.get("revision") != plan["planRevision"]
+            or creation.get("planId") != plan["planId"]
+            or creation.get("outline") != plan["outline"]
+        ):
+            return "incomplete", {"detail": "Approval did not save the reviewed first version."}
+    return name, data
+
+
+def plan_and_approve(
+    send: Stream, setup: dict[str, Any], outline: list[dict[str, Any]] | None = None
+) -> tuple[str, dict[str, Any]]:
+    name, data = send(plan_request(setup, outline))
+    return approve_plan(send, data, outline) if name == "done" else (name, data)
+
+
+@dataclass(frozen=True)
+class FixtureSnapshot:
+    directory: Path
+    artifact_id: str
+    built: dict[str, Any]
+
+
+def read_fixture(directory: Path) -> FixtureSnapshot:
+    metadata = json.loads((directory / "fixture.json").read_text(encoding="utf-8"))
+    return FixtureSnapshot(directory, metadata["artifactId"], metadata["built"])
+
+
+def save_fixture(session: Session, target: Path, artifact_id: str, built: dict[str, Any]) -> None:
+    with tempfile.TemporaryDirectory(prefix=".fixture-", dir=target.parent) as staging:
+        snapshot, previous = Path(staging) / "snapshot", Path(staging) / "previous"
+        copy_library(session.directory, snapshot)
+        (snapshot / "fixture.json").write_text(
+            json.dumps({"artifactId": artifact_id, "built": built}, indent=1), encoding="utf-8",
+        )
+        if target.exists():
+            target.rename(previous)
+        try:
+            snapshot.rename(target)
+        except OSError:
+            if previous.exists():
+                previous.rename(target)
+            raise
 
 
 def build_fixture(
-    session: Session, fixture: score.Fixture, say: Callable[[str], None]
-) -> dict[str, Any]:
-    """Build a fixture through the real build path with its fixed outline; built again when
-    the text lacks what the cases rely on."""
+    fixture: score.Fixture,
+    target: Path,
+    open_attempt: Callable[[], AbstractContextManager[Session]],
+    say: Callable[[str], None],
+) -> FixtureSnapshot:
+    """Plan and approve the fixed outline in a fresh library on each attempt."""
 
-    effort = session.config.writer_effort
-    model = {"model": session.config.model, **({"effort": effort} if effort else {})}
     calls = tokens = 0
     started = time.perf_counter()
     lacking: list[str] = []
+    outline = fixture.initial_outline()
     for attempt in range(1, FIXTURE_TRIES + 1):
-        body = {
-            "kind": "build",
-            "build": fixture.request(),
-            "clientRequestId": f"exam_fixture_{secrets.token_hex(6)}",
-            **model,
-        }
-        conversation = open_conversation(session, None)
-        with session.counter.window() as used:
-            name, data = session.stream(
-                f"artifact-conversations/{conversation}/messages/stream", body,
-            )
-        calls, tokens = calls + used.calls, tokens + used.tokens
-        if name != "done":
-            lacking = [describe(name, data)]
-        else:
-            artifact = data["artifact"]
-            lacking = fixture.problems(score.Version.from_artifact(artifact).parts)
-            if not lacking:
-                saved = export_version(session.service, artifact["id"])
-                saved["built"] = {
-                    "attempts": attempt,
-                    "seconds": round(time.perf_counter() - started),
-                    "calls": calls,
-                    "tokens": tokens,
-                    "model": session.config.model,
-                    "effort": effort,
-                }
-                return saved
+        with open_attempt() as session:
+            setup = fixture.setup() | {
+                "model": session.config.model, "effort": session.config.writer_effort,
+            }
+            tail = f"artifact-conversations/{new_conversation_id()}/messages/stream"
+            with session.counter.window() as used:
+                name, data = plan_and_approve(partial(session.stream, tail), setup, outline)
+            calls, tokens = calls + used.calls, tokens + used.tokens
+            if name != "done":
+                lacking = [describe(name, data)]
+            else:
+                artifact = session.artifact(data["artifact"]["id"])
+                lacking = fixture.problems(score.Version.from_artifact(artifact).parts)
+                if not lacking:
+                    built = {
+                        "attempts": attempt,
+                        "seconds": round(time.perf_counter() - started),
+                        "calls": calls,
+                        "tokens": tokens,
+                        "model": session.config.model,
+                        "effort": session.config.writer_effort,
+                    }
+                    save_fixture(session, target, artifact["id"], built)
+                    return FixtureSnapshot(target, artifact["id"], built)
         say(f"  The {fixture.name} fixture, try {attempt} of {FIXTURE_TRIES}: {'; '.join(lacking)}")
     raise ExamError(
         f"The {fixture.name} fixture could not be built: {'; '.join(lacking)}. "
@@ -359,12 +424,12 @@ def build_fixture(
     )
 
 
-def fixture_file(root: Path, template: Path, config: Configuration, fixture: score.Fixture) -> Path:
-    """Where a fixture is kept: one file for each (library, model, fixture)."""
+def fixture_path(root: Path, template: Path, config: Configuration, fixture: score.Fixture) -> Path:
+    """One approved snapshot directory for each library, model, effort and fixture."""
 
     model = re.sub(r"[^A-Za-z0-9]+", "-", config.model).strip("-")
     key = [template.name.removeprefix("template-"), model, config.writer_effort or "default"]
-    return root / f"fixture-{fixture.name}-{'-'.join(key)}-{fixture.hash}.json"
+    return root / f"fixture-{fixture.name}-{'-'.join(key)}-{fixture.hash}"
 
 
 def ensure_fixtures(
@@ -378,21 +443,23 @@ def ensure_fixtures(
     factory: ClientFactory | None,
     overrides: dict[str, Any] | None,
     say: Callable[[str], None],
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, FixtureSnapshot]:
     """The fixtures the cases start from, built once and reused while the library, the model
     and the fixture's definition are unchanged. Missing ones are built side by side."""
 
-    saved: dict[str, dict[str, Any]] = {}
+    saved: dict[str, FixtureSnapshot] = {}
     missing: list[score.Fixture] = []
     for fixture in wanted:
-        path = fixture_file(root, template, config, fixture)
-        if options.rebuild_fixtures and path.exists():
-            path.unlink()
-        if path.exists():
-            say(f"Reusing the {fixture.name} fixture {path.name}.")
-            saved[fixture.name] = json.loads(path.read_text(encoding="utf-8"))
-        else:
-            missing.append(fixture)
+        path = fixture_path(root, template, config, fixture)
+        if not options.rebuild_fixtures and (path / "fixture.json").is_file():
+            snapshot = read_fixture(path)
+            if (snapshot.built["model"], snapshot.built["effort"]) == (
+                config.model, config.writer_effort,
+            ):
+                say(f"Reusing the {fixture.name} fixture {path.name}.")
+                saved[fixture.name] = snapshot
+                continue
+        missing.append(fixture)
     failures: list[BaseException] = []
 
     def build(fixture: score.Fixture) -> None:
@@ -401,15 +468,13 @@ def ensure_fixtures(
                 f"Building the {fixture.name} fixture ({len(fixture.outline)} parts); "
                 "this takes a while."
             )
-            with open_session(
-                template, info, settings_source, config, factory, overrides
-            ) as session:
-                made = build_fixture(session, fixture, say)
-            fixture_file(root, template, config, fixture).write_text(
-                json.dumps(made, ensure_ascii=False, indent=1), encoding="utf-8"
+            made = build_fixture(
+                fixture, fixture_path(root, template, config, fixture),
+                partial(open_session, template, info, settings_source, config, factory, overrides),
+                say,
             )
             saved[fixture.name] = made
-            took = made["built"]
+            took = made.built
             say(
                 f"The {fixture.name} fixture is built: {took['seconds']} s, {took['calls']} model "
                 f"calls, {took['attempts']} {'try' if took['attempts'] == 1 else 'tries'}."
@@ -452,25 +517,16 @@ def turn_body(turn: score.Turn, config: Configuration, request_id: str) -> dict[
     return body
 
 
-def open_conversation(session: Session, start: score.Version | None) -> str:
-    """A conversation for a case: with the case's document as its artifact (brought in as the
-    app brings in a device's conversation), or empty when the case starts from nothing."""
+def new_conversation_id() -> str:
+    return f"exam_{secrets.token_hex(8)}"
 
-    conversation_id = f"exam_{secrets.token_hex(6)}"
+
+def open_conversation(session: Session) -> str:
+    """Open an empty conversation for a case that begins without an artifact."""
+
+    conversation_id = new_conversation_id()
     base = f"/api/knowledge-bases/{session.base_id}/artifact-conversations"
-    if start is None:
-        made = session.client.post(base, headers=session.headers, json={"id": conversation_id})
-    else:
-        turn = {
-            "instruction": "Start from this document.",
-            "status": "saved",
-            "artifactId": start.id,
-        }
-        made = session.client.post(
-            f"{base}/import",
-            headers=session.headers,
-            json={"conversations": [{"id": conversation_id, "title": "Exam", "turns": [turn]}]},
-        )
+    made = session.client.post(base, headers=session.headers, json={"id": conversation_id})
     if made.status_code >= 300:
         raise ExamError(f"The conversation could not be made: {made.text[:300]}")
     return conversation_id
@@ -483,25 +539,47 @@ def run_agent_case(
     what came of the last: it asked, answered, replied, paused, or saved a version."""
 
     outcome = score.Outcome(route="agent")
-    conversation_id = open_conversation(session, start)
+    conversation_id = start.conversation_id if start else open_conversation(session)
+    if not conversation_id:
+        raise ExamError("The approved fixture has no owning conversation.")
     tail = f"artifact-conversations/{conversation_id}/messages/stream"
     turns = [*case.history, score.Turn(case.message, case.focus)]
     head = start
     for number, turn in enumerate(turns, start=1):
         last = number == len(turns)
-        body = turn_body(turn, session.config, f"exam_{secrets.token_hex(8)}")
+        if last and case.plan is not None:
+            setup = case.plan.model_dump(mode="json", by_alias=True) | {
+                "focus": turn.message,
+                "model": session.config.model,
+                "effort": session.config.writer_effort,
+            }
+            body = plan_request(setup)
+        else:
+            body = turn_body(turn, session.config, f"exam_{secrets.token_hex(8)}")
         outcome.notes.append(f"turn {number}: {turn.message[:200]}")
+        send = partial(session.stream, tail, trace=outcome.notes)
+        approved = False
         with session.counter.window() as used:
-            name, data = session.stream(tail, body, outcome.notes)
+            name, data = send(body)
+            if last and case.approve and name == "done" and data["outcome"] == "planned":
+                name, data = approve_plan(send, data)
+                approved = name == "done"
+                if approved:
+                    outcome.notes.append("Approved the reviewed plan.")
+        outcome.before = head
+        outcome.calls, outcome.tokens, outcome.seconds = used.calls, used.tokens, used.seconds
         if name != "done":
             outcome.failed = describe(name, data)
             return outcome
         saved = score.Version.from_artifact(data["artifact"]) if data.get("artifact") else None
+        if saved is not None and (head is None or saved.number == 1) and not approved:
+            outcome.after = saved
+            outcome.failed = "The turn saved a first version without scripted approval."
+            return outcome
         if not last:
             head = saved or head
             continue
-        outcome.before, outcome.after = head, saved
-        outcome.calls, outcome.tokens, outcome.seconds = used.calls, used.tokens, used.seconds
+        outcome.after = saved
         outcome.reply = data.get("reply") or ""
         ended = data["outcome"]
         if ended == "asked":
@@ -510,8 +588,10 @@ def run_agent_case(
             outcome.options = list((data.get("question") or {}).get("options", []))
         elif ended == "saved":
             outcome.intent = "change" if head else "make"
+        elif ended == "planned":
+            outcome.intent, outcome.plan = "plan", data["plan"]
         elif ended in ("answered", "replied"):
-            outcome.intent = "answer"
+            outcome.intent = "answer" if head else "reply"
         else:
             outcome.failed = f"The turn paused before it finished: {outcome.reply[:300]}"
     return outcome
@@ -523,7 +603,7 @@ def run_agent_case(
 def run_case(
     session: Session,
     case: score.Case,
-    saved: dict[str, dict[str, Any]],
+    fixture: FixtureSnapshot | None,
     judge_ref: str,
     library: dict[str, str],
 ) -> dict[str, Any]:
@@ -533,10 +613,8 @@ def run_case(
     resolved = case
     try:
         start = None
-        if case.artifact != "none":
-            fixture = saved[case.artifact]
-            content, subs = score.prepare(case, fixture["content"], fixture["kind"])
-            start = session.clone(fixture, content)
+        if fixture is not None:
+            start, subs = session.baseline(fixture.artifact_id, case)
         resolved = case.resolved(subs)
         outcome = run_agent_case(session, resolved, start)
     except Exception as error:  # one broken case must not end an hours-long run
@@ -579,7 +657,7 @@ def run_configuration(
     settings_source: Path | None,
     config: Configuration,
     cases: list[score.Case],
-    saved: dict[str, dict[str, Any]],
+    saved: dict[str, FixtureSnapshot],
     judge_ref: str,
     library: dict[str, str],
     factory: ClientFactory | None,
@@ -591,9 +669,8 @@ def run_configuration(
 ) -> dict[str, Any]:
     """Run every case, each from its own copy of a fixture; return each run's record.
 
-    With ``jobs`` above 1 the cases are shared out among that many apps, each on its own
-    copy of the library. With ``repeat`` above 1 a case is run that many times and its
-    records are kept as ``E1#1``, ``E1#2``…
+    With ``jobs`` above 1 that many cases can run in parallel. Each case and repeat
+    opens its own app. Repeated records are kept as ``E1#1``, ``E1#2``…
     """
 
     work: queue.Queue[tuple[str, score.Case]] = queue.Queue()
@@ -606,23 +683,25 @@ def run_configuration(
 
     def worker() -> None:
         try:
-            with open_session(
-                template, info, settings_source, config, factory, overrides
-            ) as session:
-                while True:
-                    try:
-                        key, case = work.get_nowait()
-                    except queue.Empty:
-                        return
-                    say(f"  {key} ...")
-                    result = run_case(session, case, saved, judge_ref, library)
-                    with lock:
-                        results[key] = result
-                        seconds = result["outcome"]["seconds"]
-                        verdict = "passed" if not result["failures"] else "failed"
-                        say(f"  {key} {verdict} ({seconds:.0f} s)")
-                        if progress:
-                            progress(dict(results))
+            while True:
+                try:
+                    key, case = work.get_nowait()
+                except queue.Empty:
+                    return
+                say(f"  {key} ...")
+                fixture = saved[case.artifact] if case.artifact != "none" else None
+                with open_session(
+                    fixture.directory if fixture else template, info, settings_source,
+                    config, factory, overrides,
+                ) as session:
+                    result = run_case(session, case, fixture, judge_ref, library)
+                with lock:
+                    results[key] = result
+                    seconds = result["outcome"]["seconds"]
+                    verdict = "passed" if not result["failures"] else "failed"
+                    say(f"  {key} {verdict} ({seconds:.0f} s)")
+                    if progress:
+                        progress(dict(results))
         except BaseException as error:
             problems.append(error)
 
@@ -633,13 +712,8 @@ def run_configuration(
         thread.start()
     for thread in threads:
         thread.join()
-    if problems and not results:
+    if problems:
         raise problems[0]
-    if not work.empty():
-        raise ExamError(
-            f"{work.qsize()} cases were not run, because the apps that ran them stopped: "
-            f"{problems[0] if problems else 'no reason was given'}"
-        )
     order = {case.id: number for number, case in enumerate(cases)}
     return dict(sorted(results.items(), key=lambda item: (order[item[1]["case"]], item[0])))
 
@@ -695,6 +769,7 @@ def run_exam(
     ``model_client_factory`` and ``overrides`` stand in for real models in tests only.
     """
 
+    overrides = {**(overrides or {}), "library_root": None}
     settings_source = options.settings
     if settings_source is None and os.environ.get("SERVICE_SETTINGS_FILE"):
         settings_source = Path(os.environ["SERVICE_SETTINGS_FILE"])
@@ -737,7 +812,7 @@ def run_exam(
 
     needed = sorted({case.artifact for case in cases} - {"none"})
     wanted = [fixtures[name] for name in needed]
-    kept: dict[str, dict[str, dict[str, Any]]] = {}
+    kept: dict[str, dict[str, FixtureSnapshot]] = {}
     for model in asked:
         config = Configuration(model, writer)
         kept[model] = ensure_fixtures(
@@ -765,7 +840,7 @@ def run_exam(
         notes.append(f"Code: {version}.")
     for model, made in kept.items():
         for name, item in made.items():
-            built = item["built"]
+            built = item.built
             tries = "try" if built["attempts"] == 1 else "tries"
             notes.append(
                 f"Fixture {name} ({model}): built in {built['seconds']} s with {built['calls']} "

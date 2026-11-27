@@ -1,27 +1,43 @@
 .outputs-body.rp {
-  --rp-measure: var(--outputs-reading-width, min(66ch, var(--gx-content-w)));
   display: block;
   min-inline-size: 0;
   color: var(--gx-ink);
   font: 400 var(--gx-text-lg)/1.65 var(--outputs-serif, var(--gx-font-display));
   overflow-wrap: anywhere;
 }
-.rp :where(.rp-part-head, .rp-topic-position, .rp-navigation, .rp-empty, .rp-part-status) {
+.rp:not([data-presentation="print"]) {
+  --rp-columns: [full-start] minmax(0, 1fr) [read-start] min(100%, var(--reading)) [read-end] minmax(0, 1fr) [full-end];
+}
+.rp:where(:not([data-presentation="print"])) :where(.rp-part-head, .rp-topic-position, .rp-navigation, .rp-empty, .rp-part-status) {
   box-sizing: border-box;
-  max-inline-size: var(--rp-measure);
+  inline-size: min(100%, var(--reading));
   margin-inline: auto;
 }
-.rp :where(.rp-preamble, .rp-prose, .rp-summary) {
+.rp:where(:not([data-presentation="print"])) :where(.rp-preamble, .rp-prose, .rp-summary, :is(.rp-preamble, .rp-prose, .rp-summary) > .answer-markdown) {
   display: grid;
-  grid-template-columns: [full-start] minmax(0, 1fr) [reading-start] minmax(0, var(--rp-measure)) [reading-end] minmax(0, 1fr) [full-end];
-  row-gap: 12px;
+  grid-template-columns: var(--rp-columns);
 }
-.rp :where(.rp-preamble, .rp-prose, .rp-summary) > * { grid-column: reading; min-inline-size: 0; }
-.rp :where(.rp-preamble, .rp-prose, .rp-summary) > .rp-exhibit { grid-column: full; }
+.rp:where(:not([data-presentation="print"])) :where(.rp-preamble, .rp-prose, .rp-summary) { row-gap: 12px; }
+.rp:where(:not([data-presentation="print"])) :where(.rp-preamble, .rp-prose, .rp-summary) > *,
+.rp:where(:not([data-presentation="print"])) :where(.rp-preamble, .rp-prose, .rp-summary) > .answer-markdown > * {
+  grid-column: read;
+  min-inline-size: 0;
+  margin-inline-start: var(--rp-indent, 0px);
+}
+.rp:where(:not([data-presentation="print"])) :where(.rp-preamble, .rp-prose, .rp-summary) > :is(.answer-markdown, .rp-exhibit),
+.rp:where(:not([data-presentation="print"])) :where(.rp-preamble, .rp-prose, .rp-summary) > .answer-markdown > .rp-table {
+  grid-column: full;
+  margin-inline-start: 0;
+}
+.rp:where(:not([data-presentation="print"])) :where(.rp-preamble, .rp-prose, .rp-summary) > .answer-markdown > .rp-table {
+  inline-size: fit-content;
+  justify-self: center;
+  margin-block: 12px;
+}
 .rp [hidden] { display: none; }
 .rp-preamble { margin-block-end: 24px; }
 .rp :is(.rp-preamble, .rp-summary) > .answer-markdown:first-child > p:first-child { font-size: var(--gx-text-xl); line-height: 1.4; }
-.rp-summary::after { content: ""; grid-column: reading; border-block-end: 1px solid var(--gx-line-2); padding-block-start: 12px; }
+.rp-summary::after { content: ""; display: block; grid-column: read; margin-inline-start: var(--rp-indent, 0px); border-block-end: 1px solid var(--gx-line-2); padding-block-start: 12px; }
 .rp-part { min-inline-size: 0; scroll-margin-block-start: calc(56px + var(--rp-navigation-height, 0px)); }
 .rp > .rp-part + .rp-part { margin-block-start: 32px; }
 .rp > .rp-part.is-summary + .rp-part { margin-block-start: 24px; }
@@ -66,8 +82,7 @@
 .rp[data-recipe="faq"][data-presentation="read"] > .rp-part { margin-block: 0; }
 .rp[data-recipe="faq"][data-presentation="read"] > .rp-part + .rp-part .rp-part-head { border-block-start: 1px solid var(--gx-line-2); }
 .rp[data-recipe="faq"][data-presentation="read"] .rp-part-head { align-items: center; margin-block-end: 0; }
-.rp[data-recipe="faq"] :is(.rp-prose, .rp-summary):not([hidden]) { padding-block-end: 12px; }
-.rp[data-recipe="faq"] .rp-part:has(.has-disclosure) > :is(.rp-prose, .rp-summary) > * { margin-inline-start: 28px; }
+.rp-answer { --rp-indent: 28px; padding-block-end: 12px; }
 .rp-heading.has-disclosure { position: relative; display: grid; grid-template-columns: 16px minmax(0, 1fr); column-gap: 12px; min-block-size: 44px; box-sizing: border-box; padding-block: 12px; }
 .rp-heading.has-disclosure > [id] { grid-column: 2; pointer-events: none; }
 .rp-heading.has-disclosure :is(a, .answer-markdown button) { position: relative; pointer-events: auto; }
@@ -76,12 +91,15 @@
 .rp-question[aria-expanded="true"] svg { rotate: 90deg; }
 .rp-question:hover + div h2 { text-decoration: underline; text-underline-offset: 3px; }
 
-.rp-events { --rp-measure: 100%; isolation: isolate; list-style: none; padding: 0; margin: 0 auto; max-inline-size: var(--outputs-reading-width, min(66ch, var(--gx-content-w))); }
-.rp-events > li { position: relative; padding-inline-start: 28px; padding-block-end: 24px; }
+.rp-events { --rp-indent: 28px; isolation: isolate; list-style: none; padding: 0; margin: 0; }
+.rp:not([data-presentation="print"]) .rp-events { --rp-reading-start: calc((100% - min(100%, var(--reading))) / 2); }
+.rp:not([data-presentation="print"]) .rp-events :is(.rp-part-head, .rp-part-status) { padding-inline-start: var(--rp-indent); }
+.rp:not([data-presentation="print"]) .rp-events :is(.rp-exhibit, .rp-table) { position: relative; background: var(--gx-canvas); }
+.rp-events > li { position: relative; padding-block-end: 24px; }
 .rp-events > li:last-child { padding-block-end: 0; }
 .rp-events > li::before, .rp-events > li:not(:last-child)::after { position: absolute; content: ""; }
-.rp-events > li::before { z-index: 1; inset-inline-start: 4px; inset-block-start: 0.55em; inline-size: 8px; block-size: 8px; box-sizing: border-box; border: 1px solid var(--gx-ink); border-radius: 50%; background: var(--gx-canvas); }
-.rp-events > li:not(:last-child)::after { inset-inline-start: 7.5px; inset-block: 0.55em -0.55em; border-inline-start: 1px solid var(--gx-faint); }
+.rp-events > li::before { z-index: 1; inset-inline-start: calc(var(--rp-reading-start, 0px) + 4px); inset-block-start: 0.55em; inline-size: 8px; block-size: 8px; box-sizing: border-box; border: 1px solid var(--gx-ink); border-radius: 50%; background: var(--gx-canvas); }
+.rp-events > li:not(:last-child)::after { z-index: -1; inset-inline-start: calc(var(--rp-reading-start, 0px) + 7.5px); inset-block: 0.55em -0.55em; border-inline-start: 1px solid var(--gx-faint); }
 
 .rp-callout { padding-inline-start: 12px; border-inline-start: 2px solid var(--gx-ink); }
 .rp-callout-title { margin-block-end: 4px; font-weight: 600; }
@@ -109,20 +127,20 @@
 .rp-chart .dk-legend i { inline-size: 12px; block-size: 12px; }
 
 @container library-reader (max-width: 32em) {
-  .rp .rp-heading .answer-markdown h2 { font-size: var(--gx-text-xl); }
+  .rp:where(:not([data-presentation="print"])) .rp-heading .answer-markdown h2 { font-size: var(--gx-text-xl); }
   .rp[data-recipe="study_guide"] .rp-topic-controls { flex-basis: 100%; }
 }
 
 .rp[data-presentation="print"] { font-size: 11pt; line-height: 1.55; }
-.rp[data-presentation="print"] :is(.rp-preamble, .rp-prose, .rp-summary, .rp-part-head) { display: block; max-inline-size: none; }
+.rp[data-presentation="print"] .rp-part-head { display: block; }
 .rp[data-presentation="print"] .rp-heading .answer-markdown h2 { font-size: 15pt; }
 .rp[data-presentation="print"] :is(.rp-exhibit, .rp-table) { font-size: 10pt; }
 .rp[data-presentation="print"] :is(.rp-prose, .rp-summary) .answer-markdown h3 { font-size: 12pt; }
 .rp[data-presentation="print"] :is(.rp-preamble, .rp-summary) > .answer-markdown:first-child > p:first-child { font-size: 13pt; }
 .rp[data-presentation="print"] :is(.rp-position, .rp-source) { font-size: 8.5pt; }
 .rp[data-presentation="print"] :is(.rp-table, .gx-md-math-display) { overflow: visible; }
-.rp[data-presentation="print"] .rp-events { max-inline-size: none; }
-.rp[data-presentation="print"] .rp-summary::after { display: block; }
+.rp[data-presentation="print"] .rp-events > li { padding-inline-start: var(--rp-indent); }
+.rp[data-presentation="print"] .rp-summary::after { margin-inline-start: 0; }
 .rp-paper-rows dl { margin: 0 0 8pt; padding-block: 4pt; border-block-start: 1px solid var(--gx-line-2); }
 .rp-paper-rows dl > div { display: flex; flex-wrap: wrap; column-gap: 12px; }
 .rp-paper-rows :is(dt, dd) { max-inline-size: 100%; }

@@ -1,5 +1,6 @@
 """Outputs: reports and slides built by agents, then edited, revised and checked."""
 
+import hashlib
 import itertools
 import json
 import re
@@ -7,6 +8,8 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
+from uuid import uuid4
 
 import openai
 import pytest
@@ -20,15 +23,21 @@ from fake_models import (
     is_outlining,
     is_support_checking,
     orchestrator_replies,
-    output_replies,
     studio_task,
+)
+from fake_models import (
+    output_replies as legacy_output_replies,
 )
 from fastapi.testclient import TestClient
 from legacy_artifacts import insert_legacy_version
 from sqlalchemy import event, func, select, text
 
 from evals.sse import ask_turn, read_events
-from gunther.artifact_versions import commit_version
+from gunther.artifact_actions import Act, Decision
+from gunther.artifact_agent import ArtifactAgent
+from gunther.artifact_manifest import artifact_manifest_hash
+from gunther.artifact_read import artifact_detail
+from gunther.artifact_versions import output_library
 from gunther.checks import coverage_of, verdict, verdicts_of
 from gunther.citations import _marked_unsourced
 from gunther.claim_checks import checker_inventory
@@ -36,8 +45,15 @@ from gunther.config import Settings
 from gunther.evidence import Evidence
 from gunther.llm import ModelError
 from gunther.main import create_app
-from gunther.models import Artifact, ArtifactCheck, ArtifactUnitBinding, Source
+from gunther.models import (
+    Artifact,
+    ArtifactCheck,
+    ArtifactConversation,
+    ArtifactUnitBinding,
+    Source,
+)
 from gunther.output_document import assemble_output
+from gunther.output_types import output_type_for
 from gunther.outputs import (
     Draft,
     OutputLimits,
@@ -55,7 +71,8 @@ from gunther.outputs import (
     title_of,
     with_layout,
 )
-from gunther.schemas import BuildOutputInput, OutputScope
+from gunther.schemas import BuildOutputInput, OutputProvenanceOut, OutputScope, PlanPreferencesOut
+from gunther.studio import format as slide_format
 from gunther.studio.work import StudioWorkAgents
 
 SIDECAR_TOKEN = "sidecar-token-with-at-least-256-bits-000000000000000000000000"
@@ -94,6 +111,44 @@ SLIDES = [
 ]
 
 _requests = itertools.count(1)
+
+
+def output_replies(outline, written, **options):
+    """Run the usual fake, with the approved JSON rows driving the staged writer."""
+    reply = legacy_output_replies(outline, written, **options)
+
+    def respond(request):
+        task = studio_task(request)
+        if is_outlining(request) and "Keep the summary in the summary fields." in task:
+            story = json.loads(reply(request))
+            summary, *sections = story["sections"]
+            return json.dumps(story | {
+                "summary_heading": summary["heading"], "summary_id": summary.get("id"),
+                "summary_job": summary.get("goal", ""), "sections": sections,
+            })
+        deck = "Use the approved slide titles in order:" in task
+        marker = ("Use the approved slide titles in order:" if deck
+                  else "Use exactly these approved section headings in order.")
+        _, found, tail = task.partition(marker)
+        if not found or not tail.lstrip().startswith("[") or "\n\nYour report:\n\n" in task:
+            return reply(request)
+        rows, _ = json.JSONDecoder().raw_decode(tail.lstrip())
+        parts = []
+        for index, row in enumerate(rows):
+            part = written(
+                index, f"Write section {index + 1} of {len(rows)}: {row['heading']}\n{task}",
+            ) if callable(written) else written[index]
+            if isinstance(part, Exception):
+                raise part
+            if deck:
+                layout = row["layout"] or ("title" if index == 0 else "points")
+                part = slide_format.with_marker(part, layout)
+            parts.append(part)
+        if deck:
+            return "\n\n---\n\n".join(parts)
+        return f"# {outline['title']}\n\n" + "\n\n".join(parts)
+
+    return respond
 
 
 def body(**fields) -> dict:
@@ -147,7 +202,9 @@ def library(
     return base_id, ids
 
 
-def build(client: TestClient, base_id: str, request: dict, headers=None) -> list[tuple[str, dict]]:
+def legacy_build(
+    client: TestClient, base_id: str, request: dict, headers=None,
+) -> list[tuple[str, dict]]:
     with client.stream(
         "POST",
         f"/api/knowledge-bases/{base_id}/outputs/build/stream",
@@ -156,6 +213,116 @@ def build(client: TestClient, base_id: str, request: dict, headers=None) -> list
     ) as response:
         assert response.status_code == 200, response.read()
         return read_events(response)
+
+
+def output_turn(client, base_id, conversation_id, payload, headers=None):
+    with client.stream(
+        "POST",
+        f"/api/knowledge-bases/{base_id}/artifact-conversations/{conversation_id}/messages/stream",
+        headers=headers or workspace(client), json=payload,
+    ) as response:
+        if response.status_code != 200:
+            response.read()
+            return [("error", {"status": response.status_code, **response.json()})]
+        return read_events(response)
+
+
+def send_plan(client, base_id, cid, request_id, setup, headers=None, outline=None):
+    plan_id = f"draft_{request_id}"
+    initial = {
+        "kind": "plan", "clientRequestId": f"plan_{request_id}", "planId": plan_id,
+        "setup": setup,
+    }
+    if outline is not None:
+        initial["initialOutline"] = outline
+    # These tests script the Studio tasks. Orchestrator decisions have their own route tests.
+    decision = Decision(actions=[Act(do="plan", change="whole")])
+    with patch.object(ArtifactAgent, "_decide", return_value=decision):
+        events = output_turn(client, base_id, cid, initial, headers)
+    return plan_id, events
+
+
+def plan_output(client, base_id, request, headers=None):
+    legacy = BuildOutputInput.model_validate(request)
+    conversation_id = legacy.conversation_id or f"conv_{legacy.client_request_id}"
+    if legacy.conversation_title:
+        client.post(
+            f"/api/knowledge-bases/{base_id}/artifact-conversations",
+            headers=headers or workspace(client),
+            json={"id": conversation_id, "title": legacy.conversation_title},
+        ).raise_for_status()
+    setup = {
+        "type": output_type_for(legacy.kind, legacy.style).id,
+        "focus": legacy.brief, "audience": legacy.audience, "title": legacy.title,
+        "length": legacy.length, "language": legacy.language, "theme": legacy.theme,
+        "use": legacy.use if legacy.use != "auto" else None,
+        "designVersion": legacy.design_version, "web": legacy.web,
+        "scope": legacy.scope.model_dump(mode="json", by_alias=True),
+        "model": legacy.model, "effort": legacy.effort,
+    }
+    outline = None
+    if legacy.outline:
+        outline = [
+            {"id": row.id or f"part_{index}", "heading": row.heading, "goal": row.goal,
+             "layout": row.layout, "notes": row.notes}
+            for index, row in enumerate(legacy.outline, 1)
+        ]
+    plan_id, events = send_plan(
+        client, base_id, conversation_id, legacy.client_request_id, setup, headers, outline,
+    )
+    return conversation_id, plan_id, events
+
+
+def approve_output(client, base_id, cid, plan_id, request_id, planned, headers=None):
+    return output_turn(client, base_id, cid, {
+        "kind": "approve", "clientRequestId": request_id, "planId": plan_id,
+        "planRevision": planned["plan"]["planRevision"],
+    }, headers)
+
+
+def approve_events(client, base_id, cid, plan_id, request_id, events, headers=None):
+    name, planned = events[-1]
+    if name != "done":
+        return events
+    assert planned["outcome"] == "planned", planned
+    assert planned["artifact"] is None, planned
+    approval = approve_output(client, base_id, cid, plan_id, request_id, planned, headers)
+    return [*events[:-1], *approval]
+
+
+def plan_and_approve(
+    client, base_id, setup, *, conversation_id=None, request_id=None, headers=None, outline=None,
+):
+    """Run the real creation turns with a test-scripted Plan decision."""
+    request_id = request_id or body()["clientRequestId"]
+    cid = conversation_id or f"conv_{request_id}"
+    plan_id, events = send_plan(
+        client, base_id, cid, request_id, {"scope": {"mode": "library"}, **setup},
+        headers, outline,
+    )
+    return approve_events(client, base_id, cid, plan_id, request_id, events, headers)
+
+
+def slide_outline(content: str) -> list[dict]:
+    slides = map(slide_format.parse_slide, slide_format.split_slides(content))
+    return [
+        {"id": f"slide_{index}", "heading": slide.title, "goal": "",
+         "layout": slide.layout, "notes": ""}
+        for index, slide in enumerate(slides, 1)
+    ]
+
+
+def build(client: TestClient, base_id: str, request: dict, headers=None) -> list[tuple[str, dict]]:
+    """Create a version through Plan and Approve or the verified-parent compatibility route."""
+    if request.get("supersedesArtifactId"):
+        return legacy_build(client, base_id, request, headers)
+    cid, plan_id, events = plan_output(client, base_id, request, headers)
+    result = approve_events(
+        client, base_id, cid, plan_id, request["clientRequestId"], events, headers,
+    )
+    if result[-1][0] == "done":
+        result[-1] = ("done", result[-1][1]["artifact"])
+    return result
 
 
 def built(events: list[tuple[str, dict]]) -> dict:
@@ -197,7 +364,10 @@ def built_output(tmp_path: Path, fake: FakeProvider, **fields):
         yield client, base_id, saved_output(client, base_id, **fields)
 
 
-def saved_output(client, base_id, outline=None, written=None, *, approach=None, **fields):
+def saved_output(
+    client, base_id, outline=None, written=None, *, approach=None, fingerprint=None,
+    preferences: PlanPreferencesOut | None = None, **fields,
+):
     """Store test content directly for tests of readers, edits, Check and Revise."""
     service = client.app.state.knowledge_service
     workspace_id = workspace(client)["X-Gunther-Workspace-Id"]
@@ -253,15 +423,51 @@ def saved_output(client, base_id, outline=None, written=None, *, approach=None, 
         provenance.update(generator="gunther.output-skills.v1", approach=approach,
                           skill={"name": payload.kind, "version": (11 if deck else 2)},
                           use=approach.get("use"))
-    return commit_version(
-        service.sessions,
-        workspace_id=workspace_id, base_id=base_id, client_request_id=payload.client_request_id,
-        fingerprint=payload.client_request_id, parent_id=None, kind=payload.kind, style=style,
-        audience=payload.audience, title=title, brief=payload.brief, origin="build",
-        content=version.content, scope=payload.scope.model_dump(), inputs=material.inputs,
-        outline=version.outline, citations=[c.model_dump() for c in version.citations],
-        snapshots=material.snapshots, model=None, checks=version.checks, made_by=provenance,
-    ).model_dump(mode="json", by_alias=True)
+    digest = hashlib.sha256(version.content.encode()).hexdigest()
+    pinned = [snap.unit_id for snap in material.snapshots]
+    style = output_type_for(payload.kind, style).id
+    with service.sessions.begin() as session:
+        row = OutputProvenanceOut(
+            schema_version=2, workspace_id=workspace_id, knowledge_base_id=base_id,
+            knowledge_base_question=output_library(session, workspace_id, base_id).question,
+            accepted_only=False, accepted_unit_ids=pinned,
+            revision_ids=[snap.revision_id for snap in material.snapshots],
+            kind=payload.kind, style=style, audience=payload.audience, brief=payload.brief,
+            origin="build", **({"generator": "gunther.output-agents.v1"} | provenance),
+        ).model_dump(mode="json", exclude_none=True)
+        if preferences is not None:
+            row["effectivePreferences"] = preferences.model_dump(mode="json", by_alias=True)
+        # A historical v2 fixture predates approval. Insert its sealed representation directly.
+        artifact = Artifact(
+            id=f"art_{uuid4().hex}", lineage_id=f"arl_{uuid4().hex}", version_number=1,
+            workspace_id=workspace_id, knowledge_base_id=base_id,
+            client_request_id=payload.client_request_id,
+            request_fingerprint=fingerprint or payload.client_request_id,
+            format=payload.kind, kind=payload.kind, style=style, audience=payload.audience,
+            title=title, brief=payload.brief, origin="build", content=version.content,
+            content_hash=digest, provenance_json=json.dumps(row),
+            accepted_unit_ids_json=json.dumps(pinned),
+            revision_snapshot_json=json.dumps([snap.model_dump() for snap in material.snapshots]),
+            scope_json=payload.scope.model_dump_json(), inputs_json=json.dumps(material.inputs),
+            outline_json=json.dumps(version.outline),
+            citations_json=json.dumps([c.model_dump() for c in version.citations]),
+        )
+        artifact.manifest_hash = artifact_manifest_hash(artifact.__getattribute__)
+        session.add(artifact)
+        session.flush()
+        session.add_all([
+            ArtifactUnitBinding(
+                id=f"aub_{uuid4().hex}", artifact_id=artifact.id, position=position,
+                unit_id=snap.unit_id, revision_id=snap.revision_id, content_hash=snap.content_hash,
+            )
+            for position, snap in enumerate(material.snapshots)
+        ])
+        session.add(ArtifactCheck(
+            id=f"chk_{uuid4().hex}", artifact_id=artifact.id, content_hash=digest,
+            checks_json=json.dumps({"sections": version.checks}),
+        ))
+        session.flush()
+        return artifact_detail(session, artifact).model_dump(mode="json", by_alias=True)
 
 
 def versions(client: TestClient) -> list[Artifact]:
@@ -634,6 +840,175 @@ def test_a_title_slide_that_is_typed_over_is_checked(tmp_path: Path) -> None:
         assert checked["content"] == typed
 
 
+@pytest.mark.parametrize(("owned", "theme", "cover_design"), [
+    (False, "keynote", "v1"),
+    (True, "ink", "v2"),
+], ids=["legacy-cover-sealed-brief", "studio-cover-live-brief"])
+def test_manual_slide_commands_use_effective_preferences_and_check_again_checks_evidence(
+    tmp_path: Path, monkeypatch, owned: bool, theme: str, cover_design: str,
+) -> None:
+    from gunther.slide_review import review_deck
+    from gunther.studio import design
+
+    fake = FakeProvider(output_replies(SLIDES_OUTLINE, SLIDES))
+    calls = []
+    restyle_deck = design.restyle
+
+    def review(built, *_args, spec, **_kwargs):
+        calls.append(("review", spec.theme, spec.emphasize, spec.avoid))
+        return built
+
+    def restyle(agents, model, slides, style, *, spec, **kwargs):
+        calls.append(("restyle", spec.theme, spec.emphasize, spec.avoid))
+        return restyle_deck(agents, model, slides, style, spec=spec, **kwargs)
+
+    monkeypatch.setattr(f"{review_deck.__module__}.review_deck", review)
+    monkeypatch.setattr(design, "restyle", restyle)
+    sealed = PlanPreferencesOut(
+        emphasize=[{"id": "em_old", "text": "Original framing", "mark": "edited"}],
+        avoid=[{"id": "av_old", "text": "Original exclusion", "mark": "edited"}],
+    )
+    live = PlanPreferencesOut(
+        emphasize=[{"id": "em_live", "text": "Current framing", "mark": "edited"}],
+    )
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client)
+        headers = workspace(client)
+        cid = "slide_preferences" if owned else None
+        service = client.app.state.knowledge_service
+        if owned:
+            client.post(f"/api/knowledge-bases/{base_id}/artifact-conversations",
+                        headers=headers, json={"id": cid}).raise_for_status()
+            with service.sessions.begin() as session:
+                session.get(ArtifactConversation, cid).brief_json = live.model_dump_json()
+        cover = slide_format.with_marker(SLIDES[0], "title", design=cover_design, theme=theme)
+        first = saved_output(
+            client, base_id, kind="slides", written=[cover, *SLIDES[1:]],
+            conversationId=cid, preferences=sealed,
+        )
+
+        def cover_attrs(artifact):
+            slides = split_document(artifact["content"], "slides")[1]
+            return slide_format.parse_slide(slides[0]).attrs
+
+        def command(artifact, operation, **fields):
+            path = route(base_id, artifact["id"], f"/{operation}/stream")
+            with client.stream("POST", path, headers=headers, json={
+                "clientRequestId": f"pref_{operation}", **fields,
+            }) as response:
+                response.raise_for_status()
+                return built(read_events(response))
+
+        reviewed = command(first, "visual-review")
+        restyled = command(reviewed, "restyle", style="dark")
+        assert restyled["versionNumber"] == 3 and restyled["lineageId"] == first["lineageId"]
+        effective = live if owned else sealed
+        expected = (
+            theme, tuple(line.text for line in effective.emphasize),
+            tuple(line.text for line in effective.avoid),
+        )
+        assert calls == [("review", *expected), ("restyle", *expected)]
+        assert cover_attrs(reviewed) == cover_attrs(first)
+        assert cover_attrs(restyled) == {**cover_attrs(first), "style": "dark"}
+        for version in (reviewed, restyled):
+            assert version["provenance"]["preferences"] == effective.model_dump(by_alias=True)
+
+        if owned:
+            effective = PlanPreferencesOut()
+            with service.sessions.begin() as session:
+                session.get(ArtifactConversation, cid).brief_json = effective.model_dump_json()
+        typed = restyled["content"].replace("CD3D marks T cells", "CD3D identifies T cells", 1)
+        assert typed != restyled["content"]
+        before_edit = len(fake.requests)
+        edited = client.post(route(base_id, restyled["id"], "/edits"), headers=headers, json={
+            "clientRequestId": "literal_after_restyle", "content": typed,
+        }).raise_for_status().json()
+        assert len(fake.requests) == before_edit
+        assert edited["provenance"]["preferences"] == effective.model_dump(by_alias=True)
+        assert cover_attrs(edited) == cover_attrs(restyled) and edited["content"] == typed
+        before = len(fake.requests)
+        checked = client.post(
+            route(base_id, edited["id"], "/check"), headers=headers,
+        ).raise_for_status().json()
+        prompts = json.dumps(fake.requests[before:])
+        assert len(fake.requests) > before and "CD3D identifies T cells" in prompts
+        assert all(text not in prompts for text in ("Current framing", "Original framing",
+                                                   "Original exclusion"))
+        assert checked["content"] == typed and checked["manifestHash"] == edited["manifestHash"]
+
+
+def test_visual_review_cannot_save_a_changed_cover_theme(tmp_path: Path, monkeypatch) -> None:
+    from gunther import slide_review
+
+    def repair_cover(built, *_args, **_kwargs):
+        # A composition-only repair can reach the legacy layout writer on the Studio cover.
+        slide_id = built.outline[0].get("id") or "slide-1"
+        repair = slide_review.LayoutRepair(slideId=slide_id, composition="standard")
+        return slide_review.apply_repairs(
+            built, slide_review.VisualRepairs(pages=[repair]), {slide_id},
+        )
+
+    monkeypatch.setattr(slide_review, "review_deck", repair_cover)
+    fake = FakeProvider(output_replies(SLIDES_OUTLINE, SLIDES))
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client)
+        headers = workspace(client)
+        cover = slide_format.with_marker(SLIDES[0], "title", design="v2", theme="ink")
+        initial = saved_output(client, base_id, written=[cover, *SLIDES[1:]], kind="slides")
+
+        with client.stream(
+            "POST", route(base_id, initial["id"], "/visual-review/stream"),
+            headers=headers, json={"clientRequestId": "review_cover_theme"},
+        ) as response:
+            response.raise_for_status()
+            [(name, error)] = read_events(response)
+        assert name == "error" and error["status"] == 502 and "cover theme" in error["detail"]
+        assert [version.id for version in versions(client)] == [initial["id"]]
+
+
+def test_audio_retry_uses_ordered_voices_without_rewriting_the_sealed_script(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from test_output_audio import EVIDENCE, SCRIPT, VOICES, configure, model_reply, retry
+
+    def reply(request):
+        if "Propose the direction for Audio overview" in studio_task(request):
+            return json.dumps({
+                "title": "Cell fates", "summary": "Review the finding", "angle": "The trial",
+                "coverage": [{"text": "Cell differentiation"}],
+            })
+        return model_reply(request)
+
+    fake = FakeProvider(reply)
+    with app_for(tmp_path, fake, ai_summaries="off") as client:
+        calls = configure(client, monkeypatch, tmp_path / "gunther.sqlite", fail=True)
+        base_id, _ = library(client, notes={"Trial": EVIDENCE})
+        headers = workspace(client)
+        cid, plan_id = "audio_preferences", "draft_audio_preferences"
+        voices = VOICES[:2][::-1]
+        with patch.object(ArtifactAgent, "_decide", return_value=Decision(
+            actions=[Act(do="plan", change="whole")],
+        )):
+            planned = built(output_turn(client, base_id, cid, {
+                "kind": "plan", "clientRequestId": "plan_audio_retry", "planId": plan_id,
+                "setup": {"type": "audio_overview", "scope": {"mode": "library"},
+                          "voices": voices},
+            }, headers))
+        assert calls == [] and versions(client) == []
+        result = built(approve_output(
+            client, base_id, cid, plan_id, "approve_audio_retry", planned, headers,
+        ))["artifact"]
+        assert result["content"] == SCRIPT and result["audio"]["status"] == "error"
+        assert result["provenance"]["creationPlan"]["options"]["voices"] == voices
+        before = len(fake.requests)
+        ready = retry(client, route(base_id, result["id"]), headers)
+        assert ready["audio"]["status"] == "ready" and ready["audio"]["voices"] == voices
+        assert [voice for voice, _ in calls[1:]] == [voices[0], voices[1], voices[0]]
+        assert len(fake.requests) == before and len(versions(client)) == 1
+        assert ready["contentHash"] == ready["audio"]["contentHash"] == result["contentHash"]
+        assert ready["manifestHash"] == result["manifestHash"]
+
+
 def test_a_selection_searches_only_what_was_chosen(tmp_path: Path) -> None:
     written = ["## T cells\n\nCD3D marks T cells [1].", "## B cells\n\nNothing was found."]
     fake = FakeProvider(output_replies(OUTLINE, written))
@@ -646,7 +1021,6 @@ def test_a_selection_searches_only_what_was_chosen(tmp_path: Path) -> None:
         assert "librarySupplements" not in BuildOutputInput.model_json_schema()["properties"]
         artifact = built(build(client, base_id, request))
         assert not artifact["provenance"]["librarySupplements"]
-        assert built(build(client, base_id, dict(request, librarySupplements=False))) == artifact
         before = len(fake.requests)
         refused = build(
             client, base_id, body(scope={"mode": "selection", "sourceIds": [other["Elsewhere"]]})
@@ -663,10 +1037,10 @@ def test_a_selection_searches_only_what_was_chosen(tmp_path: Path) -> None:
     assert "CD19 is a marker" not in everything and "Receptors" not in everything
     # A source of another library is refused before any model is asked.
     [(name, error)] = refused
-    assert name == "error" and error["status"] == 400
-    assert error["detail"].startswith("These sources are not in this library")
+    assert name == "error" and error["status"] == 422
+    assert error["issues"][0]["loc"] == ["options", "scope"]
     [(_, gone)] = nothing
-    assert gone["status"] == 400 and gone["detail"].startswith("These saved answers")
+    assert gone["status"] == 422 and gone["issues"][0]["loc"] == ["options", "scope"]
     assert len(fake.requests) == before
 
 
@@ -675,15 +1049,9 @@ def test_an_empty_library_is_not_built_from(tmp_path: Path) -> None:
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client, notes={})
         events = build(client, base_id, body())
-    assert events == [
-        (
-            "error",
-            {
-                "status": 400,
-                "detail": "There is nothing to build from yet. Add sources.",
-            },
-        )
-    ]
+    [(name, error)] = events
+    assert name == "error" and error["status"] == 422
+    assert error["detail"] == "There is nothing to build from yet. Add sources."
     assert fake.requests == []
 
 
@@ -719,8 +1087,7 @@ def test_saved_knowledge_seeds_the_pool_so_its_passages_can_be_cited_without_a_s
         else:
             fake.replies[:] = [orchestrator_replies([{"actions": [
                 {"do": "select", "artifact": "new:report"},
-                {"do": "make"},
-                {"do": "save", "text": "Here is the report."},
+                {"do": "plan", "change": "whole"},
             ]}], writer)]
             headers = workspace(client)
             path = f"/api/knowledge-bases/{base_id}/artifact-conversations"
@@ -730,7 +1097,11 @@ def test_saved_knowledge_seeds_the_pool_so_its_passages_can_be_cited_without_a_s
                 f"{path}/{cid}/messages/stream", headers=headers,
                 json={"kind": "start", "text": "Make a report", "clientRequestId": "saved-unit"},
             )
-            artifact = built(read_events(response.raise_for_status()))["artifact"]
+            planned = built(read_events(response.raise_for_status()))
+            assert planned["outcome"] == "planned" and versions(client) == []
+            artifact = built(approve_output(
+                client, base_id, cid, planned["plan"]["planId"], "approve_saved_unit", planned,
+            ))["artifact"]
         with client.app.state.knowledge_service.sessions() as session:
             bindings = session.scalars(
                 select(ArtifactUnitBinding).where(ArtifactUnitBinding.artifact_id == artifact["id"])
@@ -894,12 +1265,10 @@ def test_without_a_model_or_when_a_model_fails_nothing_is_saved(tmp_path: Path) 
         base_id, _ = library(client)
         events = build(client, base_id, body())
         assert versions(client) == []
-    assert events == [
-        (
-            "error",
-            {"status": 400, "detail": "Outputs need a model. Set one up under Settings → Models."},
-        )
-    ]
+    assert events[-1] == (
+        "error",
+        {"status": 400, "detail": "Outputs need a model. Set one up under Settings → Models."},
+    )
     assert unused.requests == []
 
     # A writer the provider refuses.
@@ -989,15 +1358,27 @@ def test_the_outputs_job_can_have_its_own_model_and_otherwise_follows_ask(tmp_pa
     }
 
 
-def test_the_same_request_is_answered_from_what_it_saved(tmp_path: Path) -> None:
+@pytest.mark.parametrize("with_supplements_field", [True, False])
+def test_the_legacy_build_replays_the_original_sealed_version(
+    tmp_path: Path, with_supplements_field: bool,
+) -> None:
     fake = FakeProvider(output_replies(OUTLINE, REPORT))
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
-        request = body()
-        first = built(build(client, base_id, request))
+        request = body(style="overview", approach={"question": "What marks the cells?"},
+                       librarySupplements=True)
+        service = client.app.state.knowledge_service
+        headers = workspace(client)
+        fields = service._output_request_fields(BuildOutputInput.model_validate(request))
+        if not with_supplements_field:
+            fields.pop("library_supplements")
+        fingerprint = service._output_fingerprint(
+            headers["X-Gunther-Workspace-Id"], base_id, "build", fields,
+        )
+        first = saved_output(client, base_id, fingerprint=fingerprint, **request)
         calls = len(fake.requests)
-        again = build(client, base_id, request)
-        different = build(client, base_id, {**request, "audience": "student"})
+        again = legacy_build(client, base_id, request, headers)
+        different = legacy_build(client, base_id, {**request, "audience": "student"}, headers)
         stored = versions(client)
     assert again == [("done", first)]
     assert len(fake.requests) == calls and len(stored) == 1
@@ -1012,6 +1393,28 @@ def test_the_same_request_is_answered_from_what_it_saved(tmp_path: Path) -> None
     ]
 
 
+@pytest.mark.parametrize("fixed_outline", [False, True])
+def test_fresh_legacy_build_requires_a_plan_without_creating_work_or_a_job(
+    tmp_path: Path, fixed_outline: bool,
+) -> None:
+    fake = FakeProvider()
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client)
+        headers = workspace(client)
+        request = body(conversationId="compat_headless")
+        if fixed_outline:
+            request["outline"] = [{"heading": "Results", "goal": "Evidence"}]
+        before = len(fake.requests)
+        [(name, error)] = legacy_build(client, base_id, request, headers)
+        assert name == "error" and (error["status"], error["code"]) == (409, "plan_required")
+        assert versions(client) == [] and len(fake.requests) == before
+        assert "output-conv:compat_headless" not in activity_of(client)
+        with client.app.state.knowledge_service.sessions() as session:
+            assert session.get(ArtifactConversation, "compat_headless") is None
+        [(name, invisible)] = legacy_build(client, "absent_library", request, headers)
+        assert name == "error" and invisible["status"] == 404
+
+
 # Rebuilding, editing, revising and checking -------------------------------------------------------
 
 
@@ -1022,30 +1425,55 @@ def test_a_rebuild_gives_the_edited_outline_to_studio_and_is_the_next_version(
         output_replies(OUTLINE, lambda index, prompt: f"## {heading(prompt)}\n\nA fact [1].")
     )
     with app_for(tmp_path, fake) as client:
-        base_id, _ = library(client)
-        first = built(build(client, base_id, body()))
+        base_id, sources = library(client)
+        first = built(build(client, base_id, body(
+            scope={"mode": "selection", "sourceIds": [sources["Markers"]]},
+        )))
         planners = sum(is_outlining(r) for r in fake.requests)
         edited = [
-            {"heading": "B cells", "goal": "Start with B cells"},
+            {"heading": "B cells", "goal": "Start with B cells", "notes": "Describe the assay"},
             {"heading": "T cells", "goal": ""},
         ]
-        second = built(
-            build(client, base_id, body(outline=edited, supersedesArtifactId=first["id"]))
-        )
-        stale = build(client, base_id, body(supersedesArtifactId=first["id"]))
+        request = body(outline=edited, supersedesArtifactId=first["id"])
+        second = built(legacy_build(client, base_id, request))
+        stale = legacy_build(client, base_id, body(supersedesArtifactId=first["id"]))
+        assert legacy_build(client, base_id, request) == [("done", second)]
+        [(name, error)] = legacy_build(client, base_id, request | {"librarySupplements": True})
+        assert name == "error" and error["status"] == 409
 
-    assert planners == 1 and sum(is_outlining(r) for r in fake.requests) == 2
+    assert planners == 1 and sum(is_outlining(r) for r in fake.requests) == planners
     assert (second["versionNumber"], second["origin"]) == (2, "rebuild")
     assert second["lineageId"] == first["lineageId"]
     assert second["supersedesArtifactId"] == first["id"]
+    assert second["scope"] == first["scope"]
     assert second["title"] == "Immune markers"
     assert [item["heading"] for item in second["outline"]] == ["B cells", "T cells"]
     assert [s["heading"] for s in second["sections"]] == ["B cells", "T cells"]
-    story = [studio_task(r) for r in fake.requests if is_outlining(r)][-1]
-    assert "1. B cells — goal: Start with B cells" in story
+    writing = [studio_task(r) for r in fake.requests if "Write the report" in studio_task(r)]
+    assert '"heading": "B cells", "goal": "Start with B cells"' in writing[-1]
+    assert '"notes": "Describe the assay"' in writing[-1]
+    assert second["outline"][0]["notes"] == "Describe the assay"
     # Only the latest version can be built on.
     [(name, error)] = stale
     assert name == "error" and error["status"] == 409 and "latest version" in error["detail"]
+
+
+def test_verified_slide_rebuild_keeps_the_saved_decks_rendered_style_and_theme(tmp_path: Path):
+    fake = FakeProvider(output_replies(SLIDES_OUTLINE, SLIDES))
+    cover = slide_format.with_marker(SLIDES[0], "title", design="v2", theme="ink", style="dark")
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client)
+        first = saved_output(client, base_id, written=[cover, *SLIDES[1:]], kind="slides")
+        second = built(legacy_build(
+            client, base_id, body(kind="slides", supersedesArtifactId=first["id"]),
+        ))
+    assert second["lineageId"] == first["lineageId"] and second["versionNumber"] == 2
+    slides = split_document(second["content"], "slides")[1]
+    attrs = slide_format.parse_slide(slides[0]).attrs
+    assert {name: attrs[name] for name in ("design", "theme", "style")} == {
+        "design": "v2", "theme": "ink", "style": "dark",
+    }
+    assert all("Choose the visual style" not in studio_task(request) for request in fake.requests)
 
 
 CLAIM = "CD19 marks B cells, and a good deal more besides in some tissues"
@@ -1179,7 +1607,9 @@ def test_a_version_from_the_old_builder_cannot_be_changed_but_can_be_rebuilt(
             headers=SIDECAR,
             json={"title": "The T-cell marker"},
         ).json()["knowledgeUnitId"]
-        fake.replies = [output_replies(OUTLINE, REPORT)]
+        fake.replies = [output_replies(
+            OUTLINE, lambda _index, prompt: f"## {heading(prompt)}\n\nCD3D marks T cells [1].",
+        )]
         headers = workspace(client)
         legacy_id = insert_legacy_version(
             client.app.state.knowledge_service.sessions,
@@ -1254,7 +1684,7 @@ def test_a_version_made_by_agents_is_sealed_and_tampering_is_caught(tmp_path: Pa
             assert status() == (200, 200), field
 
 
-def test_legacy_build_locks_its_conversation_and_can_be_followed(
+def test_legacy_rebuild_locks_its_conversation_and_can_be_followed(
     tmp_path: Path,
 ) -> None:
     gate = threading.Event()
@@ -1270,13 +1700,14 @@ def test_legacy_build_locks_its_conversation_and_can_be_followed(
         runs = client.app.state.answer_runs
         key = "output-conv:talk"
         stream = f"/api/knowledge-bases/{base_id}/artifact-conversations/talk/stream"
+        parent = saved_output(client, base_id, conversationId="talk")
         first, first_box = in_background(
-            lambda: build(client, base_id, body(conversationId="talk"), headers)
+            lambda: legacy_build(client, base_id, body(supersedesArtifactId=parent["id"]), headers)
         )
         wait_for(lambda: writing(runs.get(key)))
         busy = client.post(
             f"/api/knowledge-bases/{base_id}/outputs/build/stream",
-            headers=headers, json=body(conversationId="talk"),
+            headers=headers, json=body(supersedesArtifactId=parent["id"]),
         )
         assert busy.status_code == 409
 
@@ -1290,12 +1721,11 @@ def test_legacy_build_locks_its_conversation_and_can_be_followed(
         first.join(10)
         again.join(10)
         after = client.get(stream, headers=headers)
-        assert len(versions(client)) == 1
+        assert len(versions(client)) == 2
 
     [followed] = again_box
     assert followed[0][0] == "resumed" and followed[-1][0] == "done"
     assert followed[-1][1]["id"] == first_box[0][-1][1]["id"]
-    assert next(data["title"] for name, data in followed if name == "outline") == "Immune markers"
     assert after.status_code == 204
 
 
@@ -1317,10 +1747,15 @@ def test_stopping_a_build_saves_nothing(tmp_path: Path) -> None:
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
         headers = workspace(client)
+        request = body(conversationId="talk")
+        cid, plan_id, planned = plan_output(client, base_id, request, headers)
+        proposal = built(planned)
         runs = client.app.state.answer_runs
         key = "output-conv:talk"
         first, first_box = in_background(
-            lambda: build(client, base_id, body(conversationId="talk"), headers)
+            lambda: approve_output(
+                client, base_id, cid, plan_id, request["clientRequestId"], proposal, headers,
+            )
         )
         wait_for(lambda: writing(runs.get(key)))
         stopped = client.post(
@@ -1333,7 +1768,10 @@ def test_stopping_a_build_saves_nothing(tmp_path: Path) -> None:
         # Once it has ended, another can start.
         wait_for(lambda: runs.get(key) is None)
         fake.replies = [output_replies(OUTLINE, REPORT)]
-        built(build(client, base_id, body(conversationId="talk")))
+        retry = approve_output(
+            client, base_id, cid, plan_id, "approve_after_stop", proposal, headers,
+        )
+        assert built(retry)["artifact"]["versionNumber"] == 1
     assert first_box[0][-1] == ("stopped", {"type": "stopped"})
 
 
@@ -1381,8 +1819,9 @@ def test_a_build_is_listed_while_it_works_and_when_it_is_done(
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client, "Immune cells")
         key = "output-conv:talk"
-        request = body(kind=kind, audience="student", conversationId="talk")
-        first, box = in_background(lambda: build(client, base_id, request))
+        parent = saved_output(client, base_id, kind=kind, audience="student", conversationId="talk")
+        request = body(kind=kind, audience="student", supersedesArtifactId=parent["id"])
+        first, box = in_background(lambda: legacy_build(client, base_id, request))
         wait_for(lambda: activity_of(client).get(key, {}).get("detail", "").startswith("Writing"))
         item = activity_of(client)[key]
         assert (item["title"], item["state"], item["kind"]) == (words[0], "running", "output")
@@ -1390,7 +1829,8 @@ def test_a_build_is_listed_while_it_works_and_when_it_is_done(
         assert item["detail"] in ("Writing the report", "Writing the slides")
         assert item["open"] == {
             "view": "library", "libraryId": base_id, "tab": "outputs",
-            "conversationId": "talk", "typeId": kind, "lineageId": None, "artifactId": None,
+            "conversationId": "talk", "typeId": kind, "lineageId": parent["lineageId"],
+            "artifactId": parent["id"],
         }
         assert item["progress"] is None
         gate.set()
@@ -1404,10 +1844,14 @@ def test_a_build_is_listed_while_it_works_and_when_it_is_done(
     }
 
 
-def test_a_failed_build_says_why_in_the_list(tmp_path: Path) -> None:
-    with app_for(tmp_path, FakeProvider(output_replies(OUTLINE, REPORT))) as client:
-        base_id, _ = library(client, notes={})
-        events = build(client, base_id, body(conversationId="talk"))
+def test_a_failed_legacy_rebuild_says_why_in_the_list(tmp_path: Path) -> None:
+    fake = FakeProvider(output_replies(
+        OUTLINE, lambda _index, _prompt: api_error(openai.AuthenticationError, 401, "no"),
+    ))
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client)
+        parent = saved_output(client, base_id, conversationId="talk")
+        events = legacy_build(client, base_id, body(supersedesArtifactId=parent["id"]))
         item = activity_of(client)["output-conv:talk"]
     assert events[-1][0] == "error"
     assert (item["state"], item["title"]) == ("failed", "Couldn't write the report")
@@ -1427,12 +1871,12 @@ def test_conversation_membership_and_instructions_survive_build_and_edit(tmp_pat
         assert first["conversationId"] == "conversation_first"
         assert first["conversationTitle"] == "Lab briefing"
         assert first["clientRequestId"] == request["clientRequestId"]
-        assert first["provenance"]["request"] == "Make notes"
+        assert first["provenance"]["creationPlan"]["options"]["focus"] == "Make notes"
         listed = client.get(
             f"/api/knowledge-bases/{base_id}/artifacts", headers=workspace(client)
         ).json()
         assert listed[0]["conversationId"] == "conversation_first"
-        assert listed[0]["request"] == "Make notes"
+        assert listed[0]["request"] == first["provenance"]["request"]
         edited = client.post(
             route(base_id, first["id"], "/edits"),
             headers=workspace(client),
@@ -1448,7 +1892,7 @@ def test_conversation_membership_and_instructions_survive_build_and_edit(tmp_pat
             supersedesArtifactId=edited["id"], conversationId="conversation_other",
         ))
         assert rejected[-1][0] == "error"
-        assert "different conversation" in rejected[-1][1]["detail"]
+        assert rejected[-1][1]["status"] == 404
         assert len(fake.requests) == before
 
 
@@ -1468,7 +1912,7 @@ def test_explicit_output_model_and_effort_are_used_and_invalid_models_do_not_run
         start = len(fake.requests)
         rejected = build(client, base_id, body(model="missing/model"))
         assert rejected[-1][0] == "error"
-        assert "selected model" in rejected[-1][1]["detail"]
+        assert rejected[-1][1]["status"] == 422 and "available model" in rejected[-1][1]["detail"]
         assert len(fake.requests) == start
 
 

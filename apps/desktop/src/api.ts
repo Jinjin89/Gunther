@@ -8,8 +8,10 @@ import type {
   ArtifactConversationDetail,
   ArtifactConversationSummary,
   ArtifactSummary,
-  ArtifactTurnInput,
   ArtifactTurnOut,
+  CreationTurn,
+  SavedArtifactTurnInput,
+  WorkPlanPatch,
   CreateArtifactConversationRequest,
   ImportArtifactConversationsRequest,
   UpdateArtifactConversationRequest,
@@ -475,11 +477,16 @@ export const isTurnResult = (done: OutputDone): done is ArtifactTurnOut => "outc
 
 /** What is heard while the Artifacts agent works on a message: its own events and the skill's. */
 export type ArtifactTurnEvent = ArtifactAgentEvent | OutputEvent;
+export type ArtifactTurnRequest = SavedArtifactTurnInput | CreationTurn;
 
 const outputTerminal: RunTerminal = {
   stopped: () => new OutputStoppedError(),
   failed: "The output could not be built.",
   closed: "The connection closed before the output was finished.",
+  error(message, status, payload) {
+    const error = status === undefined ? undefined : apiError(payload, status, message);
+    return error?.code || error?.detail ? error : new RunStreamError(message, status);
+  },
 };
 const turnTerminal: RunTerminal = {
   ...outputTerminal,
@@ -500,9 +507,25 @@ function logFailure(init: RequestInit | undefined, path: string, what: string) {
 }
 
 export class ApiRequestError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly code?: string, readonly detail?: unknown) {
     super(message);
   }
+}
+
+function apiError(payload: unknown, status: number, fallback: string) {
+  type ErrorPayload = { code?: unknown; detail?: unknown; message?: unknown; issues?: unknown };
+  const body = payload as ErrorPayload | null;
+  const detail = body?.detail;
+  const nested = detail && typeof detail === "object" && !Array.isArray(detail) ? detail as ErrorPayload : null;
+  const code = nested?.code ?? body?.code;
+  const message = nested?.detail ?? nested?.message ?? (typeof detail === "string" ? detail : body?.message);
+  const issues = Array.isArray(detail) ? detail : Array.isArray(body?.issues) ? body.issues : undefined;
+  return new ApiRequestError(
+    typeof message === "string" ? message : fallback,
+    status,
+    typeof code === "string" ? code : undefined,
+    nested ?? issues ?? (typeof code === "string" ? body : undefined),
+  );
 }
 
 interface RequestOptions {
@@ -532,13 +555,13 @@ async function requestResponse(
   }
 
   if (!response.ok) {
-    const body = (await response.json().catch((reason: unknown) => {
+    const body: unknown = await response.json().catch((reason: unknown) => {
       if (init?.signal?.aborted) throw reason;
       return null;
-    })) as { detail?: unknown } | null;
-    const detail = typeof body?.detail === "string" ? body.detail : null;
-    if (logErrors) logFailure(init, path, `${response.status} ${detail ?? ""}`.trim());
-    throw new ApiRequestError(detail ?? `Request failed with status ${response.status}`, response.status);
+    });
+    const error = apiError(body, response.status, `Request failed with status ${response.status}`);
+    if (logErrors) logFailure(init, path, `${response.status} ${error.message}`);
+    throw error;
   }
   return response;
 }
@@ -805,6 +828,7 @@ export const knowledgeApi = {
       method: "POST",
       body: JSON.stringify({ values }),
     }),
+  /** An output entry carries the saved address to reopen after restore. */
   trash: () => request<TrashItem[]>("/trash"),
   trashSource: (id: string) => request<TrashItem>(`/sources/${encodeURIComponent(id)}/trash`, { method: "POST" }),
   trashNote: (id: string) => request<TrashItem>(`/notes/${encodeURIComponent(id)}/trash`, { method: "POST" }),
@@ -905,6 +929,7 @@ export const knowledgeApi = {
       undefined,
       expectedWorkspaceId,
     ),
+  /** Read a saved version with its canonical outline IDs. */
   artifact: (knowledgeBaseId: string, artifactId: string, expectedWorkspaceId: string) =>
     request<Artifact>(
       `/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/artifacts/${encodeURIComponent(artifactId)}`,
@@ -912,7 +937,7 @@ export const knowledgeApi = {
       expectedWorkspaceId,
     ),
   /** Send one Artifacts turn and hear the agents at work. */
-  artifactTurnStream: (baseId: string, conversationId: string, payload: ArtifactTurnInput, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal) =>
+  artifactTurnStream: (baseId: string, conversationId: string, payload: ArtifactTurnRequest, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal) =>
     startRun<ArtifactTurnOut, ArtifactTurnEvent>(`${artifactConversationPath(baseId, conversationId)}/messages/stream`, payload, onEvent, turnTerminal, signal, workspaceId),
   /** Replay and follow this conversation's live run. Aborting only stops listening. */
   followArtifactTurn: async (baseId: string, conversationId: string, workspaceId: string, onEvent: (event: ArtifactTurnEvent) => void, signal?: AbortSignal): Promise<OutputDone | null> => {
@@ -929,6 +954,10 @@ export const knowledgeApi = {
   /** One conversation: its messages, brief and works. */
   artifactConversation: (baseId: string, conversationId: string, workspaceId: string) =>
     request<ArtifactConversationDetail>(artifactConversationPath(baseId, conversationId), undefined, workspaceId),
+  patchArtifactWork: (baseId: string, conversationId: string, workKey: string, input: WorkPlanPatch, workspaceId: string) =>
+    request<ArtifactConversationDetail>(`${artifactConversationPath(baseId, conversationId)}/works/${encodeURIComponent(workKey)}`, {
+      method: "PATCH", body: JSON.stringify(input),
+    }, workspaceId),
   /** Start a conversation under the id given; asking for one that exists returns it. */
   createArtifactConversation: (baseId: string, payload: CreateArtifactConversationRequest, workspaceId: string) =>
     request<ArtifactConversationDetail>(`${outputsPath(baseId)}/artifact-conversations`, { method: "POST", body: JSON.stringify(payload) }, workspaceId),

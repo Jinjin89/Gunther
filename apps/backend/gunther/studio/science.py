@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Literal
+from collections.abc import Sequence
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -17,6 +18,13 @@ from gunther.evidence import Evidence
 from gunther.markup import markdown_lines
 from gunther.skill_checks import figures_of
 from gunther.studio import format as fmt
+
+PANEL_ASSIGNMENTS = (
+    "For a whole source figure, put each panel explanation in a visible list item with the "
+    "exact FigureReading label as its bold lead, like `- **B**: What this panel shows [n]`. "
+    "Place the explanations on the slide with that one figure. A crop copied from "
+    "FigureReading identifies its own panel."
+)
 
 
 def _said(value: str) -> str:
@@ -181,6 +189,25 @@ class ScientificProblem(BaseModel):
     where: str = ""
     problem: str
     fix: str
+    route: Literal["slides", "deck"] = "deck"
+    slides: list[Annotated[int, Field(gt=0, strict=True)]] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def targets(self) -> ScientificProblem:
+        if (self.route == "slides") != bool(self.slides):
+            raise ValueError("Supply slide numbers for a targeted repair.")
+        if len(self.slides) != len(set(self.slides)):
+            raise ValueError("Slide numbers must be unique.")
+        return self
+
+
+def _finding(
+    problem: str, slides: Sequence[int] = (), *,
+    fix: str = "Correct the reported issue using the verified source material.",
+) -> ScientificProblem:
+    return ScientificProblem(
+        problem=problem, fix=fix, route="slides" if slides else "deck", slides=list(slides),
+    )
 
 
 class ReaderAnswers(BaseModel):
@@ -409,96 +436,80 @@ def content_problems(
     deck: str,
     plan: CoveragePlan | None = None,
 ) -> list[str]:
+    return [finding.problem for finding in _content_findings(study, readings, deck, plan)]
+
+
+def _content_findings(
+    study: StudyMap,
+    readings: list[FigureReading],
+    deck: str,
+    plan: CoveragePlan | None,
+) -> list[ScientificProblem]:
     """Central, visually read evidence and panel identity must be visible, not just in notes."""
-    useful = {r.asset_id for r in readings if r.legible}
-    required = {
-        f.asset_id for c in study.claims if c.central for f in c.figures if f.asset_id in useful
+    panels_by_asset = {
+        reading.asset_id: {panel.label.strip().casefold(): panel for panel in reading.panels}
+        for reading in readings if reading.legible
     }
-    if plan:
-        required |= {
-            f.asset_id for f in plan.figures if f.central and f.disposition in ("teach", "group")
-        } & useful
-    slides = fmt.split_slides(deck)
-    shown: set[str] = set()
-    crops: list[tuple[str, list[float]]] = []
-    for slide in slides:
-        for reference in re.findall(
-            r"\((gunther-asset:[^)]+)\)", "\n".join(fmt.parse_slide(slide).body)
-        ):
-            parts = image_parts(reference)
-            if parts:
-                shown.add(parts[0])
-                if parts[1]:
-                    crops.append(parts)
-    problems = [
-        f"Central claim needs source image gunther-asset:{asset} visible and explained on a slide."
-        for asset in sorted(required - shown)
+    central = [figure for claim in study.claims if claim.central for figure in claim.figures]
+    planned = [
+        figure for figure in (plan.figures if plan else [])
+        if figure.central and figure.disposition != "omit"
     ]
-    by_asset = {r.asset_id: r for r in readings}
-    # Panels still unnamed, per figure: one problem per figure, however many claims link it.
-    missing: dict[str, dict[str, str]] = {}
-    for claim in study.claims:
-        if not claim.central:
-            continue
-        for linked in claim.figures:
-            reading = by_asset.get(linked.asset_id)
-            if not reading or not reading.legible:
+    required: dict[str, set[str]] = {}
+    for figure in (*central, *planned):
+        if figure.asset_id in panels_by_asset:
+            required.setdefault(figure.asset_id, set()).update(
+                label.strip().casefold() for label in figure.panels
+            )
+    positions: dict[str, list[int]] = {}
+    identified: dict[str, set[str]] = {}
+    for number, text in enumerate(fmt.split_slides(deck), 1):
+        slide = fmt.parse_slide(text)
+        lines = [line for line, protected in markdown_lines("\n".join(slide.body))
+                 if not protected]
+        images = [image for line in lines if fmt.IMAGE.fullmatch(line)
+                  if (image := image_parts(line.strip().rpartition("(")[2].removesuffix(")")))]
+        assignments = {
+            lead["lead"].strip().casefold()
+            for line in lines if (item := fmt.BULLET.match(line))
+            if (lead := fmt.BOLD_LEAD.match(item["text"])) and lead["rest"].strip()
+        }
+        for asset, crop in images:
+            if asset not in required:
                 continue
-            panels = {panel.label.casefold(): panel for panel in reading.panels if panel.label}
-            wanted = {label.casefold() for label in linked.panels if label} & panels.keys()
-            visible = []
-            for s in slides:
-                if linked.asset_id in s:
-                    parsed = fmt.parse_slide(s)
-                    visible += [parsed.title, *parsed.body]
-            named = named_panels("\n".join(visible))
-            for label in sorted(wanted - named):
-                box = panels[label].box
-                # A crop identifies the one panel whose box it is, not its neighbours.
-                if box and any(
-                    asset == linked.asset_id and _same_box(crop, box) for asset, crop in crops
-                ):
-                    continue
-                missing.setdefault(linked.asset_id, {})[label] = panels[label].label
-    for asset, labels in sorted(missing.items()):
-        shown_labels = [labels[key] for key in sorted(labels)]
-        several = len(shown_labels) > 1
-        problems.append(
-            f"Figure gunther-asset:{asset}: central panel{'s' if several else ''} "
-            f"{_listed(shown_labels)} {'are' if several else 'is'} not identified on a visible "
-            "slide. Name each where it is explained (\"Panel B: …\") or show its crop."
+            slides = positions.setdefault(asset, [])
+            if number not in slides:
+                slides.append(number)
+            labels = identified.setdefault(asset, set())
+            if crop:
+                # A crop can identify only the panel whose verified box it matches.
+                labels.update(label for label, panel in panels_by_asset[asset].items()
+                              if _same_box(crop, panel.box))
+            elif len(images) == 1:
+                # The figure layout binds its explanation rows to a single visible asset.
+                labels.update(assignments)
+    problems = [
+        _finding(
+            f"Central claim needs source image gunther-asset:{asset} "
+            "visible and explained on a slide.",
+            fix=f"Show gunther-asset:{asset} in a slide body and explain what it supports.",
         )
-    return list(dict.fromkeys(problems))
-
-
-# How a slide names a panel: "Panel B", "panels B and C", "panels B–D", "(B)", "(B, C)",
-# "Fig. 2B", "Figure 2B–D", "图2B", or "B:" opening a line. Read case-blind from the slide's
-# title, body and image captions, never its notes.
-_LABEL = r"(?<![a-z])[a-z]{1,2}(?![a-z])"
-_JOIN = r"\s*(?:,|;|/|&|\band\b|\bor\b|和|与|及|、|–|—|-|\bto\b|至)\s*"
-_LIST = rf"{_LABEL}(?:{_JOIN}{_LABEL})*"
-_NAMED = re.compile(
-    rf"(?:\bpanels?|面板|子图|分图)\s*\(?\s*({_LIST})"
-    rf"|(?:\bfig(?:ure)?s?\.?|图)\s*\d+({_LIST})"
-    rf"|\(\s*({_LIST})\s*\)"
-    rf"|(?:^\s*(?:[-*•]\s+)?|[·|]\s*)({_LABEL})\s*[:：]",
-    re.M,
-)
-_RANGE = re.compile(r"(?<![a-z])([a-z])\s*(?:–|—|-|\bto\b|至)\s*([a-z])(?![a-z])")
-
-
-def named_panels(text: str) -> set[str]:
-    """The panel labels visible text names, case-folded, ranges expanded ("B–D": B, C, D).
-    Other words caught in a list ("and", "to") are harmless: callers intersect with real labels."""
-
-    found: set[str] = set()
-    for match in _NAMED.finditer(text.casefold()):
-        listed = next(group for group in match.groups() if group)
-        for start, end in _RANGE.findall(listed):
-            if start <= end:
-                found.update(chr(code) for code in range(ord(start), ord(end) + 1))
-        found.update(re.findall(_LABEL, listed))
-    return found
+        for asset in sorted(required.keys() - positions.keys())
+    ]
+    for asset in sorted(positions):
+        panels = panels_by_asset[asset]
+        missing = (required[asset] & panels.keys()) - identified[asset]
+        if not missing:
+            continue
+        labels = _listed([panels[label].label for label in sorted(missing)])
+        several = len(missing) > 1
+        problems.append(_finding(
+            f"Figure gunther-asset:{asset}: central panel{'s' if several else ''} "
+            f"{labels} {'are' if several else 'is'} not identified on a visible slide.",
+            positions[asset],
+            fix=f"Identify and explain {labels} on the slide. {PANEL_ASSIGNMENTS}",
+        ))
+    return problems
 
 
 def _same_box(crop: list[float], box: list[float]) -> bool:
@@ -718,13 +729,31 @@ def code_problems(
     rest go to one targeted revision, and what remains is delivered as an open problem, listed
     with the version, so one imperfect slide never costs the whole build."""
 
-    return (
-        content_problems(study, readings, deck, plan)
-        + value_problems(deck, items, readings)
-        + crop_problems(deck, readings)
-        + scope_problems(deck, items, allowed)
-        + (coverage_problems(plan, items) if plan else [])
-    )
+    findings = code_findings(study, readings, deck, items, allowed, plan)
+    return list(dict.fromkeys(finding.problem for finding in findings))
+
+
+def code_findings(
+    study: StudyMap,
+    readings: list[FigureReading],
+    deck: str,
+    items: list[Evidence],
+    allowed: list[str] | None = None,
+    plan: CoveragePlan | None = None,
+) -> list[ScientificProblem]:
+    findings = _content_findings(study, readings, deck, plan)
+    allowed = allowed_assets(items) if allowed is None else allowed
+    by_problem: dict[str, list[int]] = {}
+    for number, slide in enumerate(fmt.split_slides(deck), 1):
+        for problem in (
+            value_problems(slide, items, readings) + crop_problems(slide, readings)
+            + scope_problems(slide, items, allowed)
+        ):
+            by_problem.setdefault(problem, []).append(number)
+    findings.extend(_finding(problem, slides) for problem, slides in by_problem.items())
+    if plan is not None:
+        findings.extend(_finding(problem) for problem in coverage_problems(plan, items))
+    return findings
 
 
 def heal_images(
@@ -780,7 +809,7 @@ def heal_images(
     return deck, list(dict.fromkeys(notes))
 
 
-def pool_print(items: list[Evidence]) -> str:
+def pool_print(items: list[Evidence], *, full: bool = False) -> str:
     """Which passages, in which numbering, a build read: a saved study map is reused only for
     the same ones (the same count of different passages would point its refs elsewhere)."""
 
@@ -794,4 +823,13 @@ def pool_print(items: list[Evidence]) -> str:
         )
         for item in items
     ]
-    return hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()[:16]
+    if full:
+        # Asset metadata and source identity travel with the pins. Include explicit revision
+        # and block values even when the evidence key falls back to a record without both.
+        rows = [
+            (*row, getattr(item.citation, "source_revision_id", ""),
+             getattr(item.citation, "block_id", ""))
+            for item, row in zip(items, rows, strict=True)
+        ]
+    checksum = hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()
+    return checksum if full else checksum[:16]

@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict, dataclass, replace
+from pathlib import Path
+from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from pydantic import TypeAdapter
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, load_only, selectinload
 
+from gunther import artifact_workspace as workspaces
+from gunther.artifact_plans import PlanConflictError, ReviewedMaterial
 from gunther.ask_turns import conversation_pool
 from gunther.evidence import Evidence, Tool, ToolFailure
 from gunther.evidence_reader import (
@@ -22,23 +27,289 @@ from gunther.evidence_reader import (
 )
 from gunther.library_lookup import SearchHit
 from gunther.models import (
+    Asset,
     ContentBlock,
     DocumentElement,
     KnowledgeBaseSource,
     KnowledgeProposal,
     KnowledgeSession,
     KnowledgeUnit,
+    KnowledgeUnitRevision,
     SessionMessage,
     Source,
     SourceDigest,
     SourceIndexHead,
     SourcePaper,
+    SourceRevision,
 )
 from gunther.outputs import Notes, Pool
 from gunther.schemas import ArtifactUnitSnapshotOut, ConversationCitationOut, OutputScope
 from gunther.service_records import _id
+from gunther.slide_render import digest
 
 NOTHING_TO_BUILD_FROM = "There is nothing to build from yet. Add sources."
+_NOTE_PAYLOAD = TypeAdapter(Notes)
+AssetReader = Callable[[str], tuple[Path, str, str]]
+_ASSET_BLOCKER = "A reviewed figure is unavailable or failed its integrity check. Plan again."
+
+
+def scope_members(
+    session: Session, base_id: str, scope: OutputScope, *, strict: bool = False,
+) -> list[dict[str, Any]]:
+    """Read the membership and revision identities without loading source passages."""
+
+    sources = (
+        select(
+            Source.id, Source.content_hash, SourceRevision.id,
+            SourceRevision.fingerprint, SourceRevision.state,
+        )
+        .join(KnowledgeBaseSource, KnowledgeBaseSource.source_id == Source.id)
+        .outerjoin(SourceIndexHead, SourceIndexHead.source_id == Source.id)
+        .outerjoin(
+            SourceRevision,
+            (SourceRevision.id == SourceIndexHead.revision_id)
+            & (SourceRevision.source_id == Source.id),
+        )
+        .where(KnowledgeBaseSource.knowledge_base_id == base_id, Source.trashed_at.is_(None))
+    )
+    if scope.mode == "selection":
+        sources = sources.where(Source.id.in_(scope.source_ids))
+    members = [
+        {
+            "kind": "source", "id": source, "revision": revision,
+            "content_hash": digest([content_hash, fingerprint, state]),
+        }
+        for source, content_hash, revision, fingerprint, state in session.execute(sources)
+    ]
+    if scope.unit_ids:
+        units = session.execute(
+            select(KnowledgeUnit.id, KnowledgeUnitRevision.id, KnowledgeUnitRevision.content)
+            .join(
+                KnowledgeUnitRevision,
+                (KnowledgeUnitRevision.id == KnowledgeUnit.head_revision_id)
+                & (KnowledgeUnitRevision.unit_id == KnowledgeUnit.id),
+            )
+            .where(
+                KnowledgeUnit.knowledge_base_id == base_id,
+                KnowledgeUnit.status == "trusted",
+                KnowledgeUnit.id.in_(scope.unit_ids),
+            )
+        )
+        members.extend(
+            {
+                "kind": "unit", "id": unit, "revision": revision,
+                "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            }
+            for unit, revision, content in units
+        )
+    if scope.session_ids:
+        # Ask appends immutable messages and advances the session timestamp in the same write.
+        # Count and latest ID also identify message additions/removals in restored libraries.
+        messages = SessionMessage.session_id == KnowledgeSession.id
+        count = select(func.count()).where(messages).correlate(KnowledgeSession).scalar_subquery()
+        latest = (
+            select(SessionMessage.id).where(messages).correlate(KnowledgeSession)
+            .order_by(SessionMessage.created_at.desc(), SessionMessage.id.desc())
+            .limit(1).scalar_subquery()
+        )
+        discussions = session.execute(
+            select(KnowledgeSession.id, KnowledgeSession.title, KnowledgeSession.summary,
+                   KnowledgeSession.updated_at, count, latest)
+            .where(KnowledgeSession.knowledge_base_id == base_id,
+                   KnowledgeSession.id.in_(scope.session_ids))
+        )
+        members.extend(
+            {"kind": "session", "id": id_, "revision": None,
+             "content_hash": digest([title, summary, updated.isoformat(), size, head])}
+            for id_, title, summary, updated, size, head in discussions
+        )
+    if strict and scope.mode == "selection":
+        found = {(member["kind"], member["id"]) for member in members}
+        for kind, ids in (
+            ("source", scope.source_ids), ("unit", scope.unit_ids), ("session", scope.session_ids),
+        ):
+            missing = [id_ for id_ in ids if (kind, id_) not in found]
+            if missing:
+                raise ValueError(f"Selected {kind} items are unavailable: {', '.join(missing)}.")
+    return sorted(members, key=lambda item: (item["kind"], item["id"]))
+
+
+def studio_manifest(
+    workspace_id: str, base_id: str, scope: OutputScope, members: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "workspace_id": workspace_id,
+        "library_id": base_id,
+        "scope": {
+            "mode": scope.mode,
+            **{name: sorted(set(getattr(scope, name)))
+               for name in ("source_ids", "unit_ids", "session_ids")},
+        },
+        "members": members,
+        "web_pass": "off",
+        "web_query": None,
+    }
+
+
+def pinned_scope(manifest: dict[str, Any]) -> OutputScope:
+    members = manifest["members"]
+    return OutputScope.model_construct(
+        mode="selection",
+        **{f"{kind}_ids": [pin["id"] for pin in members if pin["kind"] == kind]
+           for kind in ("source", "unit", "session")},
+    )
+
+
+def restore_studio_material(
+    workspace: workspaces.Workspace, progress: dict[str, Any], *, limit: int,
+) -> tuple[Pool, Notes]:
+    by_ref = {item["ref"]: item for item in workspace.pool if item.get("ref") is not None}
+    refs = progress["pool_refs"]
+    if any(type(ref) is not int or ref < 1 for ref in refs) or len(set(refs)) != len(refs):
+        raise ValueError("The stored evidence references are invalid.")
+    pool = Pool(limit)
+    pool.restore([
+        workspaces.evidence_from_citation(ConversationCitationOut.model_validate(by_ref[ref]))
+        for ref in refs
+    ])
+    return pool, _NOTE_PAYLOAD.validate_python(progress["notes"])
+
+
+def _pool_print(pool: Pool) -> str:
+    from gunther.studio.science import pool_print
+
+    return pool_print(pool.items, full=True)
+
+
+def studio_asset_hashes(session: Session, pool: Pool) -> dict[str, str]:
+    from gunther.studio.science import figure_inventory
+
+    ids = set(figure_inventory(pool.items))
+    hashes = dict(session.execute(
+        select(Asset.id, Asset.content_hash).where(Asset.id.in_(ids))
+    ).tuples().all()) if ids else {}
+    if hashes.keys() != ids:
+        raise PlanConflictError("plan_changed", _ASSET_BLOCKER)
+    return hashes
+
+
+def verify_studio_assets(work: workspaces.Work, read_asset: AssetReader | None) -> dict[str, str]:
+    """Read the reviewed bytes before holding the run registry or SQLite write lock."""
+
+    progress = work.studio_progress or {}
+    manifest = progress.get("manifest") or {}
+    pins = manifest.get("assets", {}) if isinstance(manifest, dict) else {}
+    if not isinstance(pins, dict) or (pins and read_asset is None):
+        raise PlanConflictError("plan_changed", _ASSET_BLOCKER)
+    if read_asset:
+        try:
+            for asset_id in pins:
+                read_asset(asset_id)
+        except (LookupError, OSError, TypeError) as error:
+            raise PlanConflictError("plan_changed", _ASSET_BLOCKER) from error
+    return pins
+
+
+def _pin_revisions_are_eligible(session: Session, base_id: str, pool: Pool) -> bool:
+    pins = {
+        (item.citation.source_id, item.citation.source_revision_id)
+        for item in pool.items if item.kind == "library"
+    }
+    if not pins:
+        return True
+    sources = select(Source.id).join(KnowledgeBaseSource).where(
+        KnowledgeBaseSource.knowledge_base_id == base_id, Source.trashed_at.is_(None),
+        Source.id.in_({source for source, _ in pins}),
+    )
+    live = set(session.scalars(sources))
+    revisions = set(session.execute(
+        select(SourceRevision.source_id, SourceRevision.id).where(
+            SourceRevision.id.in_({revision for _, revision in pins if revision}),
+        )
+    ))
+    return all(source in live and (not revision or (source, revision) in revisions)
+               for source, revision in pins)
+
+
+def reviewed_studio_material(
+    session: Session, workspace_id: str, base_id: str, scope: OutputScope,
+    workspace: workspaces.Workspace, work: workspaces.Work, *,
+    local_only: bool = False, frozen: bool = False,
+    verified_assets: dict[str, str] | None = None,
+) -> ReviewedMaterial | None:
+    """Verify the checkpoint using stored identities and the durable passages it names."""
+
+    progress = work.studio_progress
+    if not progress or not isinstance(progress.get("manifest"), dict):
+        return None
+    saved = progress["manifest"]
+    current = studio_manifest(workspace_id, base_id, scope, [])
+    if any(saved.get(key) != current[key] for key in ("workspace_id", "library_id", "scope")):
+        return None
+    try:
+        members = scope_members(session, base_id, scope, strict=True)
+        previous = saved["members"]
+        if frozen:
+            by_id = {(pin["kind"], pin["id"]): pin for pin in members}
+            matches = all(by_id.get((pin["kind"], pin["id"])) == pin for pin in previous)
+        else:
+            matches = previous == members
+        if not previous or not matches:
+            return ReviewedMaterial(None, blocker="Plan with these sources before generating.")
+        pool, notes = restore_studio_material(workspace, progress, limit=len(progress["pool_refs"]))
+        printed = _pool_print(pool)
+        # Use the same material identity as Studio.prepare, including the retained provenance.
+        if (
+            progress.get("pool") != printed
+            or progress.get("material_key") != digest([saved, printed, asdict(notes)])
+            or not _pin_revisions_are_eligible(session, base_id, pool)
+            or any(
+                name in progress and progress[name] != saved.get(name, [])
+                for name in ("searched", "key_results_used")
+            )
+        ):
+            return ReviewedMaterial(None, blocker="Some reviewed evidence is unavailable.")
+        assets = studio_asset_hashes(session, pool)
+        if assets != saved.get("assets", {}) or (
+            verified_assets is not None and assets != verified_assets
+        ):
+            return ReviewedMaterial(None, blocker=_ASSET_BLOCKER)
+        web_pass = saved["web_pass"]
+        if local_only:
+            local = Pool(pool.limit)
+            local.restore([item for item in pool.items if item.kind != "web"])
+            pool = local
+            if not (pool.items or notes.knowledge or notes.discussions):
+                return ReviewedMaterial(None, blocker="Plan with eligible local material.")
+            refs = list(pool.by_ref())
+            searched = [hit for hit in saved.get("searched", []) if hit["kind"] != "web"]
+            results = [
+                {**item, "refs": [ref for ref in item["refs"] if ref in refs]}
+                for item in saved.get("key_results_used", [])
+            ]
+            saved = {
+                **saved, "web_pass": "off", "web_query": None,
+                "searched": searched, "key_results_used": results,
+                "assets": studio_asset_hashes(session, pool),
+            }
+            printed = _pool_print(pool)
+            progress = {
+                "format": progress["format"], "manifest": saved, "pool_refs": refs,
+                "notes": asdict(notes), "pool": printed,
+                "material_key": digest([saved, printed, asdict(notes)]),
+            }
+            web_pass = "off"
+        blocker = (
+            "Retry web search or turn Web off." if web_pass == "unavailable" else None
+        )
+        return ReviewedMaterial(
+            progress["material_key"], frozenset(pool.by_ref()), web_pass == "complete",
+            blocker, progress,
+        )
+    except PlanConflictError as error:
+        return ReviewedMaterial(None, blocker=str(error))
+    except (KeyError, TypeError, ValueError):
+        return ReviewedMaterial(None, blocker="Plan with these sources before generating.")
 
 
 @dataclass
@@ -64,7 +335,8 @@ class _OutputMaterial:
 
 class OutputMaterialService:
     def _resolve_output_scope(
-        self, session: Session, base_id: str, scope: OutputScope, *, strict: bool = True
+        self, session: Session, base_id: str, scope: OutputScope, *, strict: bool = True,
+        include_discussion_messages: bool = False,
     ) -> _OutputScope:
         """Resolve live sources and any explicitly named saved answers or discussions.
 
@@ -94,14 +366,15 @@ class OutputMaterialService:
             unit.id: unit
             for unit in session.scalars(units.where(KnowledgeUnit.id.in_(scope.unit_ids)))
         }
+        discussion_query = select(KnowledgeSession).where(
+            KnowledgeSession.id.in_(scope.session_ids),
+            KnowledgeSession.knowledge_base_id == base_id,
+        )
+        if include_discussion_messages:
+            discussion_query = discussion_query.options(selectinload(KnowledgeSession.messages))
         found_sessions = {
             item.id: item
-            for item in session.scalars(
-                self._session_query().where(
-                    KnowledgeSession.id.in_(scope.session_ids),
-                    KnowledgeSession.knowledge_base_id == base_id,
-                )
-            )
+            for item in session.scalars(discussion_query)
         }
         if strict:
             for wanted, have, what in (
@@ -129,10 +402,16 @@ class OutputMaterialService:
         *,
         strict: bool = True,
         allow_empty: bool = False,
+        frozen_manifest: Mapping[str, Any] | None = None,
     ) -> _OutputMaterial:
         """Resolve what the output may read and pin each selected answer once."""
 
-        resolved = self._resolve_output_scope(session, base_id, scope, strict=strict)
+        include_readings = frozen_manifest is None
+        retained = frozen_manifest or {}
+        unit_evidence_counts = retained.get("unit_evidence_counts", {})
+        resolved = self._resolve_output_scope(
+            session, base_id, scope, strict=strict, include_discussion_messages=include_readings,
+        )
         if not allow_empty and not (resolved.source_ids or resolved.units or resolved.sessions):
             raise ValueError(NOTHING_TO_BUILD_FROM)
         in_library = set(resolved.library_source_ids)
@@ -153,9 +432,19 @@ class OutputMaterialService:
             proposal = session.get(KnowledgeProposal, head.source_proposal_id)
             if proposal is None:
                 raise ValueError(f"Knowledge Unit {unit.id} has no source proposal")
-            message = session.get(SessionMessage, proposal.message_id)
-            if message is not None:
-                take([message])
+            if include_readings:
+                message = session.get(SessionMessage, proposal.message_id)
+                if message is not None:
+                    take([message])
+                evidence_count = len(json.loads(message.citations_json or "[]")) if message else 0
+            elif unit.id in unit_evidence_counts:
+                evidence_count = unit_evidence_counts[unit.id]
+            else:
+                # Older verified manifests did not retain the count for a trusted answer.
+                evidence_count = session.scalar(
+                    select(func.json_array_length(SessionMessage.citations_json))
+                    .where(SessionMessage.id == proposal.message_id)
+                ) or 0
             snapshots.append(
                 ArtifactUnitSnapshotOut(
                     unit_id=unit.id,
@@ -167,9 +456,7 @@ class OutputMaterialService:
                     source_proposal_id=head.source_proposal_id,
                     source_session_id=proposal.session_id,
                     source_message_id=proposal.message_id,
-                    evidence_count=(
-                        len(json.loads(message.citations_json or "[]")) if message else 0
-                    ),
+                    evidence_count=evidence_count,
                 )
             )
         if sum(len(item.content.encode("utf-8")) for item in snapshots) > 2_000_000:
@@ -178,29 +465,34 @@ class OutputMaterialService:
             )
         discussions: list[tuple[str, str]] = []
         session_inputs: list[dict[str, object]] = []
-        for item in resolved.sessions:
-            discussions.append((item.title, item.summary))
-            answers = [
-                message
-                for message in item.messages
-                if message.role == "assistant" and json.loads(message.citations_json or "[]")
-            ]
-            session_inputs.append(
-                {"id": item.id, "title": item.title, "messageIds": [m.id for m in answers]}
-            )
-            take(list(item.messages))
+        if include_readings:
+            for item in resolved.sessions:
+                discussions.append((item.title, item.summary))
+                answers = [
+                    message.id for message in item.messages
+                    if message.role == "assistant" and json.loads(message.citations_json or "[]")
+                ]
+                session_inputs.append(
+                    {"id": item.id, "title": item.title, "messageIds": answers}
+                )
+                take(list(item.messages))
+        else:
+            session_inputs = list(retained.get("discussion_inputs", []))
         sources = (
             list(
                 session.scalars(
                     select(Source)
                     .where(Source.id.in_(resolved.source_ids))
                     .order_by(Source.created_at.desc())
+                    .options(*(
+                        (load_only(Source.id, Source.title),) if not include_readings else ()
+                    ))
                 )
             )
             if resolved.source_ids
             else []
         )
-        shown = [source.id for source in sources[:40]]
+        shown = [source.id for source in sources[:40]] if include_readings else []
         digests = (
             dict(
                 session.execute(
@@ -228,7 +520,7 @@ class OutputMaterialService:
             discussions=tuple(discussions[:10]),
             sources=tuple(
                 (source.title, digests.get(source.id) or source.content[:300])
-                for source in sources[:40]
+                for source in sources[:40] if include_readings
             ),
         )
         inputs = {
@@ -482,7 +774,7 @@ class OutputMaterialService:
         web: Tool | None, reason: str | None, query: str, pool: Pool, per_section: int,
         *, searched: list[SearchHit],
     ) -> dict[str, str] | None:
-        if web and query and len(pool) < pool.limit:
+        if web is not None and query:
             try:
                 for index, item in enumerate(web.run(query)):
                     kept = index < per_section and len(pool) < pool.limit
@@ -491,6 +783,8 @@ class OutputMaterialService:
                     searched.append(SearchHit(item, query, kept))
             except ToolFailure as error:
                 reason = str(error)
+        else:
+            reason = reason or "Web search could not run."
         if reason:
             return {"step": "web", "label": "Web search unavailable", "reason": reason}
         return None

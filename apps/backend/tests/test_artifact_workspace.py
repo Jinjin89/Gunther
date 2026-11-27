@@ -200,14 +200,20 @@ def test_the_approach_is_out_of_date_when_a_field_it_was_written_from_changes(
     assert "approach" in " ".join(ready(work, brief))
 
 
-def test_the_approach_ignores_constraints_marks_spacing_and_capitals() -> None:
+def test_the_approach_ignores_legacy_brief_marks_spacing_and_capitals() -> None:
     brief, work = made()
-    brief.constraints.append(Line(text="no jargon", mark="you"))
     brief.goal = Line(text="  explain   the VELMORA trial ", mark="edited")
     brief.audience = Line(text="lab members", mark="guessed")
     assert approach_state(work, brief).state == "ok"
-    # Constraints do not make a part out of date either; the agent decides which break them.
     assert states(work, brief) == ["ok", "ok", "ok"]
+
+
+def test_constraints_invalidate_conditioned_planning_and_writing() -> None:
+    brief, work = made()
+    brief.constraints.append(Line(text="no jargon", mark="you"))
+    assert approach_state(work, brief).why == "the constraints changed"
+    assert outline_state(work, brief).why == "the constraints changed"
+    assert states(work, brief) == ["out_of_date"] * 3
 
 
 def test_an_audience_nobody_set_is_a_scientist_and_saying_so_changes_nothing() -> None:

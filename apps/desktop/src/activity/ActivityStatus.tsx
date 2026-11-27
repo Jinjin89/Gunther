@@ -3,6 +3,7 @@ import { AlertCircle, Check, Pause, Play, Square, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { knowledgeApi } from "../api";
+import { outputActivityTarget } from "../outputs/artifactConversations";
 import { ProgressRing } from "./ProgressRing";
 import { sendRecordingControl, useRecordingStatus, type RecordingStatus } from "./recordingStatus";
 import { activityProgress, ago, clock, earlierRows, failureKey, FLASH_MS, isActive, nowRows, pillView, type PillView } from "./summary";
@@ -56,17 +57,20 @@ export function ActivityStatus({ serviceOnline, onOpen, isHere }: ActivityStatus
   const pill = useRef<HTMLButtonElement>(null);
 
   // Flash a job that just finished, unless the person is already looking at its page.
-  const states = useRef(new Map<string, ActivityItem["state"]>());
+  const states = useRef(new Map<string, Pick<ActivityItem, "state" | "startedAt" | "open">>());
   const here = useRef(isHere);
   here.current = isHere;
   useEffect(() => {
     const before = states.current;
-    const after = new Map<string, ActivityItem["state"]>();
+    const after = new Map<string, Pick<ActivityItem, "state" | "startedAt" | "open">>();
     let spoken = "";
     for (const item of items) {
-      after.set(item.id, item.state);
+      after.set(item.id, item);
       const was = before.get(item.id);
-      if (!was || was === item.state || (was !== "waiting" && was !== "running")) continue;
+      const planId = outputActivityTarget(item.open)?.planId;
+      const previousPlanId = was && outputActivityTarget(was.open)?.planId;
+      if (!was || was.startedAt !== item.startedAt || (previousPlanId && planId && previousPlanId !== planId)
+        || was.state === item.state || (was.state !== "waiting" && was.state !== "running")) continue;
       if (item.state === "failed") spoken = item.title;
       if (item.state !== "done") continue;
       spoken = item.title;

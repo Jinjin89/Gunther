@@ -5,10 +5,21 @@ from contextlib import contextmanager
 from copy import deepcopy
 from typing import Any
 
-from gunther.answer_runs import check_stop
+from pydantic import BaseModel, ValidationError
+
+from gunther.answer_runs import Stopped, check_stop
 from gunther.outputs import Events
 
 Checkpoint = Callable[[dict[str, Any]], None]
+
+
+def decode_stage[T: BaseModel](schema: type[T], value: Any) -> T | None:
+    if value is None:
+        return None
+    try:
+        return schema.model_validate(value)
+    except ValidationError:
+        return None
 
 
 def stage_event(step: str, label: str, state: str, detail: str | None = None) -> dict[str, Any]:
@@ -40,8 +51,18 @@ def checkpoint_stage(
         else:
             emit(event)
 
-    yield report
-    if checkpoint is not None and state != previous:
+    try:
+        yield report
+    except Stopped:
+        raise
+    except Exception:
+        # An unsuccessful stage has no checkpoint. Forward its failure and the progress
+        # leading to it, while withholding completions that did not reach the checkpoint.
+        for event in pending:
+            if event.get("type") == "stage" and event.get("state") in {"running", "failed"}:
+                emit(event)
+        raise
+    if checkpoint is not None and (state != previous or pending):
         checkpoint(deepcopy(state))
     check_stop()
     for event in pending:

@@ -7,10 +7,12 @@ import pytest
 from fake_models import (
     FakeProvider,
     gateway,
+    is_orchestrating,
     model,
     orchestrator_replies,
-    output_replies,
+    studio_task,
 )
+from test_outputs import output_replies
 
 from evals.artifacts import report, score
 from evals.artifacts.run import (
@@ -19,10 +21,17 @@ from evals.artifacts.run import (
     Options,
     open_session,
     parse,
+    plan_request,
+    read_fixture,
     run_agent_case,
     run_exam,
 )
-from gunther.outputs import COMPOSITION_LAYOUTS, join_document
+from evals.quality.materials import Brief, MaterialSet
+from evals.quality.run import Job, build_one
+from evals.quality.run import Options as QualityOptions
+from gunther.outputs import join_document
+from gunther.schemas import InitialPlanTurnInput
+from gunther.studio.format import LAYOUTS, SUMMARY_MARK
 
 CASES = {case.id: case for case in score.load_cases()}
 FIXTURES = score.load_fixtures()
@@ -41,24 +50,28 @@ def test_the_case_file_is_well_formed() -> None:
     assert (deck.kind, deck.use, deck.audience) == ("slides", "talk", "student")
     assert len(deck.outline) >= 10
     assert [slot.layout for slot in deck.outline][0] == "title"
-    assert [slot.layout for slot in deck.outline][-1] == "takeaways"
-    assert {slot.layout for slot in deck.outline} <= set(COMPOSITION_LAYOUTS["standard"])
+    assert [slot.layout for slot in deck.outline][-1] == "summary"
+    assert {slot.layout for slot in deck.outline} <= set(LAYOUTS)
     # Keep the fixture varied so cases exercise different saved layouts.
     assert len({slot.layout for slot in deck.outline}) >= 8
-    assert sum(slot.layout in ("bar_chart", "line_chart") for slot in deck.outline) <= 1
+    assert sum(slot.layout == "chart" for slot in deck.outline) <= 1
     assert (written.kind, written.style) == ("report", "overview")
     assert len(written.outline) == 5
     # The layouts a case asks for exist.
     wanted = {name for case in cases for name in case.expect.layout.values()}
-    assert wanted <= set(COMPOSITION_LAYOUTS["standard"])
+    assert wanted <= set(LAYOUTS)
+    for fixture in FIXTURES.values():
+        request = plan_request(fixture.setup(), fixture.initial_outline())
+        InitialPlanTurnInput.model_validate(request)
     # A fixture's definition names its hash; the outline can be sent as it is.
     assert len({fixture.hash for fixture in FIXTURES.values()}) == 2
-    request = deck.request()
-    assert request["type"] == "slides" and written.request()["type"] == "report"
-    assert request["outline"][0] == {
+    assert deck.setup()["type"] == "slides" and written.setup()["type"] == "report"
+    assert deck.initial_outline()[0] == {
+        "id": "part_1",
         "heading": deck.outline[0].heading,
         "goal": "",
         "layout": "title",
+        "notes": "",
     }
 
 
@@ -97,9 +110,10 @@ def test_the_cases_cover_every_kind_of_message_the_plan_names() -> None:
     assert all(c.expect.intent == ("answer",) for c in cases if c.category == "question")
     # asking: vague must ask, clear must not, ambiguous must ask
     asking = [c for c in cases if c.category == "asking"]
-    assert [c.expect.asks_rule for c in asking] == ["must", "must_not", "must"]
+    assert [c.expect.asks_rule for c in asking] == ["must", "must_not", "must", "must_not"]
     assert asking[0].artifact == "none" and asking[1].artifact == "none"
     assert asking[2].artifact == "deck"
+    assert asking[3].artifact == "none" and asking[3].approve
 
 
 def test_loading_refuses_a_mistyped_case(tmp_path: Path) -> None:
@@ -837,13 +851,13 @@ layout = "title"
 [[fixture.deck.outline]]
 heading = "The trial covered 412 buildings over three summers"
 goal = "How many buildings the trial covered"
-layout = "text"
+layout = "points"
 has = ["412"]
 
 [[fixture.deck.outline]]
 heading = "The plan wants thirty percent of roofs coated"
 goal = "The plan's target for coated roofs"
-layout = "takeaways"
+layout = "summary"
 has = ["30%"]
 
 [fixture.report]
@@ -855,7 +869,7 @@ brief = "A short report on the trial."
 
 [[fixture.report.outline]]
 heading = "The trial covered 412 buildings"
-goal = "How many buildings the trial covered"
+goal = "Summarize the scope and duration of the trial"
 has = ["412"]
 
 [[fixture.report.outline]]
@@ -931,7 +945,32 @@ artifact = "none"
 message = "A talk on the trial."
 
 [case.expect]
+intent = ["reply", "plan"]
+asks = "must_not"
+must_contain = ["412"]
+
+[[case]]
+id = "A4"
+category = "asking"
+artifact = "none"
+message = "Make a talk on the trial."
+plan = { type = "slides", use = "talk" }
+approve = true
+
+[case.expect]
 intent = "make"
+asks = "must_not"
+must_contain = ["412"]
+
+[[case]]
+id = "A5"
+category = "asking"
+artifact = "none"
+message = "Plan a talk on the trial."
+plan = { type = "slides", use = "talk" }
+
+[case.expect]
+intent = "plan"
 asks = "must_not"
 must_contain = ["412"]
 """
@@ -941,8 +980,8 @@ SLIDES = [
     "## The trial covered 412 buildings over three summers\n\n- 412 buildings were followed for"
     " three summers [1]\n- The roofs were coated white [1]\n\n"
     "Note: The trial followed 412 buildings [1].",
-    "## The plan wants thirty percent of roofs coated\n\n- The plan wants 30% of roofs coated"
-    " by 2030 [1]\n\nNote: Roofs coated by 2030 [1].",
+    "## The plan wants thirty percent of roofs coated\n\n- **Target**: 30% of roofs coated [1]"
+    "\n- **Timing**: By 2030 [1]\n\nNote: Roofs coated by 2030 [1].",
 ]
 SECTIONS = [
     "## The trial covered 412 buildings\n\nThe trial covered 412 buildings [1]."
@@ -951,22 +990,12 @@ SECTIONS = [
     " It also"
     " wants the owners to help pay for it [1]. This second sentence makes the section long [1].",
 ]
-APPROACH = {
-    "question": "What did the trial find?",
-    "answer": "It covered 412 buildings.",
-    "purpose": "Students.",
-    "structure": "what",
-    "structure_reason": "It describes.",
-    "use": "talk",
-    "pages": 6,
-    "cards": [{"claim": "The trial covered 412 buildings", "refs": [1], "type": "data"}],
-}
 OUTLINE = {
     "title": "The trial",
     "sections": [
         {"heading": "The trial", "layout": "title", "cards": []},
-        {"heading": "The trial covered 412 buildings", "layout": "text", "cards": [1]},
-        {"heading": "The plan wants 30% of roofs coated", "layout": "text", "cards": [1]},
+        {"heading": "The trial covered 412 buildings over three summers", "layout": "points"},
+        {"heading": "The plan wants thirty percent of roofs coated", "layout": "summary"},
     ],
 }
 JUDGE_REPLY = json.dumps({"answer": True, "why": "It did."})
@@ -1000,11 +1029,19 @@ def written(index: int, prompt: str) -> str:
 
 def stand_in_models() -> FakeProvider:
     studio = output_replies(OUTLINE, written, rewrite=rewrite)
+    report_reply = output_replies({
+        "title": OUTLINE["title"],
+        "sections": [
+            {"heading": section.splitlines()[0].removeprefix("## ")} for section in SECTIONS
+        ],
+    }, written, rewrite=rewrite)
 
     def reply(request):
         system = str(request["messages"][0]["content"])
         if system.startswith("You grade one reply"):
             return JUDGE_REPLY
+        if "planning a written report" in studio_task(request):
+            return report_reply(request)
         return studio(request)
 
     return FakeProvider(reply)
@@ -1038,10 +1075,19 @@ def run_with_fakes(tmp_path: Path, options: Options, fake: FakeProvider | None =
 
 
 def agent_models(*decisions: dict) -> FakeProvider:
-    """Use scripted decisions with the stand-in Studio and judge replies."""
+    """Use case decisions for chat and propose an outline for each structured Plan."""
 
     inner = stand_in_models().replies[0]
-    return FakeProvider(orchestrator_replies(list(decisions), inner))
+    scripted = orchestrator_replies(list(decisions), inner)
+
+    def reply(request):
+        if is_orchestrating(request) and "Latest message (planning feedback):" in (
+            request["messages"][-1]["content"]
+        ):
+            return '{"actions":[{"do":"plan","change":"whole"}]}'
+        return scripted(request)
+
+    return FakeProvider(reply)
 
 
 def test_the_exam_sends_each_case_through_the_conversation_endpoint(tmp_path: Path) -> None:
@@ -1071,7 +1117,8 @@ def test_the_exam_sends_each_case_through_the_conversation_endpoint(tmp_path: Pa
         "Make this one plainer." in v and "Pointed at (selected): part 3" in v for v in views
     )
     assert any("Artifacts: none yet." in v and "A talk on the trial." in v for v in views)
-    assert records["A2"]["outcome"]["before"] is None
+    empty = records["A2"]["outcome"]
+    assert empty["before"] is None and empty["after"] is None and empty["intent"] == "reply"
 
 
 def test_the_exams_question_and_saved_version_are_read_back(tmp_path: Path) -> None:
@@ -1110,19 +1157,36 @@ def test_runner_end_to_end_with_fake_models(tmp_path: Path) -> None:
     configuration = results["configurations"][0]
     assert configuration["name"] == "agent: deepseek/deepseek-flash (write high)"
     records = configuration["results"]
-    assert list(records) == ["E1", "F1", "R1", "S1", "U1", "A2"]
-    for record in records.values():
-        outcome = record["outcome"]
-        assert (outcome["route"], outcome["intent"], outcome["calls"]) == ("agent", "answer", 1)
+    assert list(records) == ["E1", "F1", "R1", "S1", "U1", "A2", "A4", "A5"]
+    for case_id in ("E1", "F1", "R1", "S1", "U1", "A2"):
+        outcome = records[case_id]["outcome"]
+        assert (outcome["route"], outcome["calls"]) == ("agent", 1)
+        assert outcome["intent"] == ("reply" if case_id == "A2" else "answer")
         assert outcome["reply"] == "The trial covered 412 buildings."
         assert outcome["after"] is None
+    broken = records["E1"]
+    assert broken["outcome"]["before"]["number"] == 2
+    assert broken["subs"]["typo"] in broken["outcome"]["before"]["content"]
     assert records["E1"]["judgement"] == {"answer": True, "why": "It did."}
+    written = score.Version(**records["R1"]["outcome"]["before"])
+    summary, body = written.parts
+    assert SUMMARY_MARK in summary and SUMMARY_MARK not in body
+    assert written.content.count(SUMMARY_MARK) == 1
+    assert summary.splitlines()[0] == SECTIONS[0].splitlines()[0]
+    assert [row["id"] for row in written.outline] == ["part_1", "part_2"]
     assert records["A2"]["outcome"]["before"] is None
+    approved = records["A4"]["outcome"]
+    assert approved["intent"] == "make", approved["failed"]
+    assert approved["before"] is None and approved["after"]["number"] == 1
+    assert "Approved the reviewed plan." in approved["notes"]
+    planned = records["A5"]["outcome"]
+    assert planned["intent"] == "plan" and planned["after"] is None
+    assert planned["plan"]["outline"] and records["A5"]["failures"] == []
     text = (folder / "report.md").read_text(encoding="utf-8")
     assert "# Artifacts exam: fake" in text
     assert "Fixture deck (deepseek/deepseek-flash): built in" in text
     assert "sk-test" not in (folder / "raw.json").read_text(encoding="utf-8")
-    assert configuration["card"]["impossible"] == 0 and configuration["card"]["cases"] == 6
+    assert configuration["card"]["impossible"] == 0 and configuration["card"]["cases"] == 8
     # Template and fixtures are kept for the next run…
     kept = sorted(p.name for p in (tmp_path / "results").iterdir())
     assert any(name.startswith("template-") for name in kept)
@@ -1134,38 +1198,88 @@ def test_runner_end_to_end_with_fake_models(tmp_path: Path) -> None:
     assert again != folder
 
 
-def test_a_session_clones_a_fixture_and_finds_the_newest_version(tmp_path: Path) -> None:
+def test_a_session_copies_a_sealed_fixture_and_finds_the_newest_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outside = tmp_path / "configured-library-root"
+    monkeypatch.setenv("LIBRARY_ROOT", str(outside))
     run_with_fakes(tmp_path, Options(label="seed", only=["E1"]))
     results = tmp_path / "results"
     template = next(p for p in results.iterdir() if p.name.startswith("template-"))
     info = json.loads((template / "template.json").read_text(encoding="utf-8"))
-    saved = json.loads(next(results.glob("fixture-deck-*.json")).read_text(encoding="utf-8"))
-    assert saved["built"]["attempts"] == 1 and saved["built"]["calls"] > 0
+    saved = read_fixture(next(results.glob("fixture-deck-*")))
+    assert saved.built["attempts"] == 1 and saved.built["calls"] > 0
+    asset = Path("assets") / "retained.txt"
+    retained = saved.directory / asset
+    retained.parent.mkdir(exist_ok=True)
+    retained.write_text("Fixture asset", encoding="utf-8")
     config = Configuration("deepseek/deepseek-flash", "high")
     keys = {"deepseek_api_key": "sk-test-0000000000001234", "stt_provider": "compatible"}
     fake = agent_models(
         {"actions": [{"do": "write", "parts": [3], "instruction": "Make this one plainer."}]},
         {"actions": [{"do": "save", "text": "Plainer."}]},
     )
-    with open_session(template, info, None, config, fake.factory, keys) as session:
-        first = session.clone(saved)
-        # A copy: the same text, sources and findings, as version 1 of a lineage of its own.
-        assert first.number == 1 and first.content == saved["content"]
-        assert [c["ref"] for c in first.citations] == [c["ref"] for c in saved["citations"]]
+    cases = {case.id: case for case in score.load_cases(tmp_path / "cases.toml")}
+    with open_session(saved.directory, info, None, config, fake.factory, keys) as session:
+        published = session.artifact(saved.artifact_id)
+        first = score.Version.from_artifact(published)
+        creation = published["provenance"]["creationPlan"]
+        assert first.number == 1 and first.citations and creation["revision"]
         assert [s["checked"] for s in first.sections] == [True] * len(first.parts)
-        second = session.clone(saved)
-        assert second.id != first.id and second.number == 1
-        cases = {case.id: case for case in score.load_cases(tmp_path / "cases.toml")}
-        outcome = run_agent_case(session, cases["F1"], first)
-        assert outcome.after is not None and outcome.after.number == 2
-        assert session.head(first).id == outcome.after.id and session.head(first).number == 2
-        assert session.head(second).number == 1
+        assert (session.directory / asset).read_text(encoding="utf-8") == "Fixture asset"
+        (session.directory / asset).unlink()
+        baseline, subs = session.baseline(first.id, cases["E1"])
+        assert baseline.number == 2 and subs["typo"] in baseline.content
+        assert not baseline.sections[1]["checked"] and baseline.sections[2]["checked"]
+        assert baseline.citations == first.citations
+        tail = f"artifact-conversations/{first.conversation_id}"
+        path = f"/api/knowledge-bases/{session.base_id}/{tail}"
+        messages = session.client.get(path, headers=session.headers).raise_for_status().json()
+        approval = next(m for m in messages["messages"] if m["id"] == creation["approvalMessageId"])
+        name, replay = session.stream(f"{tail}/messages/stream", {
+            "kind": "approve", "clientRequestId": approval["clientRequestId"],
+            "planId": creation["planId"], "planRevision": creation["revision"],
+        })
+        assert name == "done" and replay["artifact"] == published
+        assert fake.requests == []
+        outcome = run_agent_case(session, cases["F1"], baseline)
+        assert outcome.after is not None and outcome.after.number == 3
+        assert session.head(first).id == outcome.after.id
         # A request that fails says why instead of raising.
         tail = "artifact-conversations/missing/messages/stream"
         name, data = session.stream(tail, {"clientRequestId": "exam_test_0002", "text": "Hello"})
         assert name == "error" and data["status"] == 404
         name, data = session.stream(tail, {})
         assert name == "error" and data["status"] == 422
+    with open_session(saved.directory, info, None, config, fake.factory, keys) as session:
+        assert session.artifact(first.id) == published and session.head(first).number == 1
+        assert (session.directory / asset).read_text(encoding="utf-8") == "Fixture asset"
+    assert not outside.exists()
+
+
+def test_quality_eval_approves_the_reviewed_outline(tmp_path: Path) -> None:
+    fake = agent_models({"actions": [{"do": "reply", "text": "Ready."}]})
+    run_with_fakes(tmp_path, Options(only=["A2"]), fake)
+    template = next((tmp_path / "results").glob("template-*"))
+    info = json.loads((template / "template.json").read_text(encoding="utf-8"))
+    study = MaterialSet(
+        id="trial", title="The trial", question="What did the trial find?", language="English",
+        sources=(), deck=Brief("slides", "scientist", "A short talk on the trial.", use="talk"),
+        report=Brief("report", "scientist", "A short report on the trial."),
+    )
+    folder = tmp_path / "quality"
+    record = build_one(
+        Job(study, "deck", "studio"), template, info, folder, QualityOptions(),
+        "deepseek/deepseek-flash", fake.factory, {"deepseek_api_key": "sk-test-0000000000001234"},
+        lambda _: None,
+    )
+    assert record["error"] == "" and record["parts"] == 3 and record["calls"] > 0, record
+    events = json.loads((folder / "events.json").read_text(encoding="utf-8"))
+    planned, saved = [event for event in events if event["event"] == "done"]
+    assert planned["outcome"] == "planned" and planned["artifact"] is None
+    plan, creation = planned["plan"], saved["artifact"]["provenance"]["creationPlan"]
+    assert creation["revision"] == plan["planRevision"] and creation["outline"] == plan["outline"]
+    assert (folder / "content.md").read_text(encoding="utf-8").startswith("<!-- layout: title;")
 
 
 def test_cases_can_run_side_by_side_and_more_than_once(tmp_path: Path) -> None:

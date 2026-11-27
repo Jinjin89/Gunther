@@ -9,6 +9,7 @@ from threading import Lock
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from gunther.answer_runs import AnswerRuns
 from gunther.artifact_conversations import ArtifactConversations
 from gunther.artifact_read import ArtifactReader
 from gunther.artifact_turns import ArtifactTurns
@@ -24,6 +25,7 @@ from gunther.model_profiles import Effort
 from gunther.online_search import DisabledOnlineSearch, OnlineSearchProvider
 from gunther.output_commands import OutputCommands
 from gunther.output_material import OutputMaterialService
+from gunther.schemas import OutputVoicesOut
 from gunther.source_service import SourceService
 
 logger = logging.getLogger(__name__)
@@ -45,8 +47,12 @@ class KnowledgeService(
         self,
         sessions: sessionmaker[Session],
         extractor: ModelExtractor | None = None,
+        *,
+        answer_runs: AnswerRuns | None = None,
     ) -> None:
         self.sessions = sessions
+        self.answer_runs = answer_runs if answer_runs is not None else AnswerRuns()
+        self.output_voices: Callable[[], OutputVoicesOut] | None = None
         self.extractor = extractor
         # Every model that is set up (see llm); a conversation may pick any of them.
         self.models: ModelGateway | None = None

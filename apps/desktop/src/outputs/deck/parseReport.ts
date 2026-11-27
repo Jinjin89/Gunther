@@ -50,10 +50,14 @@ export function readBlocks(text: string): ReportBlock[] {
 function exhibit(options: string, inside: string[]): ReportBlock {
   const kind = /\bchart\s*=\s*(bar|column|line)\b/.exec(options)?.[1] as ChartKind | undefined;
   const lines = inside.map((line) => line.trim()).filter(Boolean);
-  const source = /^Source:\s*(.*)$/i.exec(lines.at(-1) ?? "")?.[1] ?? null;
-  if (source !== null) lines.pop();
   const caption = lines[0]?.startsWith("|") ? "" : lines.shift() ?? "";
-  const body = lines.length && lines.every((line) => line.startsWith("|")) ? `## Exhibit\n${lines.join("\n")}` : "";
+  const tableEnd = lines.findIndex((line) => !line.startsWith("|"));
+  // A single labeled line following the table carries its attribution.
+  const source = tableEnd > 0 && tableEnd === lines.length - 1
+    ? /^[^:：]+[:：]\s*(.+)$/.exec(lines[tableEnd]!)?.[1] ?? null
+    : null;
+  if (source !== null) lines.pop();
+  const body = lines.length && (tableEnd === -1 || source !== null) ? `## Exhibit\n${lines.join("\n")}` : "";
   const parsed = body ? parseDeckSlide(kind ? "chart" : "table", body, kind ? { chart: kind } : {}) : null;
   const table = parsed && (parsed.layout === "chart" || parsed.layout === "table") ? parsed : null;
   // Chart data formats values and series labels. Keep the original table cells for reading.

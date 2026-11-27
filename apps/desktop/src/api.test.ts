@@ -1,3 +1,4 @@
+import type { CreationTurn, WorkPlan, WorkPlanPatch } from "@gunther/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AnswerStoppedError, AnswerStreamError, ApiRequestError, knowledgeApi, OutputStoppedError, recordingAssetUrl, recordingSocketUrl, ServiceUnavailableError, sourceAssetUrl } from "./api";
 import { ACTIVITY_CHANGED_EVENT } from "./activity/events";
@@ -60,6 +61,18 @@ describe("desktop knowledge API contract", () => {
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/search?q=marker%20%26%20genes&limit=20");
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/search?q=marker&limit=40&knowledgeBaseId=biology&knowledgeBaseId=lab%2Fnotes");
+  });
+
+  it("keeps the durable output address in both Trash responses", async () => {
+    const open = { view: "library", libraryId: "biology", tab: "outputs", conversationId: "talk",
+      planId: "draft_1", artifactId: "saved-version", lineageId: "work", typeId: "report" };
+    const item = { id: "trash/batch", kind: "output", open };
+    fetchMock.mockResolvedValueOnce(response([item])).mockResolvedValueOnce(response(item));
+
+    await expect(knowledgeApi.trash()).resolves.toEqual([item]);
+    await expect(knowledgeApi.restoreFromTrash("output", item.id)).resolves.toEqual(item);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/trash");
+    expect(fetchMock.mock.calls[1]).toEqual(["/api/trash/output/trash%2Fbatch/restore", expect.objectContaining({ method: "POST" })]);
   });
 
   it("encodes resource identifiers instead of allowing path injection", async () => {
@@ -308,6 +321,76 @@ describe("desktop knowledge API contract", () => {
       fetchMock.mockResolvedValueOnce(stream(events(["error", { status: 502 }])));
       await expect(knowledgeApi.artifactTurnStream("biology", "talk", { clientRequestId: "turn_request_4", text: "Go" }, "wsp_primary", () => undefined))
         .rejects.toMatchObject({ message: "The message could not be handled.", status: 502 });
+    });
+
+    it("patches the exact workspace work and returns the committed detail", async () => {
+      const patch: WorkPlanPatch = {
+        baseEditVersion: 7, count: { mode: "exact", value: 12 },
+        coverage: [{ id: "topic_a", text: "The main finding" }],
+      };
+      const detail = { id: "talk/1", editVersion: 8, works: [{ key: "draft/1" }] };
+      fetchMock.mockResolvedValueOnce(response(detail));
+
+      await expect(knowledgeApi.patchArtifactWork("biology/team", "talk/1", "draft/1", patch, "wsp_primary")).resolves.toEqual(detail);
+
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("/api/knowledge-bases/biology%2Fteam/artifact-conversations/talk%2F1/works/draft%2F1");
+      expect(init.method).toBe("PATCH");
+      expect(new Headers(init.headers).get("X-Gunther-Workspace-Id")).toBe("wsp_primary");
+      expect(JSON.parse(init.body as string)).toEqual(patch);
+    });
+
+    it("submits the first typed planning turn and decodes its committed plan and terminal revision", async () => {
+      const turn: CreationTurn = {
+        kind: "plan", clientRequestId: "plan_request_1", planId: "draft_1",
+        setup: { type: "report", scope: { mode: "library", sourceIds: [], unitIds: [], sessionIds: [] } },
+      };
+      const plan: WorkPlan = {
+        planId: turn.planId, planRevision: "p1-revision", planStatus: "ready", basis: "assistant", blocker: null,
+        options: { ...turn.setup, focus: "", title: null, audience: "student", length: null, language: null, use: null,
+          theme: null, designVersion: null, voices: null, web: false, model: "provider/model", effort: null },
+        preferences: { emphasize: [], avoid: [] }, outline: null, pending: null, attempt: null, approvedRevision: null,
+        proposal: { title: "Markers", summary: "Key distinctions", angle: "", coverage: [], count: { mode: "auto", value: 4 }, targetMinutes: null },
+      };
+      const committed = { type: "plan", conversationId: "talk", workKey: turn.planId, plan, editVersion: 2 };
+      const ended = { outcome: "planned", reply: "Plan ready.", question: null, artifact: null, changes: [], message: null, plan, editVersion: 2 };
+      fetchMock.mockResolvedValueOnce(stream(events(["plan", committed], ["done", ended])));
+      const hear = vi.fn();
+      const signal = new AbortController().signal;
+
+      await expect(knowledgeApi.artifactTurnStream("biology", "talk", turn, "wsp_primary", hear, signal)).resolves.toEqual(ended);
+      expect(hear).toHaveBeenCalledExactlyOnceWith(committed);
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("/api/knowledge-bases/biology/artifact-conversations/talk/messages/stream");
+      expect(new Headers(init.headers).get("X-Gunther-Workspace-Id")).toBe("wsp_primary");
+      expect(init.signal).toBe(signal);
+      expect(JSON.parse(init.body as string)).toEqual(turn);
+
+      fetchMock.mockResolvedValueOnce(stream(events(["plan", committed], ["done", ended])));
+      await expect(knowledgeApi.followArtifactTurn("biology", "talk", "wsp_primary", hear)).resolves.toEqual(ended);
+      expect(hear).toHaveBeenLastCalledWith(committed);
+    });
+
+    it.each(["plan_required", "plan_changed", "question_changed", "edit_conflict", "run_active", "already_saved", "request_id_conflict"])(
+      "decodes %s before and after SSE headers", async (code) => {
+        const conflict = { code, detail: "Review the current work.", planId: "draft_1" };
+        fetchMock.mockResolvedValueOnce(response({ detail: conflict }, 409));
+        const patch = knowledgeApi.patchArtifactWork("biology", "talk", "draft_1", { baseEditVersion: 1 }, "wsp_primary");
+        await expect(patch).rejects.toBeInstanceOf(ApiRequestError);
+        await expect(patch).rejects.toMatchObject({ status: 409, code, message: conflict.detail, detail: conflict });
+
+        fetchMock.mockResolvedValueOnce(stream(events(["error", { status: 409, ...conflict }])));
+        const turn: CreationTurn = { kind: "approve", clientRequestId: "approve_0123", planId: "draft_1", planRevision: "p1-revision" };
+        await expect(knowledgeApi.artifactTurnStream("biology", "talk", turn, "wsp_primary", vi.fn()))
+          .rejects.toMatchObject({ status: 409, code, message: conflict.detail, detail: conflict });
+      },
+    );
+
+    it("retains the field and row identity of a work validation error", async () => {
+      const detail = [{ loc: ["outline", 0, "heading"], rowId: "first", msg: "Enter a heading." }];
+      fetchMock.mockResolvedValueOnce(response({ detail }, 422));
+      await expect(knowledgeApi.patchArtifactWork("biology", "talk", "draft_1", { baseEditVersion: 1 }, "wsp_primary"))
+        .rejects.toMatchObject({ status: 422, detail });
     });
 
     it("says why nothing was saved, and tells a stop from a failure", async () => {

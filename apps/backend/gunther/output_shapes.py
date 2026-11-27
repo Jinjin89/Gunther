@@ -165,6 +165,9 @@ class ShapeSpec:
     batch_checks: bool = False
     speech: Callable[[str], tuple[str, str]] | None = None
     markup: Callable[[str], Markup] = parse_markup
+    min_parts: int = 1
+    outline_layouts: tuple[str, ...] = ()
+    first_layout: str | None = None
 
     def split(self, content: str) -> tuple[str, list[OutputUnit]]:
         preamble, texts = split_spans(content, self.spans)
@@ -193,6 +196,25 @@ class ShapeSpec:
     def limit_error(self, count: int, label: str, limit: int) -> str | None:
         if count > limit:
             return f"The limit for {label} is {limit} {self.unit_label}s."
+        return None
+
+    def count_error(self, count: int, label: str, limit: int) -> str | None:
+        if count < self.min_parts:
+            unit = self.unit_label if self.min_parts == 1 else f"{self.unit_label}s"
+            return f"{label} requires at least {self.min_parts} {unit}."
+        return self.limit_error(count, label, limit)
+
+    def outline_layout_error(
+        self, layout: str | None, position: int, *, keep_legacy: bool = False,
+    ) -> str | None:
+        if layout is None:
+            return None
+        if layout not in self.outline_layouts:
+            if keep_legacy:
+                return None
+            return f"Choose a registered layout for this {self.unit_label}."
+        if self.first_layout and (layout == self.first_layout) != (position == 0):
+            return f"The {self.first_layout} layout belongs on the first {self.unit_label} only."
         return None
 
     def format_check(self, content: str, *, part_limit: tuple[str, int] | None = None, **options):
@@ -233,6 +255,7 @@ SHAPES = {
             "slides", "slides", "deck", "a slide deck", "slide", 14, "planned",
             partial(markdown_spans, separator="---"), join_slides, fmt.check_deck,
             prose_check_text, ("markdown", "pdf", "pptx"), outline=True, design=True,
+            outline_layouts=fmt.LAYOUTS, first_layout="title",
         ),
         ShapeSpec(
             "cards", "flashcards", "card set", "a card set", "card", 40, "direct",
@@ -251,7 +274,7 @@ SHAPES = {
             outputs_audio.spans, join_lines, outputs_audio.check_audio, outputs_audio.check_text,
             ("markdown", "wav"),
             header=outputs_audio.HEADER, unit_problem=outputs_audio.line_problem,
-            batch_checks=True, speech=outputs_audio.speech,
+            batch_checks=True, speech=outputs_audio.speech, min_parts=len(outputs_audio.SPEAKERS),
         ),
     )
 }

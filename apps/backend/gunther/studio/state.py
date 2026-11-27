@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StringConstraints
 
 from gunther.llm import ModelError
 from gunther.output_types import SHAPES, OutputType, output_type_for
 from gunther.outputs import Planned, Spec, heading_of
+from gunther.studio import format as fmt
 from gunther.studio import science as S
 
 
@@ -45,18 +46,40 @@ class Memo(BaseModel):
 class StorySlide(BaseModel):
     title: str
     id: str | None = None
-    layout: str = "points"
+    layout: str | None = "points"
     job: str = ""
-    refs: list[int] = Field(default_factory=list)
+    notes: str = ""
+    refs: list[StrictInt] = Field(default_factory=list)
+    required_refs: list[StrictInt] = Field(default_factory=list)
     purpose: str = ""
     role: str = ""
     figures: list[S.ClaimFigure] = Field(default_factory=list)
     takeaway: str = ""
 
 
+class ProposedTopic(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str | None = None
+    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
+
+
+class DirectProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
+    summary: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=600)]
+    angle: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=600)]
+    coverage: list[ProposedTopic] = Field(min_length=1, max_length=8)
+    target_minutes: int | None = Field(default=None, gt=0, strict=True)
+
+
 class StoryLength(BaseModel):
     requested_count: int | None = Field(default=None, gt=0, strict=True)
-    requested_minutes: int | None = Field(default=None, gt=0, strict=True)
+    requested_minutes: float | None = Field(default=None, gt=0, strict=True)
+    summary: str = ""
+    angle: str = ""
+    coverage: list[ProposedTopic] = Field(default_factory=list, max_length=8)
 
 
 class DeckStory(StoryLength):
@@ -69,8 +92,10 @@ class StorySection(BaseModel):
     heading: str
     id: str | None = None
     job: str = ""
+    notes: str = ""
     exhibits: list[str] = Field(default_factory=list)
-    refs: list[int] = Field(default_factory=list)
+    refs: list[StrictInt] = Field(default_factory=list)
+    required_refs: list[StrictInt] = Field(default_factory=list)
 
 
 class ReportStory(StoryLength):
@@ -78,6 +103,9 @@ class ReportStory(StoryLength):
     summary_id: str | None = None
     summary_heading: str = ""
     summary_job: str = ""
+    summary_notes: str = ""
+    summary_refs: list[StrictInt] = Field(default_factory=list)
+    summary_required_refs: list[StrictInt] = Field(default_factory=list)
     summary_points: list[str] = Field(default_factory=list)
     sections: list[StorySection]
 
@@ -86,9 +114,21 @@ class ReportStory(StoryLength):
             return self.sections
         summary = StorySection(
             heading=self.summary_heading.strip() or "Summary", id=self.summary_id,
-            job=self.summary_job,
+            job=self.summary_job, refs=self.summary_refs, required_refs=self.summary_required_refs,
+            **({"notes": self.summary_notes} if "summary_notes" in self.model_fields_set else {}),
         )
         return [summary, *self.sections]
+
+    def with_parts(self, parts: list[StorySection], summary_box: bool) -> ReportStory:
+        if not summary_box:
+            return self.model_copy(update={"sections": parts})
+        summary, *sections = parts
+        return self.model_copy(update={
+            "summary_id": summary.id, "summary_heading": summary.heading,
+            "summary_job": summary.job, "summary_notes": summary.notes,
+            "summary_refs": summary.refs, "summary_required_refs": summary.required_refs,
+            "sections": sections,
+        })
 
 
 class Problem(BaseModel):
@@ -111,7 +151,7 @@ class Run:
     use: str  # "talk" | "read" (decks); "" for reports
     memo: Memo | None = None
     story: DeckStory | ReportStory | None = None
-    reviews: list[Review | S.ScientificReview] | None = None
+    reviews: list[Review | S.ScientificReview | S.LearnerReview | S.CoverageReview] | None = None
     purpose: S.Purpose | None = None
     study: S.StudyMap | None = None
     coverage_plan: S.CoveragePlan | None = None
@@ -121,7 +161,9 @@ class Run:
     review_status: str | None = None
     # The notes made when the material was too long to give whole and was read part by part.
     read_digest: str = ""
+    evidence_material: str = ""
     plan: tuple[Planned, ...] = ()
+    reviewed: bool = False
     # Latest request errors by one-based slide position in the accepted deck.
     format_repair_errors: dict[int, str] = field(default_factory=dict)
 
@@ -139,8 +181,22 @@ def _no_events(_event: dict[str, Any]) -> None:
     return None
 
 
-def _matches_plan(run: Run, parts: Sequence[str]) -> bool:
-    return not run.plan or [heading_of(part) for part in parts] == [p.heading for p in run.plan]
+def _matches_plan(run: Run, parts: Sequence[str], *, layouts: bool = True) -> bool:
+    if not run.plan:
+        return True
+    if [heading_of(part).strip() for part in parts] != [p.heading for p in run.plan]:
+        return False
+    return not layouts or all(_keeps_layout(run, index, part) for index, part in enumerate(parts))
+
+
+def _keeps_layout(run: Run, index: int, text: str) -> bool:
+    if not run.reviewed or run.spec.kind != "slides" or index >= len(run.plan):
+        return True
+    layout = fmt.parse_slide(text).layout
+    expected = run.plan[index].layout
+    return layout == (expected or layout) and not run.output_type.capabilities.outline_layout_error(
+        layout, index,
+    )
 
 
 def _validate_count(run: Run, story: DeckStory | ReportStory, actual: int, stage: str) -> None:

@@ -1,34 +1,37 @@
-import { PanelLeft } from "lucide-react";
-import { useId, type ReactNode, type RefObject } from "react";
-import { useDragWidth } from "../hooks/useDragWidth";
+import type { ReactNode, RefObject } from "react";
+import type { useDragWidth } from "../hooks/useDragWidth";
 
-export function LibraryColumn({ workspace, columnRef, collapsed, slideOver = false, onToggle, children }: {
-  workspace: RefObject<HTMLDivElement | null>;
-  columnRef: RefObject<HTMLDivElement | null>;
+export type ColumnLayout = {
   collapsed: boolean;
-  slideOver?: boolean;
-  onToggle: () => void;
+  slideOver: boolean;
+  track: number;
+  size: ReturnType<typeof useDragWidth>;
+};
+
+export function ColumnResize({ name, size }: { name: string; size: ColumnLayout["size"] }) {
+  return <div className="library-column-resize" role="separator" tabIndex={0} aria-orientation="vertical"
+    aria-label={`Resize ${name}`} aria-valuemin={size.min} aria-valuemax={size.max} aria-valuenow={size.width}
+    title="Drag to resize. Double-click to reset." {...size.handle} />;
+}
+
+export function LibraryColumn({ columnRef, panelId, layout, trigger, children }: {
+  columnRef: RefObject<HTMLDivElement | null>;
+  panelId: string;
+  layout: ColumnLayout;
+  trigger: ReactNode;
   children: ReactNode;
 }) {
-  const id = useId();
-  const max = () => 360;
-  const { width, handle } = useDragWidth({
-    storageKey: "gunther:library-sources-width", min: 200, max, fallback: 260, side: "left",
-    observe: () => workspace.current,
-  });
-  const toggle = `${collapsed ? "Expand" : "Collapse"} Library`;
+  const { collapsed, slideOver, track, size } = layout;
 
-  return <div ref={columnRef} className={`library-column library-sources${collapsed ? " is-collapsed" : ""}${slideOver ? " is-narrow" : ""}`} style={collapsed || slideOver ? undefined : { width }}>
+  return <div ref={columnRef} data-panel-focus="library"
+    className={`library-column library-sources${collapsed ? " is-collapsed" : ""}${slideOver ? " is-overlay" : ""}`} style={{ width: track }}>
     <div className="library-column-panel">
-      <header className="library-column-heading">
+      {(!collapsed || trigger) && <header className="library-column-heading">
         {!collapsed && <h2>Library</h2>}
-        <button type="button" className="gx-icon-button" aria-label={toggle} title={toggle}
-          aria-controls={id} aria-expanded={!collapsed} onClick={onToggle}><PanelLeft size={16} /></button>
-      </header>
-      <div className="library-column-body" id={id} hidden={collapsed}>{children}</div>
-      {!collapsed && !slideOver && <div className="library-column-resize" role="separator" tabIndex={0} aria-orientation="vertical"
-        aria-label="Resize Library" aria-valuemin={200} aria-valuemax={max()} aria-valuenow={width}
-        title="Drag to resize. Double-click to reset." {...handle} />}
+        {trigger}
+      </header>}
+      <div className="library-column-body" id={panelId} hidden={collapsed}>{children}</div>
+      {!collapsed && !slideOver && <ColumnResize name="Library" size={size} />}
     </div>
   </div>;
 }

@@ -6,22 +6,24 @@ import itertools
 import json
 import re
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fake_models import (
     FakeProvider,
+    gateway,
     is_answering,
     is_orchestrating,
     is_sentence_checking,
     is_support_checking,
     orchestrator_replies,
-    output_replies,
     studio_task,
 )
+from pydantic import ValidationError
 from sqlalchemy import select
-from test_artifact_steps import replacing
+from test_artifact_steps import library_tool, replacing
 from test_output_skills import (
     SLIDES,
     SLIDES_APPROACH,
@@ -30,25 +32,35 @@ from test_output_skills import (
 )
 from test_outputs import (
     app_for,
+    approve_output,
+    built,
     in_background,
     library,
+    output_turn,
     read_events,
     route,
     saved_output,
     wait_for,
     workspace,
 )
+from test_outputs import (
+    output_replies as staged_output_replies,
+)
 
-from gunther.answer_runs import Stopped
-from gunther.artifact_actions import Act, Gate, validate
+from gunther.answer_runs import AnswerRun, Stopped
+from gunther.artifact_actions import Act, Gate, Mapped, validate
+from gunther.artifact_agent import ArtifactAgent, TurnContext
 from gunther.artifact_manifest import artifact_manifest_hash
-from gunther.artifact_turn_result import audience_of
 from gunther.artifact_view import AgentLimits, Numbering, View, build_view, ranges
 from gunther.artifact_workspace import (
+    CONVERSATION_PENDING,
     ConversationBrief,
     Line,
     Pending,
+    PlanRecord,
+    Work,
     Workspace,
+    WorkSpec,
     dump_workspace,
     evidence_from_citation,
 )
@@ -65,12 +77,18 @@ from gunther.models import (
 )
 from gunther.output_checks import support_inventory
 from gunther.outputs import (
+    BuiltOutput,
+    FirstWrite,
+    Notes,
+    ParentWrite,
+    Planned,
     Pool,
     check_heading_refs,
     section_hash,
     split_document,
 )
-from gunther.schemas import ConversationCitationOut
+from gunther.run_budget import RunBudget
+from gunther.schemas import ConversationCitationOut, PlanDraftOut, PlanPartOut, PreferenceLineOut
 from gunther.service import KnowledgeService
 
 _turns = itertools.count(1)
@@ -88,7 +106,7 @@ REWRITTEN = (
 
 
 def deck_replies(written: Any = SLIDES, **more: Any):
-    return output_replies(SLIDES_OUTLINE, written, **more)
+    return staged_output_replies(SLIDES_OUTLINE, written, **more)
 
 
 def script(decisions: list[Any], inner=None, **more: Any):
@@ -163,18 +181,18 @@ def test_rebuild_publishes_the_version_and_work_together(tmp_path, monkeypatch, 
             state.pending = Pending(question="Who is the audience?", options=["Students"], message_id="question")
             state.asked_in_a_row = 2
             row.state_json = dump_workspace(state)
-            original = row.state_json, row.brief_json, row.title, row.updated_at
+            original = row.state_json, row.brief_json, row.title
         with monkeypatch.context() as during_save:
             def fail_to_store(*args, **kwargs):
                 reply = store_turn(*args, **kwargs)
-                if kwargs.get("existing_session") is not None:
+                if kwargs.get("artifact") is not None:
                     if stopped:
                         raise Stopped
                     raise ValueError("The conversation could not be stored")
                 return reply
 
-            store_turn = service._store_turn
-            during_save.setattr(service, "_store_turn", fail_to_store)
+            store_turn = service._commit_turn_reply
+            during_save.setattr(service, "_commit_turn_reply", fail_to_store)
             failed = turn(client, base_id, "talk", "", "rebuild", **action)
         if stopped:
             assert failed[-1][0] == "stopped"
@@ -183,19 +201,19 @@ def test_rebuild_publishes_the_version_and_work_together(tmp_path, monkeypatch, 
         assert [version.id for version in versions_of(client)] == [parent]
         with service.sessions() as session:
             row = session.get(ArtifactConversation, "talk")
-            assert (row.state_json, row.brief_json, row.title, row.updated_at) == original
-            messages = session.scalars(
+            assert (row.state_json, row.brief_json, row.title) == original
+            published = list(session.scalars(
                 select(ArtifactMessage).where(ArtifactMessage.conversation_id == "talk")
-                .order_by(ArtifactMessage.created_at)
-            ).all()
-            assert messages[-1].kind == ("stopped" if stopped else "failed")
-            assert messages[-2].client_request_id is None
-        result = done(turn(client, base_id, "talk", "", "rebuild", **action))
+                .where(ArtifactMessage.artifact_id.is_not(None))
+            ))
+            assert all(message.artifact_id == parent for message in published)
+        retry = action | {"clientRequestId": "rebuild_after_rollback"}
+        result = done(turn(client, base_id, "talk", "", "rebuild", **retry))
         assert result["artifact"]["versionNumber"] == 2
         rebuilt = kept(client, "talk")[0].works[0]
         assert rebuilt.version_id == result["artifact"]["id"]
         assert rebuilt.spec.design_version == before.spec.design_version
-        assert rebuilt.spec.theme == (before.spec.theme or "classic")
+        assert rebuilt.spec.theme == before.spec.theme
         assert kept(client, "talk")[0].pending is None
 
 
@@ -210,7 +228,6 @@ def test_published_turn_replay_leaves_the_conversation_unchanged(tmp_path, histo
             row = session.get(ArtifactConversation, "interrupted")
             old = row.state_json, row.brief_json, row.updated_at
         fake.replies[:] = [script([{"actions": [
-            {"do": "select", "artifact": "new:slides"},
             {"do": "make"},
             {"do": "save", "text": "Here is the deck."},
         ]}])]
@@ -347,12 +364,13 @@ def test_selected_documents_reach_the_first_decision_before_evidence_is_loaded(
 def test_studio_understand_and_replan_refresh_the_approach_after_narrowing_scope(tmp_path: Path) -> None:
     def analyst(request):
         prompt = str(request["messages"][-1]["content"])
-        assert "lead analyst" in prompt and "Focus for this reading: operating cost" in prompt
-        assert "[2] (Cost records" in prompt and "The repairs cost 70 dollars" in prompt
+        assert "lead analyst" in prompt and "Goal: operating cost" in prompt
+        (ref,) = re.findall(r"\[(\d+)\] \(Cost records", prompt)
+        assert "The repairs cost 70 dollars" in prompt
         assert "Garden" not in prompt
         return json.dumps({
             "answer": "The repairs cost 70 dollars.",
-            "insights": [{"claim": "Repair cost", "refs": [2, 999]}],
+            "insights": [{"claim": "Repair cost", "refs": [int(ref), 999]}],
         })
 
     fake = FakeProvider(deck_replies())
@@ -378,8 +396,7 @@ def test_studio_understand_and_replan_refresh_the_approach_after_narrowing_scope
         (work,) = workspace_.works
         assert work.approach["method"] == "studio" and work.approach["storyline"] is None
         assert work.outline == [] and work.parts == {} and versions_of(client) == []
-        (citation,) = workspace_.pool
-        assert citation["source_id"] == ids["Cost records"] and citation["ref"] == 1
+        [citation] = [item for item in workspace_.pool if item["source_id"] == ids["Cost records"]]
         assert work.cards[0].refs == [citation["ref"]]
         assert work.approach["memo"]["insights"][0]["refs"] == [citation["ref"]]
 
@@ -402,7 +419,10 @@ def test_studio_understand_and_replan_refresh_the_approach_after_narrowing_scope
             if "planning a written report" in prompt:
                 tasks.append("plan")
                 assert "Answer: Estimates are collected separately." in prompt
-                return '{"title":"Estimates","sections":[{"heading":"How estimates are collected"}]}'
+                return json.dumps({
+                    "title": "Estimates", "summary_heading": "How estimates are collected",
+                    "sections": [],
+                })
             assert "senior partner reviewing a storyline" in prompt
             return '{"verdict":"ready"}'
 
@@ -411,14 +431,16 @@ def test_studio_understand_and_replan_refresh_the_approach_after_narrowing_scope
             {"do": "reply", "text": "The outline is ready."},
         ]}], replan)]
         result = done(turn(client, base_id, "understand", "Plan from the remaining source."))
-        assert result["outcome"] == "replied" and result["artifact"] is None
+        assert result["outcome"] == "planned" and result["artifact"] is None
         assert tasks == ["understand", "plan"]
         after, _ = kept(client, "understand")
         (work,) = after.works
-        assert work.approach["answer"] == "Estimates are collected separately."
-        (card,) = work.cards
-        assert card.claim == "Separate estimates" and card.refs == [2]
-        assert after.pool[1]["source_id"] == ids["Estimates"]
+        assert work.studio_progress["memo"]["answer"] == "Estimates are collected separately."
+        selected = set(work.studio_progress["pool_refs"])
+        assert {item["source_id"] for item in after.pool if item["ref"] in selected} == {
+            ids["Estimates"],
+        }
+        assert result["plan"]["outline"][0]["heading"] == "How estimates are collected"
 
 
 def test_studio_replan_migrates_a_saved_plan_within_its_constraints(tmp_path: Path) -> None:
@@ -441,10 +463,12 @@ def test_studio_replan_migrates_a_saved_plan_within_its_constraints(tmp_path: Pa
         assert counts in prompt and "Avoid jargon" in prompt
         assert "requested_count" in prompt and "requested_minutes" in prompt
         assert instruction in prompt and "Garden" not in prompt
-        assert json.dumps([
-            {"id": f"saved-{n}", "heading": h, "goal": g}
-            for n, (h, g) in enumerate(zip(headings, goals, strict=True))
-        ]) in prompt
+        submitted = json.loads(next(line for line in prompt.splitlines()
+                                    if line.startswith('[{"id": "saved-0"')))
+        assert [(row["id"], row["heading"], row["goal"]) for row in submitted] == [
+            (f"saved-{n}", title, goal)
+            for n, (title, goal) in enumerate(zip(headings, goals, strict=True))
+        ]
         assert "Old planner message" not in prompt and "introduces the distinction" not in prompt
         (ref,) = re.findall(r"\[(\d+)\] \(Receptors", prompt)
         slides = [
@@ -486,10 +510,16 @@ def test_studio_replan_migrates_a_saved_plan_within_its_constraints(tmp_path: Pa
         client.patch(url + "/brief", headers=headers, json={
             "constraints": [counts, "Avoid jargon"],
         }).raise_for_status()
+        fake.replies[:] = [script([{"actions": [
+            {"do": "understand"}, {"do": "reply", "text": "I applied the updated constraints."},
+        ]}])]
+        assert done(turn(client, base_id, "replan", "Read with the new constraints."))[
+            "outcome"
+        ] == "replied"
         before, _ = kept(client, "replan")
         fake.replies[:] = [decisions()]
         failed = turn(client, base_id, "replan", instruction)
-        assert any("The brief asks for 3" in data.get("note", "") for _, data in failed)
+        assert any("The brief asks for 3" in note for note in failures(failed)), failures(failed)
         assert not any(event == "outline" for event, _ in failed)
         assert kept(client, "replan")[0].works == before.works
 
@@ -520,126 +550,173 @@ def test_studio_replan_migrates_a_saved_plan_within_its_constraints(tmp_path: Pa
         detail = client.get(url, headers=headers).json()
         assert detail["scope"]["sourceIds"] == scope["sourceIds"]
         assert [part["state"] for part in detail["works"][0]["parts"]] == [
-            "ok", "out_of_date", "not_written",
+            "out_of_date", "out_of_date", "not_written",
         ]
 
 
-def test_a_vague_request_is_asked_about_and_the_answer_makes_the_deck(tmp_path: Path) -> None:
-    """§2.9, examples 1 and 2: start an artifact, look at the library, ask; the answer resumes
-    the turn: understand, plan, write, review, save."""
-
-    first = [
-        {
-            "brief": [
-                {"field": "audience", "text": "lab members", "quote": "my lab meeting"},
-            ],
-            "actions": [
-                {"do": "select", "artifact": "new:slides"},
-                {"do": "search_library", "query": "CD3D marker"},
-            ],
-        },
-        {
-            "actions": [
-                {
-                    "do": "ask",
-                    "question": "Focus on the Velmora trial results, or the whole debate?",
-                    "options": ["Trial", "Whole debate", "Just start"],
-                }
-            ]
-        },
-    ]
-    second = [
-        {
-            "brief": [
-                {"field": "goal", "text": "The Velmora trial results", "quote": "Trial"},
-                {"field": "length", "text": "about 10 minutes", "quote": "about 10 minutes"},
-            ],
-            "actions": [
-                {"do": "understand"},
-                {"do": "plan", "change": "whole"},
-            ],
-        },
-        {"actions": [{"do": "write", "parts": [1, 2, 3]}]},
-        {"actions": [{"do": "review"}]},
-        {"actions": [{"do": "save", "text": "Made the first version of the talk."}]},
-    ]
-    fake = FakeProvider(script(first))
+@pytest.mark.parametrize("use_settings", [False, True], ids=["answer", "use-settings"])
+def test_a_clarifying_answer_plans_the_deck_until_explicit_approval(
+    tmp_path: Path, use_settings: bool,
+) -> None:
+    question = "Focus on the measurements or the proposed next steps?"
+    fake = FakeProvider(script([
+        {"actions": [{"do": "search_library", "query": "CD3D marker"}]},
+        {"actions": [{"do": "ask", "question": question, "options": ["Measurements", "Next steps"]}]},
+    ]))
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
-        client.post(conversations(base_id), headers=workspace(client), json={"id": "roofs"})
+        cid, plan_id = "lab-meeting", "draft_lab_meeting"
+        initial = output_turn(client, base_id, cid, {
+            "kind": "plan", "clientRequestId": "ask_for_focus", "planId": plan_id,
+            "setup": {"type": "slides", "focus": "For my lab meeting", "scope": {"mode": "library"}},
+        })
+        asked = done(initial)
+        assert asked["outcome"] == "asked" and asked["artifact"] is None
+        assert asked["question"] == {"text": question, "options": ["Measurements", "Next steps"]}
+        pending = asked["plan"]["pending"]
+        assert pending["messageId"] == asked["message"]["id"]
+        assert versions_of(client) == []
 
-        events = turn(
-            client, base_id, "roofs", "Slides on cool roofs for my lab meeting", web=False
-        )
-        end = done(events)
-        assert end["outcome"] == "asked"
-        assert end["question"] == {
-            "text": "Focus on the Velmora trial results, or the whole debate?",
-            "options": ["Trial", "Whole debate", "Just start"],
-        }
-        assert end["artifact"] is None and end["changes"] == []
-        assert end["message"]["kind"] == "question"
-        # The events: the turn, the brief, each decision with its actions, the question.
-        assert events[0][0] == "turn" and events[0][1]["conversationId"] == "roofs"
-        assert "brief" in [name for name, _ in events]
-        decisions = [data for name, data in events if name == "decision"]
-        assert [[a["do"] for a in d["actions"]] for d in decisions] == [
-            ["select", "search_library"],
-            ["ask"],
-        ]
-        assert names(events, "action", "done")[0] == "Started a deck"
-        assert any(
-            label.startswith("Searched your library for “CD3D marker”")
-            for label in names(events, "action", "done")
-        )
-        assert [data["text"] for name, data in events if name == "question"] == [
-            "Focus on the Velmora trial results, or the whole debate?"
-        ]
-        kept_workspace, brief = kept(client, "roofs")
-        assert brief.audience == Line(text="lab members", mark="you")
-        [work] = kept_workspace.works
-        assert work.key.startswith("draft_") and work.spec.kind == "slides"
-        assert kept_workspace.pending is not None and kept_workspace.asked_in_a_row == 1
-        assert kept_workspace.pending.message_id == end["message"]["id"]
-        assert len(kept_workspace.pool) >= 1
-        listed = client.get(conversations(base_id), headers=workspace(client)).json()
-        assert listed[0]["waiting"] is True and listed[0]["title"].startswith("Slides on cool")
-
-        # The answer resumes it and the deck is made.
-        fake.replies[:] = [script(second)]
         before = len(fake.requests)
-        events = turn(client, base_id, "roofs", "Trial, about 10 minutes", kind="answer")
-        end = done(events)
-        assert end["outcome"] == "saved" and end["artifact"]["versionNumber"] == 1
-        assert end["reply"] == "Made the first version of the talk."
-        provenance = end["artifact"]["provenance"]
-        assert provenance["generator"] == "gunther.artifact-agent.v1"
-        assert provenance["conversationId"] == "roofs" and provenance["reply"] == end["reply"]
-        assert provenance["request"] == "Trial, about 10 minutes"
-        assert "work" not in provenance
-        assert provenance["skill"]["name"] == "studio" and provenance["audience"] == "scientist"
-        assert provenance["use"] == "talk"
-        assert end["artifact"]["origin"] == "build"
-        assert [c["what"] for c in end["changes"]] == ["added", "added", "added"]
-        # The first decision of the answer saw the question and the answer.
-        view = seen_by_the_orchestrator(fake, before)[0]
-        assert 'You asked: "Focus on the Velmora trial results' in view
-        assert "Latest message (answer to your question):" in view
-        kept_workspace, brief = kept(client, "roofs")
-        [work] = kept_workspace.works
-        assert work.key == end["artifact"]["lineageId"] and work.version_id == end["artifact"]["id"]
-        assert kept_workspace.active == work.key and kept_workspace.pending is None
-        assert kept_workspace.asked_in_a_row == 0
-        assert work.version_map and work.skipped == []
-        assert brief.goal == Line(text="The Velmora trial results", mark="you")
-        assert work.spec.length == Line(text="about 10 minutes", mark="you")
-        assert kept_workspace.log[-1].startswith("v1 (deck): Made the first version of the talk.")
-        assert kept_workspace.log[-1].endswith("added 1–3")
-        assert len(part_writes(fake, before)) == 3
-        # The version has the deck, a marker on each slide, and its work is sealed with it.
-        [saved] = versions_of(client)
-        assert json.loads(saved.provenance_json)["work"]["key"].startswith("draft_")
-        assert len(split_document(saved.content, "slides")[1]) == 3
+        for kind, text in [
+            ("message", "Where are my sources?"), ("answer", "Measurements"), ("start", ""),
+        ]:
+            [(name, error)] = turn(client, base_id, cid, text, kind=kind, targetLineageId=plan_id)
+            assert name == "error" and error["code"] == "question_changed"
+        assert len(fake.requests) == before
+        detail = client.get(conversations(base_id, f"/{cid}"), headers=workspace(client))
+        still_waiting = detail.raise_for_status().json()["works"][0]["plan"]
+        assert still_waiting["planStatus"] == "needs_answer"
+        assert still_waiting["pending"] == pending
+        assert still_waiting["planRevision"] == asked["plan"]["planRevision"]
+
+        updates = [] if use_settings else [
+            {"field": "emphasize", "text": "Measurements", "quote": "Measurements"},
+        ]
+        answer = {"type": "use_settings"} if use_settings else {"type": "choice", "index": 0}
+        fake.replies[:] = [script([{
+            "brief": updates, "actions": [{"do": "plan", "change": "whole"}],
+        }])]
+        before = len(fake.requests)
+        feedback = output_turn(client, base_id, cid, {
+            "kind": "answer", "clientRequestId": "choose_focus", "planId": plan_id,
+            "planRevision": asked["plan"]["planRevision"], "questionMessageId": pending["messageId"],
+            "answer": answer,
+        })
+        result = done(feedback)
+        assert result["outcome"] == "planned" and result["artifact"] is None
+        assert result["plan"]["pending"] is None
+        emphasis = result["plan"]["preferences"]["emphasize"]
+        assert [(line["text"], line["mark"]) for line in emphasis] == (
+            [] if use_settings else [("Measurements", "you")]
+        )
+        assert versions_of(client) == []
+        assert all("presentation writer" not in studio_task(r) for r in fake.requests[before:])
+
+        approved = built(approve_output(client, base_id, cid, plan_id, "approve_lab_deck", result))
+        saved = approved["artifact"]
+        assert approved["outcome"] == "saved" and saved["versionNumber"] == 1
+        assert saved["provenance"]["creationPlan"]["revision"] == result["plan"]["planRevision"]
+        assert len(split_document(saved["content"], "slides")[1]) == 3
+
+
+def test_planning_feedback_cannot_change_the_catalog_type(tmp_path: Path) -> None:
+    inner = staged_output_replies(
+        {"title": "Markers", "sections": [{"heading": "Evidence"}]}, [],
+    )
+    fake = FakeProvider(script(
+        [{"actions": [{"do": "plan", "change": "whole"}]}],
+        inner,
+    ))
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client)
+        cid, plan_id = "marker-plan", "draft_marker_plan"
+        initial = done(output_turn(client, base_id, cid, {
+            "kind": "plan", "clientRequestId": "plan_markers", "planId": plan_id,
+            "setup": {
+                "type": "report", "focus": "Compare the markers", "scope": {"mode": "library"},
+            },
+        }))
+        assert initial["plan"]["options"]["type"] == "report"
+        fake.replies[:] = [script([{
+            "brief": [{"field": "output_type", "text": "faq", "quote": "the figures"}],
+            "actions": [{"do": "plan", "change": "whole"}],
+        }], inner)]
+        start = len(fake.requests)
+        revised = done(output_turn(client, base_id, cid, {
+            "kind": "plan", "clientRequestId": "expand_figures", "planId": plan_id,
+            "planRevision": initial["plan"]["planRevision"], "text": "Expand the figures.",
+        }))
+        assert revised["outcome"] == "planned"
+        assert revised["plan"]["options"]["type"] == "report"
+        [view] = seen_by_the_orchestrator(fake, start)
+        assert "The plan's catalog type is fixed. Start a separate plan to change it." in view
+        assert versions_of(client) == []
+
+
+@pytest.mark.parametrize("stop", [False, True], ids=["same-turn", "stop-and-resume"])
+def test_understand_and_plan_share_the_checkpointed_preparation(
+    tmp_path: Path, monkeypatch, stop: bool,
+) -> None:
+    fake = FakeProvider(script([{"actions": [
+        {"do": "understand"},
+        {"do": "plan", "change": "whole"},
+    ]}]))
+    cid, plan_id = "prepare-markers", "draft_prepare_markers"
+    understood, proceed = threading.Event(), threading.Event()
+    original = AnswerRun.publish
+
+    def pause_after_understand(run, name, data, **kwargs):
+        original(run, name, data, **kwargs)
+        if (
+            run.session_id == f"output-conv:{cid}" and name == "action"
+            and data["state"] == "done" and data["label"] == "Wrote the approach"
+        ):
+            understood.set()
+            assert proceed.wait(10)
+
+    monkeypatch.setattr(AnswerRun, "publish", pause_after_understand)
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client)
+        headers = workspace(client)
+        thread, result = in_background(lambda: output_turn(client, base_id, cid, {
+            "kind": "plan", "clientRequestId": "understand_then_plan", "planId": plan_id,
+            "setup": {
+                "type": "slides", "focus": "Summarize the marker evidence",
+                "scope": {"mode": "library"},
+            },
+        }, headers))
+        path = conversations(base_id, f"/{cid}")
+        try:
+            assert understood.wait(10)
+            [work] = kept(client, cid)[0].works
+            checkpoint = work.studio_progress
+            assert checkpoint is not None
+            assert checkpoint["memo"]["answer"] == SLIDES_OUTLINE["title"]
+            assert "storyline" not in checkpoint and "plan_draft" not in checkpoint
+            if stop:
+                client.post(path + "/stop", headers=headers).raise_for_status()
+        finally:
+            proceed.set()
+            thread.join(10)
+        assert not thread.is_alive() and result
+        [events] = result
+        if stop:
+            assert events[-1][0] == "stopped"
+            assert kept(client, cid)[0].works[0].studio_progress == checkpoint
+            detail = client.get(path, headers=headers).raise_for_status().json()
+            saved = detail["works"][0]["plan"]
+            assert saved["attempt"]["state"] == "stopped"
+            fake.replies[:] = [script([{"actions": [{"do": "plan", "change": "whole"}]}])]
+            events = output_turn(client, base_id, cid, {
+                "kind": "plan", "clientRequestId": "resume_prepare", "planId": plan_id,
+                "planRevision": saved["planRevision"],
+            }, headers)
+        assert done(events)["plan"]["planStatus"] == "ready"
+        tasks = [studio_task(request) for request in fake.requests]
+        assert sum("lead analyst" in task for task in tasks) == 1
+        assert sum("presentation strategist" in task for task in tasks) == 1
+        assert versions_of(client) == []
 
 
 # Changes to a deck that exists ---------------------------------------------------------------------
@@ -719,7 +796,7 @@ def test_a_slide_that_is_too_long_is_rewritten_alone_and_saved(tmp_path: Path) -
         assert new_parts[1] != old_parts[1]
         # The step lines are kept with the answer, and the change log with the workspace.
         stored, _ = kept(client, "talk")
-        assert stored.log[-1] == "v2 (deck): Shortened slide 2. · changed 2"
+        assert stored.log[-1] == "v2: Shortened slide 2. · changed 2"
         assert [s["label"] for s in end["message"]["payload"]["steps"]] == names(
             events, "action", "done"
         )
@@ -737,6 +814,7 @@ def test_imported_parts_use_only_the_selected_evidence_for_writes(tmp_path: Path
         pool_ref, excluded_ref = before.version_map
         assert not before.approach.get("method")
         client.patch(conversations(base, "/talk"), headers=workspace(client), json={
+            "targetLineageId": original["lineageId"],
             "scope": {"mode": "selection", "sourceIds": [selected["sourceId"]]},
         }).raise_for_status()
 
@@ -816,7 +894,7 @@ def test_the_one_before_it_is_found_from_the_changes_so_far(tmp_path: Path) -> N
 
         def second(request: dict) -> dict:
             view = str(request["messages"][-1]["content"])
-            assert "- v2 (deck): Shortened slide 3. · changed 3" in view
+            assert "- v2: Shortened slide 3. · changed 3" in view
             assert "You: Shorten slide 3\nGunther: Shortened slide 3." in view
             return {"actions": [{"do": "write", "parts": [2], "instruction": "shorter"}]}
 
@@ -993,10 +1071,10 @@ def test_just_start_turns_off_asking_for_that_message(tmp_path: Path) -> None:
         events = turn(client, base_id, "talk", "", kind="start")
         end = done(events)
         assert end["outcome"] == "replied"
-        assert "just start" in failures(events)[0]
+        assert "use current settings" in failures(events)[0]
         views = seen_by_the_orchestrator(fake, start)
-        assert views[0].endswith('Latest message ("just start"):\nJust start')
-        assert "Not done:\n- Asking you a question: The user said" in views[1]
+        assert views[0].endswith("Latest message (use current settings):\nJust start")
+        assert "Not done:\n- Asking you a question: The user chose" in views[1]
         stored, _ = kept(client, "talk")
         assert stored.pending is None
 
@@ -1128,7 +1206,10 @@ def test_a_decision_with_no_action_is_asked_again_once_and_then_fails(tmp_path: 
                 select(ArtifactMessage).order_by(ArtifactMessage.created_at.desc()).limit(2)
             ).all()
         assert {m.kind for m in last} == {"message", "failed"}
-        assert all(m.client_request_id is None for m in last)
+        user = next(message for message in last if message.role == "user")
+        reply = next(message for message in last if message.role == "assistant")
+        assert user.client_request_id and json.loads(reply.payload_json)["to"] == user.id
+        assert reply.client_request_id is None
 
 
 def test_stop_keeps_what_was_found_and_saves_no_version(tmp_path: Path) -> None:
@@ -1165,7 +1246,8 @@ def test_stop_keeps_what_was_found_and_saves_no_version(tmp_path: Path) -> None:
         assert len(stored.pool) >= 1  # what was found stays
         detail = client.get(conversations(base_id, "/talk"), headers=headers).json()
         assert [m["kind"] for m in detail["messages"]][-2:] == ["message", "stopped"]
-        assert detail["messages"][-2]["clientRequestId"] is None
+        assert detail["messages"][-2]["clientRequestId"]
+        assert detail["messages"][-1]["payload"]["to"] == detail["messages"][-2]["id"]
 
 
 def test_follow_gets_the_new_done_payload(tmp_path: Path) -> None:
@@ -1302,6 +1384,7 @@ def a_view(**more: Any) -> View:
         "kind": "message",
         "text": "No, the one before it",
         "focus": {"section": 2, "quote": "Heat", "selected": True},
+        "revising": True,
     }
     return View(**{**fields, **more})
 
@@ -1311,6 +1394,7 @@ def test_the_view_has_its_headings_in_order_and_the_numbers_the_user_sees() -> N
     cut = f"Note: {words}"[:149].rstrip() + "…"
     expected = f"""\
 Library: Cells. Web: off.
+Mode: revise the active verified version.
 slides in Studio: understand → plan → write → review. Layouts: title, section, summary, stat, stats, chart, table, compare, process, timeline, quote, figure, figure_detail, statement, points, actions. Uses: talk, read
 Brief (you said = the user's words; edited = the user typed it; guessed = yours):
 - goal: Explain the Velmora trial (you said)
@@ -1378,10 +1462,11 @@ def test_a_reports_view_numbers_its_paragraphs_and_a_question_is_shown_with_its_
             "Trial",
             None,
             asked=pending,
+            revising=True,
         )  # fmt: skip
     )
     assert "Web: on." in text.splitlines()[0]
-    assert text.splitlines()[1].startswith("report in Studio:") and "Types: report (Report)," in text
+    assert text.splitlines()[2].startswith("report in Studio:") and "Types: report (Report)," in text
     assert 'Artifacts: [1] report "The trial" not saved yet (active)' in text
     assert (
         "  2 Heat fell · not re-checked · sources 1, 2 · cards C1\n      ¶1 First paragraph [1].\n      ¶2 Second one"
@@ -1410,17 +1495,6 @@ def test_numbers_are_the_versions_and_sources_it_does_not_cite_follow() -> None:
     assert ranges([5, 3, 4, 9, 1]) == "1, 3–5, 9" and ranges([2, 3]) == "2, 3" and ranges([]) == ""
 
 
-def test_the_audience_a_version_records_comes_from_the_words_the_user_gave() -> None:
-    def of(words: str | None) -> str:
-        brief = ConversationBrief(audience=Line(text=words) if words else None)
-        return audience_of(brief)
-
-    assert of("first-year students") == "student" and of("a class of undergrads") == "student"
-    assert of("my team and the funders") == "collaborator" and of("partner labs") == "collaborator"
-    assert of("lab members") == "scientist" and of(None) == "scientist"
-    assert of("学生") == "student" and of("团队") == "collaborator"
-
-
 # What is checked before an action runs ---------------------------------------------------------------
 
 
@@ -1428,6 +1502,7 @@ def a_gate(**more: Any) -> Gate:
     from test_artifact_workspace import made
 
     brief, work = made("slides")
+    work.version_id = "art_saved"
     fields: dict[str, Any] = {
         "workspace": Workspace(works=[work], active=work.key),
         "brief": brief,
@@ -1437,6 +1512,7 @@ def a_gate(**more: Any) -> Gate:
         "web_reason": "web search is not set up",
         "numbers": 4,
         "limits": AgentLimits(),
+        "authority": ParentWrite("ws", "kb", "conv", work.key, work.version_id),
     }
     return Gate(**{**fields, **more})
 
@@ -1448,12 +1524,16 @@ CHECKS = [
     ({"do": "answer", "about": "the 62%"}, None),
     ({"do": "search_library"}, "A search needs a query."),
     ({"do": "search_web", "query": "cost"}, "The web is not available: web search is not set up"),
-    ({"do": "read_source", "query": "9"}, "There is no source 9"),
+    ({"do": "read_source", "source": 9}, "There is no source 9"),
+    ({"do": "read_source", "source": 3}, None),
     ({"do": "read_source", "query": "3"}, None),
+    ({"do": "read_source", "query": "[3]"}, None),
+    ({"do": "read_source", "query": "Read the 3rd source from 2024"}, "Choose a source"),
+    ({"do": "read_source"}, "Choose a source"),
     ({"do": "reply"}, "A reply needs words."),
     ({"do": "select", "artifact": "new:poster"}, "Choose an artifact by its number"),
     ({"do": "select", "artifact": "1"}, None),
-    ({"do": "select", "artifact": "new:report"}, None),
+    ({"do": "select", "artifact": "new:report"}, "Start a separate plan"),
     ({"do": "understand"}, None),
     ({"do": "plan"}, "plan needs a change"),
     ({"do": "plan", "change": "whole"}, None),
@@ -1500,16 +1580,214 @@ def test_each_action_is_checked_against_the_workspace(action: dict, problem: str
 
 
 def test_actions_that_need_an_artifact_are_refused_without_one() -> None:
-    empty = a_gate(workspace=Workspace())
-    for action in (
-        {"do": "understand"},
-        {"do": "write", "parts": [1]},
-        {"do": "save", "text": "x"},
-    ):
-        assert "There is no artifact yet" in (validate(Act(**action), empty) or "")
+    empty = a_gate(workspace=Workspace(), authority=None)
+    assert "There is no artifact yet" in (validate(Act(do="understand"), empty) or "")
+    for action in (Act(do="write", parts=[1]), Act(do="save", text="x")):
+        assert "verified current version" in (validate(action, empty) or "")
     assert validate(Act(do="search_library", query="x"), empty) is None
     assert validate(Act(do="select", artifact="new:slides"), empty) is None
     assert validate(Act(do="select", artifact="1"), empty) is not None
+
+
+@pytest.mark.parametrize("source", ["3", True, 3.5])
+def test_a_structured_source_reference_is_an_integer(source) -> None:
+    with pytest.raises(ValidationError, match="valid integer"):
+        Act.model_validate({"do": "read_source", "source": source})
+
+
+def planning_agent(gate: Gate, fake: FakeProvider, **overrides: Any) -> ArtifactAgent:
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("The turn reached an unauthorized writer")
+
+    models = gateway(fake)
+    context = TurnContext(
+        workspace=gate.workspace, brief=gate.brief,
+        gateway=models, budget=RunBudget(8, 8, 200, 200, phase="test"),
+        model=models.models[0], effort=None, make_studio_agents=forbidden,
+        studio_reading=forbidden, notes=Notes(),
+        library_tool=library_tool(), web_tool=None, web_reason="", reader=None,
+        library="Cells", kind=gate.kind, text="Go ahead", focus=None, history=[],
+        reply_id="message_1", limits=gate.limits, authority=gate.authority,
+    )
+    return ArtifactAgent(replace(context, **overrides))
+
+
+@pytest.mark.parametrize("kind", ["message", "answer", "start"])
+def test_unbound_agent_turn_cannot_replace_or_resolve_a_plan_question(kind: str) -> None:
+    gate = a_gate(kind=kind, authority=None)
+    assert (work := gate.work) is not None
+    work.version_id = None
+    work.plan = PlanRecord(id="draft_question")
+    pending = Pending(question="Which scope?", options=["Full", "Short"], message_id="acm_1")
+    gate.workspace.pending_by_target = {work.plan.id: pending}
+    gate.workspace.asked_in_a_row = 1
+    fake = FakeProvider(script([{"actions": [
+        {"do": "ask", "question": "A different question?", "options": ["A", "B"]},
+        {"do": "reply", "text": "The sources are in the Library."},
+    ]}]))
+    agent = planning_agent(gate, fake)
+
+    result = agent.run()
+
+    assert result.outcome == "replied"
+    assert result.steps[0]["state"] == "failed" and "pending planning question" in (
+        result.steps[0]["note"]
+    )
+    assert gate.workspace.pending_by_target == {work.plan.id: pending}
+    assert gate.workspace.asked_in_a_row == 1
+
+
+def test_a_legacy_reply_can_clear_an_unattached_question() -> None:
+    pending = Pending(question="Which scope?", options=["Full", "Short"], message_id="acm_1")
+    legacy = Workspace(pending_by_target={CONVERSATION_PENDING: pending}, asked_in_a_row=1)
+    gate = a_gate(workspace=legacy, authority=None)
+    fake = FakeProvider(script([{"actions": [{"do": "reply", "text": "Thanks."}]}]))
+
+    assert planning_agent(gate, fake).run().outcome == "replied"
+    assert legacy.pending_by_target == {} and legacy.asked_in_a_row == 0
+
+
+@pytest.mark.parametrize("kind", ["message", "start", "continue"])
+def test_a_planning_turn_cannot_dispatch_writes_or_budget_save_old_parts(kind: str) -> None:
+    gate = a_gate(kind=kind, authority=None, limits=AgentLimits(decisions=1))
+    draft = gate.work
+    assert draft is not None
+    sibling = draft.model_copy(update={"key": "arl_sibling"}, deep=True)
+    draft.key, draft.version_id = "draft_current", None
+    gate.workspace.works.insert(0, sibling)
+    gate.workspace.active = draft.key
+    actions = [
+        Act(do="select", artifact="1"),
+        Act(do="make"),
+        Act(do="write", parts=[2]),
+        Act(do="edit", item=2, passage="It is so", instruction="Change it"),
+        Act(do="redesign", parts=[2], instruction="Use a chart"),
+        Act(do="check", parts=[2]),
+        Act(do="review"),
+        Act(do="save", text="Publish it"),
+    ]
+    before = draft.model_copy(deep=True)
+    fake = FakeProvider(script([{"actions": [a.model_dump() for a in actions]}]))
+    agent = planning_agent(gate, fake)
+    for action in actions:
+        assert validate(action, gate)
+        with pytest.raises(ValueError):
+            agent._run(Mapped(action, []))
+
+    result = agent.run()
+
+    assert result.outcome == "paused" and result.save is None and result.draft is None
+    assert all(step["state"] == "failed" for step in result.steps)
+    assert len(result.steps) == len(actions)
+    assert gate.workspace.active == draft.key and draft == before
+    assert len(fake.requests) == 1
+
+
+def test_a_parent_permit_cannot_be_used_on_another_target_or_for_an_accent_in_planning():
+    gate = a_gate()
+    assert isinstance(gate.authority, ParentWrite) and gate.work is not None
+    gate.work.version_id = "new_head"
+    assert validate(Act(do="make"), gate)
+    assert validate(Act(do="select", artifact="1"), gate)
+    assert validate(Act(do="save", text="staged"), gate)
+    gate.authority = None
+    gate.work.version_id = None
+    assert validate(Act(do="plan", change="item", item=1, accent="blue"), gate)
+
+
+def test_plan_passes_user_feedback_and_marked_preferences_to_the_proposer():
+    gate = a_gate(authority=None, kind="plan")
+    assert (work := gate.work) is not None
+    work.version_id = None
+    gate.brief.emphasize = [PreferenceLineOut(id="keep", text="Main estimate", mark="edited")]
+    decisions = [{"brief": [
+        {"field": "emphasize", "text": "Main estimate", "quote": "Main estimate"},
+        {"field": "emphasize", "text": "Uncertainty", "quote": "uncertainty"},
+        {"field": "avoid", "text": "Abbreviations", "quote": "Do not use abbreviations"},
+    ], "actions": [{"do": "plan", "change": "whole"}, {"do": "save", "text": "Save it"}]}]
+    fake = FakeProvider(script(decisions))
+    draft = PlanDraftOut(
+        outline=[PlanPartOut(id="p1", heading="Opening", layout="title")],
+        proposal={"title": "Cells", "angle": "Finding", "summary": "Review the proposal.",
+                  "coverage": [], "count": {"mode": "exact", "value": 1}},
+    )
+
+    def propose(target, _pool, feedback):
+        assert target is work and feedback == "Main estimate and its uncertainty."
+        assert [(line.text, line.mark) for line in gate.brief.emphasize] == [
+            ("Main estimate", "edited"), ("Uncertainty", "you"),
+        ]
+        assert [(line.text, line.mark) for line in gate.brief.avoid] == [
+            ("Abbreviations", "guessed"),
+        ]
+        work.studio_progress = {"material_key": "reviewed"}
+        return draft
+
+    result = planning_agent(gate, fake, propose_plan=propose).plan(
+        work, feedback="Main estimate and its uncertainty.",
+    )
+    assert result.outcome == "planned" and result.draft == draft and result.save is None
+    assert result.steps[-1]["state"] == "skipped"
+    assert work.studio_progress == {"material_key": "reviewed"}
+    view, = seen_by_the_orchestrator(fake)
+    assert "- emphasize: Main estimate (edited)" in view and "Mode: plan for approval." in view
+
+
+def test_generate_requires_explicit_authority_and_a_writer():
+    gate = a_gate(authority=None)
+    work = gate.work
+    assert work is not None
+    work.version_id = None
+    draft = PlanDraftOut(
+        outline=[PlanPartOut(id="p1", heading="Opening", layout="title")],
+        proposal={"title": "Cells", "angle": "Finding", "summary": "Plan",
+                  "coverage": [], "count": {"mode": "exact", "value": 1}},
+    )
+    permit = FirstWrite("ws", "kb", "conv", work.key, "rev", "request", "boot", "attempt")
+    fake = FakeProvider()
+    with pytest.raises(ValueError, match="authority"):
+        planning_agent(gate, fake).generate(work, plan=draft, authority=None)
+    with pytest.raises(ValueError, match="unavailable"):
+        planning_agent(gate, fake).generate(work, plan=draft, authority=permit)
+
+    def write(target, _pool, submitted, authority):
+        assert target is not work and submitted is draft and authority is permit
+        return BuiltOutput("Opening", "# Opening", [{"heading": "Opening", "id": "p1"}],
+                           [], [], gateway(fake).models[0], None)
+
+    result = planning_agent(gate, fake, write_plan=write).generate(work, plan=draft, authority=permit)
+    assert result.save is not None and result.outcome == "saved"
+    assert result.save.work is not work and len(result.save.work.outline) == 1
+
+
+def test_rebuild_preserves_submitted_row_ids_layout_and_notes():
+    work = Work(key="arl_deck", version_id="art_head", spec=WorkSpec(kind="slides"))
+    gate = a_gate(
+        authority=ParentWrite("ws", "kb", "conv", work.key, work.version_id),
+        workspace=Workspace(works=[work], active=work.key),
+    )
+    fake = FakeProvider()
+    rows = [
+        Planned("Opening", layout="title", id="slide_a", notes="State the question"),
+        Planned("Finding", "Show the result", layout="points", id="slide_b", notes="Name limits"),
+    ]
+
+    def write(_work, _pool, plan, authority):
+        assert authority == gate.authority
+        assert [(row.id, row.heading, row.goal, row.layout, row.notes) for row in plan.outline] == [
+            (row.id, row.heading, row.goal, row.layout, row.notes) for row in rows
+        ]
+        return BuiltOutput(
+            plan.proposal.title, "# Opening\n\n---\n\n## Finding",
+            [row.model_dump() for row in plan.outline], [], [], gateway(fake).models[0], None,
+        )
+
+    result = planning_agent(gate, fake, write_plan=write).rebuild(work, rows)
+    assert result.save is not None
+    assert [row.notes for row in result.save.work.outline] == ["State the question", "Name limits"]
+    assert work.outline == []
+    with pytest.raises(ValueError, match="verified current version"):
+        planning_agent(gate, fake, authority=None, write_plan=write).rebuild(work, rows)
 
 
 def test_checks_that_depend_on_the_state_of_the_work() -> None:
@@ -1537,6 +1815,7 @@ def test_checks_that_depend_on_the_state_of_the_work() -> None:
     from test_artifact_workspace import made
 
     brief, report = made("report")
+    report.version_id = "art_saved"
     for item in report.outline:
         item.layout = ""
     report_gate = a_gate(
@@ -1991,7 +2270,7 @@ def test_a_finished_change_is_saved_when_the_budget_runs_out(tmp_path: Path) -> 
         end = done(turn(client, base_id, "talk", "Shorten 2 and look around"))
         assert end["outcome"] == "saved" and end["artifact"]["versionNumber"] == 2
         assert end["reply"] == "Rewrote 2."
-        assert kept(client, "talk")[0].log[-1] == "v2 (deck): Rewrote 2. · changed 2"
+        assert kept(client, "talk")[0].log[-1] == "v2: Rewrote 2. · changed 2"
 
 
 def test_an_action_that_needs_more_calls_than_are_left_is_not_started(tmp_path: Path) -> None:
@@ -2052,41 +2331,21 @@ def test_what_the_user_typed_in_the_panel_during_a_turn_is_kept(tmp_path: Path) 
         assert stored.works[0].spec.length == Line(text="5 slides", mark="edited")
 
 
-def test_a_report_made_from_a_deck_starts_from_the_decks_approach(tmp_path: Path) -> None:
+def test_a_saved_turn_cannot_switch_to_a_new_work(tmp_path: Path) -> None:
     fake = FakeProvider(deck_replies())
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client)
-        a_deck(client, fake, base_id)
-        fake.replies[:] = [
-            script(
-                [
-                    {
-                        "brief": [
-                            {"field": "length", "text": "3 pages", "quote": "3 pages"},
-                            {"field": "output_type", "text": "briefing", "quote": ""},
-                        ],
-                        "actions": [{"do": "select", "artifact": "new:report"}],
-                    },
-                    {"actions": [{"do": "select", "artifact": "1"}]},
-                    {"actions": [{"do": "reply", "text": "Started the report."}]},
-                ]
-            )
-        ]
-        start = len(fake.requests)
-        events = turn(client, base_id, "talk", "Now a 3 pages report from this deck")
+        parent = a_deck(client, fake, base_id)
+        fake.replies[:] = [script([
+            {"actions": [{"do": "select", "artifact": "new:report"}]},
+            {"actions": [{"do": "reply", "text": "Open a report plan in Studio."}]},
+        ])]
+        events = turn(client, base_id, "talk", "Make a report from this deck.")
         assert done(events)["outcome"] == "replied"
+        assert failures(events) == ["Start a separate plan from Studio."]
         stored, _ = kept(client, "talk")
-        deck, report = stored.works
-        assert report.spec.kind == "report" and report.key.startswith("draft_")
-        # The select ran first, so the length landed on the report, not on the deck.
-        assert report.spec.length == Line(text="3 pages", mark="you")
-        assert deck.spec.length != Line(text="3 pages", mark="you")
-        assert report.approach == deck.approach and report.approach is not deck.approach
-        assert stored.active == deck.key  # the second decision selected the first artifact
-        view = seen_by_the_orchestrator(fake, start)[1]
-        assert '[2] report "untitled" not saved yet (active)' in view
-        assert "report in Studio:" in view and "Types: report (Report)," in view
-        assert "Choosing" not in view
+        assert [work.version_id for work in stored.works] == [parent]
+        assert [version.id for version in versions_of(client)] == [parent]
 
 
 def test_the_web_is_refused_when_it_is_not_set_up_and_works_when_it_is(tmp_path: Path) -> None:
@@ -2161,7 +2420,7 @@ def test_more_of_a_source_is_read_and_actions_after_the_end_of_a_turn_are_droppe
         fake.replies[:] = [
             script(
                 [
-                    {"actions": [{"do": "read_source", "query": "1"}]},
+                    {"actions": [{"do": "read_source", "source": 1, "query": "Page 9"}]},
                     {
                         "actions": [
                             {"do": "reply", "text": "Read it."},

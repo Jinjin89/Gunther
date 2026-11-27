@@ -1,9 +1,9 @@
 # The Artifacts exam: two fixtures (a deck and a report) and the messages sent to them.
 #
-# A fixture is built once, through the real build path, from the Ask exam's demo library and
-# with the fixed outline below, so a case can name a part by what it is about. Every case then
-# starts from its own copy of a fixture. `has` strings (and `paragraphs`) must be found in a
-# built part, or the fixture is built again: they are what the cases below rely on.
+# Each fixture goes through Plan and Approve on the Ask exam's demo library with the fixed
+# outline below. Each case opens a separate copy of the approved database and its assets.
+# `has` strings (and `paragraphs`) must be found in a built part, or the fixture is built again:
+# they are what the cases below rely on.
 #
 # Cases. Parts are counted from 1, in the fixture as it was before the message.
 #   artifact    deck | report | none (nothing exists yet)
@@ -13,7 +13,9 @@
 #   setup       what the case does to its copy first: typo = N breaks one word of part N
 #               ({typo} is the broken word, {fixed} the right one); quote = [N, K] makes {quote}
 #               the Kth sentence of part N. The placeholders work in message, focus and expect.
-#   expect      intent: ask | answer | make | change (a list: any of them)
+#   plan        structured Setup fields for an empty conversation. Message supplies the focus.
+#   approve     true sends an explicit approval after reviewing a ready plan
+#   expect      intent: ask | answer | reply | plan | make | change (a list: any of them)
 #               changed / may_change: parts that must / may change (may_change = "all": any)
 #               count_delta: parts added (negative: removed); "any" when the case does not say
 #               layout: layout each part must have afterwards, by original part number
@@ -42,7 +44,7 @@ layout = "title"
 [[fixture.deck.outline]]
 heading = "Top-floor flats in Velmora overheat from late June"
 goal = "Why the city asked for a trial: heat in top-floor flats and the rising share of the summer electricity load that goes to air conditioning."
-layout = "text"
+layout = "points"
 
 [[fixture.deck.outline]]
 heading = "Albedo is the share of sunlight a surface reflects"
@@ -53,31 +55,31 @@ has = ["albedo"]
 [[fixture.deck.outline]]
 heading = "The trial followed 412 buildings over three summers"
 goal = "The scale of the trial: 412 residential buildings in six districts, summers 2021 to 2023."
-layout = "big_number"
+layout = "stats"
 has = ["412"]
 
 [[fixture.deck.outline]]
 heading = "Each coated roof was measured and compared with a matched twin"
 goal = "The method in four steps: coat the roof, measure its reflectance, log indoor temperature every 15 minutes, compare with matched untreated buildings."
-layout = "flow"
+layout = "process"
 has = ["untreated"]
 
 [[fixture.deck.outline]]
 heading = "Top-floor flats peaked 2.1 °C cooler"
 goal = "The headline temperature result of the trial."
-layout = "big_number"
+layout = "stat"
 has = ["2.1"]
 
 [[fixture.deck.outline]]
 heading = "Top floors cooled; ground floors did not change"
 goal = "Contrast the top-floor result with the ground-floor flats, where no change was measured."
-layout = "two_column"
+layout = "table"
 has = ["ground"]
 
 [[fixture.deck.outline]]
 heading = "Weather adjustment halves the cooling-energy saving"
 goal = "Compare the trial as first reported with the weather-adjusted reanalysis: the cooling electricity saving (18% against 9%) and the peak indoor temperature (2.1 °C in both). Cite every cell."
-layout = "compare"
+layout = "table"
 has = ["18", "9"]
 
 [[fixture.deck.outline]]
@@ -89,19 +91,19 @@ has = ["cost"]
 [[fixture.deck.outline]]
 heading = "Winter heating rises by only 1.2% in Velmora"
 goal = "The winter heating penalty for Velmora's mild winters, against 3 to 7% in cold climates."
-layout = "big_number"
+layout = "stat"
 has = ["1.2"]
 
 [[fixture.deck.outline]]
 heading = "The city pays €14 per square metre toward the cost of a coating"
 goal = "The Climate Plan: 30% of residential roofs coated by 2030, a €14 per square metre subsidy, and a review in 2028."
-layout = "cards"
+layout = "stats"
 has = ["14"]
 
 [[fixture.deck.outline]]
 heading = "Cooler flats are well supported; quote the adjusted energy saving"
 goal = "Close with what holds up (the temperature result), what changed (the energy saving) and what to watch (cleaning, glare, winter heating)."
-layout = "takeaways"
+layout = "summary"
 
 [fixture.report]
 kind = "report"
@@ -359,12 +361,12 @@ judge = "Has slide 5 been split into two consecutive slides, the first about coa
 id = "S5"
 category = "structure"
 artifact = "deck"
-message = "Show slide 7 as cards instead of a two-column table."
+message = "Convert the comparison table on slide 7 into two side-by-side explanations."
 
 [case.expect]
 intent = "change"
 changed = [7]
-layout = { 7 = "cards" }
+layout = { 7 = "compare" }
 
 [[case]]
 id = "S6"
@@ -531,10 +533,10 @@ artifact = "none"
 message = "A 10-minute talk for the lab on the Velmora trial results."
 
 [case.expect]
-intent = "make"
+intent = ["reply", "plan"]
 asks = "must_not"
 must_contain = ["Velmora"]
-judge = "Is the result a slide deck for a talk to lab colleagues about the results of the Velmora cool roof trial?"
+judge = "Does the reply or plan carry forward a talk to lab colleagues about the results of the Velmora cool roof trial?"
 
 [[case]]
 id = "A3"
@@ -546,3 +548,17 @@ message = "Make the costs slide shorter."
 intent = "ask"
 asks = "must"
 judge = "Does the question (with its options) let the person choose between the slide on green-roof costs (slide 9) and the slide on the city's subsidy (slide 11)?"
+
+[[case]]
+id = "A4"
+category = "asking"
+artifact = "none"
+message = "A 10-minute talk for the lab on the Velmora trial results."
+plan = { type = "slides", audience = "scientist", use = "talk" }
+approve = true
+
+[case.expect]
+intent = "make"
+asks = "must_not"
+must_contain = ["Velmora"]
+judge = "Is the saved slide deck a talk to lab colleagues about the results of the Velmora cool roof trial?"

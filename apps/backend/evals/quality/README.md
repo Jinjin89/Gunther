@@ -21,9 +21,7 @@ method, model and a hash of `gunther/` already have a result in an earlier run),
 scores the rendered slide PNGs 1-10 with a ship / minor edit / rework verdict per slide; it fills the
 report's Visual column, the text judge is unchanged).
 
-New builds use Studio. To compare with saved Skills results, pass
-`--methods skills,studio --baseline-from FOLDER`.
-The eval checks the Studio format marker on each new build.
+New builds use the conversation stream. The eval sends **Plan** with the selected brief and settings, checks the returned outline, then explicitly approves the returned `planRevision`. It checks that version 1 seals the reviewed plan and that the content carries the Studio format marker. Calls, tokens and model time include both turns. To compare with saved Skills results, pass `--methods skills,studio --baseline-from FOLDER`. [Runner](run.py)
 
 ## Material
 
@@ -37,9 +35,7 @@ the app's web capture. Two situations need a fallback, recorded per source in th
 - The capture reads only HTML and text, so a PDF (the Fed transcript) is turned into text with
   `pdftotext` and filed as a note.
 
-Each set is seeded once into `evals/results/quality-template-<id>-<hash>/` (with the real processing
-worker) and every build runs on a fresh copy. `evals/results/` is gitignored; downloaded material
-stays there.
+The processing worker seeds each set once into `evals/results/quality-template-<id>-<hash>/`. Every build starts on an isolated SQLite backup of that template with its library files copied alongside it. The backup includes committed writes from the SQLite WAL. Downloaded material and results stay in the gitignored `evals/results/` directory.
 
 ## What is measured
 

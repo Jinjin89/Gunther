@@ -12,6 +12,7 @@ OutputOption = Literal["focus", "audience", "length", "language", "use", "voices
 OutputLength = Literal["short", "standard", "long"]
 DeckUse = Literal["talk", "read"]
 DECK_USES = get_args(DeckUse)
+_LENGTH_DIVISORS = {"short": 4, "standard": 2, "long": 1}
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class OutputType:
     summary_box: bool = False
     require_exhibits: bool = False
     max_parts: int | None = None
+    first_part_role: str | None = None
 
     @property
     def capabilities(self) -> ShapeSpec:
@@ -35,6 +37,17 @@ class OutputType:
     @property
     def part_limit(self) -> int:
         return self.max_parts if self.max_parts is not None else SHAPES[self.shape].max_parts
+
+    @property
+    def min_parts(self) -> int:
+        return self.capabilities.min_parts
+
+    @property
+    def outline_layouts(self) -> tuple[str, ...]:
+        return self.capabilities.outline_layouts
+
+    def automatic_target(self, length: OutputLength | None) -> int:
+        return max(self.min_parts, self.part_limit // _LENGTH_DIVISORS[length or "standard"])
 
     def direct_problems(self, content: str) -> list[str]:
         shape = SHAPES[self.shape]
@@ -53,6 +66,9 @@ class OutputType:
     def part_limit_error(self, count: int) -> str | None:
         return SHAPES[self.shape].limit_error(count, self.label, self.part_limit)
 
+    def part_count_error(self, count: int) -> str | None:
+        return self.capabilities.count_error(count, self.label, self.part_limit)
+
 
 OUTPUT_TYPES = {
     item.id: item
@@ -60,13 +76,13 @@ OUTPUT_TYPES = {
         OutputType(
             "report", "Report", "report", "Explore a topic or answer a research question.",
             "FileText", plan=prompts.REPORT_PLAN, write=prompts.REPORT_CRAFT,
-            summary_box=True, require_exhibits=True,
+            summary_box=True, require_exhibits=True, first_part_role="Summary section",
         ),
         OutputType(
             "briefing", "Briefing doc", "report", "Weigh evidence and make a recommendation.",
             "ClipboardList", plan=f"{prompts.BRIEFING_STYLE}\n\n{prompts.REPORT_PLAN}",
             write=f"{prompts.BRIEFING_STYLE}\n\n{prompts.REPORT_CRAFT}",
-            summary_box=True, require_exhibits=True,
+            summary_box=True, require_exhibits=True, first_part_role="Summary section",
         ),
         OutputType(
             "study_guide", "Study guide", "report", "Learn concepts and test your understanding.",
@@ -87,6 +103,7 @@ OUTPUT_TYPES = {
             "slides", "Slides", "slides", "Present the findings in a slide deck.",
             "Presentation",
             options=("focus", "audience", "length", "language", "use"),
+            first_part_role="Title slide",
         ),
         OutputType(
             "flashcards", "Flashcards", "cards", "Practice recalling one idea at a time.",

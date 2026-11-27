@@ -116,6 +116,46 @@ it("keeps timeline events ordered by saved position, with duplicate or undated h
   expect(screen.getByText("Event 3 of 3")).toBeVisible();
 });
 
+it("lays out top-level Markdown tables and exhibits on the report track and keeps semantic blocks intact", () => {
+  const table = (heading: string) => `| ${heading} | Result |\n| --- | --- |\n| Item | A |`;
+  const saved = artifact([
+    "Preamble text.", table("Preamble measure"),
+    "## Summary\n\n<!-- block: summary -->\n\nSummary text.", table("Summary measure"),
+    "## Measurements\n\nDetails.", table("Direct measure"),
+    table("Quoted measure").split("\n").map((line) => `> ${line}`).join("\n"),
+    `- Procedure\n\n${table("Listed measure").split("\n").map((line) => `  ${line}`).join("\n")}`,
+    `:::callout Method\n${table("Callout measure")}\n:::`,
+    `:::exhibit\nObserved values\n${table("Exhibit measure")}\n:::`,
+  ].join("\n\n"));
+  const timeline = type("timeline");
+  const { container } = render(<><ReportView artifact={saved} type={timeline} /><PrintRoot artifact={saved} type={timeline} /></>);
+  const report = container.querySelector<HTMLDivElement>(".rp")!;
+  expect(report).toHaveClass("reader-track");
+  expect(report).toHaveAttribute("data-track", "report");
+  const reader = within(report);
+  const tableFor = (name: string) => reader.getByRole("columnheader", { name }).closest(".rp-table")!;
+
+  for (const [heading, block] of [
+    ["Preamble measure", "rp-preamble"], ["Summary measure", "rp-summary"], ["Direct measure", "rp-prose"],
+  ] as const) {
+    const markdown = tableFor(heading).parentElement;
+    expect(markdown).toHaveClass("answer-markdown");
+    expect(markdown?.parentElement).toHaveClass(block);
+    expect(markdown?.querySelector(":scope > p")).toBeInTheDocument();
+  }
+  expect(tableFor("Quoted measure").parentElement?.tagName).toBe("BLOCKQUOTE");
+  expect(tableFor("Listed measure").parentElement?.tagName).toBe("LI");
+  expect(tableFor("Callout measure").closest("aside")).toHaveClass("rp-callout");
+  expect(tableFor("Exhibit measure").closest(".rp-exhibit")?.parentElement).toHaveClass("rp-prose");
+  expect(report.querySelector(".rp-events .rp-exhibit")).toBeInTheDocument();
+
+  const paper = document.getElementById("print-root")!;
+  expect(paper.parentElement).toBe(document.body);
+  expect(paper.querySelector(".rp")).toHaveAttribute("data-presentation", "print");
+  expect(paper.querySelector(".reader-track, [data-track]")).toBeNull();
+  expect(paper.querySelectorAll("table")).toHaveLength(7);
+});
+
 it("updates the current part after a pane resize at the same scroll position as an end jump", () => {
   let resized: ResizeObserverCallback;
   const observe = vi.fn();

@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 from gunther.activity import Tracked
 
@@ -68,6 +69,9 @@ class AnswerRun:
     finished: bool = False
     scope: tuple[str, str] | None = None  # Workspace and library of a scoped run.
     lineage_id: str | None = None
+    server_boot_id: str = ""
+    attempt_id: str = ""
+    on_stop: Callable[[AnswerRun], None] | None = field(default=None, repr=False)
     _activity: tuple[Tracked, str, str] | None = field(default=None, init=False)
     _watchers: list[_Watcher] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -80,8 +84,13 @@ class AnswerRun:
         with self._lock:
             if self.finished:
                 return False
+            if self.stop_requested.is_set():
+                return True
             self.stop_requested.set()
-            return True
+        # Revocation takes the SQLite write lock. Do not hold the run mutex while waiting.
+        if self.on_stop is not None:
+            self.on_stop(self)
+        return True
 
     def publish(
         self, name: str, data: dict[str, Any], *, open: dict[str, Any] | None = None,
@@ -159,12 +168,24 @@ class AnswerRuns:
     """At most one answer per conversation at a time."""
 
     def __init__(self) -> None:
+        self.server_boot_id = str(uuid4())
         self._runs: dict[str, AnswerRun] = {}
         self._lock = threading.Lock()
 
     def get(self, session_id: str) -> AnswerRun | None:
         with self._lock:
             return self._runs.get(session_id)
+
+    def matches(
+        self, key: str, *, scope: tuple[str, str], server_boot_id: str, attempt_id: str,
+    ) -> bool:
+        with self._lock:
+            run = self._runs.get(key)
+            return bool(
+                run is not None and not run.finished
+                and run.scope == scope and run.server_boot_id == server_boot_id
+                and run.attempt_id == attempt_id
+            )
 
     @contextmanager
     def locked_active(self) -> Iterator[list[AnswerRun]]:
@@ -181,6 +202,7 @@ class AnswerRuns:
         *,
         scope: tuple[str, str] | None = None,
         lineage_id: str | None = None,
+        on_stop: Callable[[AnswerRun], None] | None = None,
     ) -> AnswerRun | None:
         """Begin an answer on its own thread; None when one is already being written."""
 
@@ -188,7 +210,10 @@ class AnswerRuns:
             current = self._runs.get(session_id)
             if current is not None and not current.finished:
                 return None
-            run = AnswerRun(session_id, question, scope=scope, lineage_id=lineage_id)
+            run = AnswerRun(
+                session_id, question, scope=scope, lineage_id=lineage_id,
+                server_boot_id=self.server_boot_id, attempt_id=str(uuid4()), on_stop=on_stop,
+            )
             self._runs[session_id] = run
 
         def target() -> None:

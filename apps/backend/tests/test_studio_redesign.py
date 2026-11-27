@@ -7,8 +7,18 @@ import re
 
 import pytest
 from fake_models import FakeProvider, gateway, is_writing, model, orchestrator_replies
-from test_studio_pipeline import PASSAGES, FakeRenderer, looking_router, pool, router
+from test_studio_pipeline import (
+    DECK,
+    PASSAGES,
+    FakeRenderer,
+    build_studio,
+    looking_router,
+    pool,
+    request_text,
+    router,
+)
 
+from gunther.citations import citation_numbers
 from gunther.llm import ModelError
 from gunther.outputs import Notes, Spec
 from gunther.studio import design as D
@@ -41,8 +51,9 @@ def dressed(request):
 def deck(route=dressed, **options):
     fake = FakeProvider(route)
     agents = StudioAgents(gateway(fake), use="talk", **options)
-    built = agents.make(
-        model(), "high", Spec("slides", "collaborator", brief="A 10-minute talk"), pool(), Notes()
+    built = build_studio(
+        agents, model(), "high", Spec("slides", "collaborator", brief="A 10-minute talk"),
+        pool(), Notes(),
     )
     return agents, built, fake
 
@@ -128,19 +139,10 @@ def test_a_restyle_of_a_plain_deck_designs_it_and_an_unknown_style_is_refused():
 @contextlib.contextmanager
 def studio_deck(tmp_path, inner):
     from test_artifact_agent import done, turn
-    from test_outputs import app_for, library, workspace
+    from test_outputs import app_for, library, plan_and_approve, slide_outline, workspace
 
     notes = {f"Source {n}": text for n, text in enumerate(PASSAGES, 1)}
-    first = [
-        {
-            "actions": [
-                {"do": "select", "artifact": "new:slides"},
-                {"do": "make"},
-                {"do": "save", "text": "Made the deck."},
-            ]
-        }
-    ]
-    fake = FakeProvider(orchestrator_replies(first, inner))
+    fake = FakeProvider(inner)
     with app_for(tmp_path, fake) as client:
         base_id, _ = library(client, notes=notes)
         client.post(
@@ -148,7 +150,11 @@ def studio_deck(tmp_path, inner):
             headers=workspace(client),
             json={"id": "talk", "title": "Trial"},
         )
-        made = done(turn(client, base_id, "talk", "A 10-minute deck on the trial"))
+        made = done(plan_and_approve(
+            client, base_id,
+            {"type": "slides", "use": "talk", "focus": "A 10-minute deck on the trial"},
+            conversation_id="talk", outline=slide_outline(DECK),
+        ))
         assert made["outcome"] == "saved", made
 
         def go(decisions, text, *, outcome="saved"):
@@ -219,7 +225,10 @@ def test_review_saves_checked_words_and_a_skip_if_redesign_fails(tmp_path):
         actions = [{"do": "review", "parts": [2]}, {"do": "save", "text": "Reviewed slide 2"}]
         saved, designs = go([{"actions": actions}], "Improve slide 2")
         old, updated = (fmt.split_slides(version["content"]) for version in (first, saved))
-        assert updated[1] == REWRITTEN and (updated[0], updated[2]) == (old[0], old[2])
+        [sample_ref] = citation_numbers(old[1])
+        expected = REWRITTEN.replace("[1]", f"[{sample_ref}]")
+        assert updated[1] == expected and (updated[0], updated[2]) == (old[0], old[2])
+        assert saved["citations"] == first["citations"]
         assert len(designs) == 2 and saved["sections"][1]["checked"]
         assert any(note["label"] == "Slide 2 drawn plainly"
                    for note in saved["provenance"]["skill"]["skipped"])
@@ -317,6 +326,7 @@ def test_a_request_about_the_look_designs_the_named_slides_and_leaves_their_word
 def test_a_request_about_the_look_is_refused_on_a_deck_with_no_style_and_on_a_report(tmp_path):
     from gunther.artifact_actions import Act, Gate, validate
     from gunther.artifact_workspace import PartRec
+    from gunther.outputs import ParentWrite
 
     with studio_deck(tmp_path, studio_inner) as (client, base_id, first, go):
         from test_artifact_agent import kept
@@ -324,7 +334,8 @@ def test_a_request_about_the_look_is_refused_on_a_deck_with_no_style_and_on_a_re
         workspace, brief = kept(client, "talk")
         work = workspace.works[0]
         ids = [item.id for item in work.outline]
-        gate = Gate(workspace, brief, ids, "message", False, "", 3, None)
+        authority = ParentWrite(first["workspaceId"], base_id, "talk", work.key, first["id"])
+        gate = Gate(workspace, brief, ids, "message", False, "", 3, None, authority=authority)
         act = Act(do="redesign", parts=[2], instruction="a diagram")
         assert validate(act, gate) is None
         assert "Say what" in validate(Act(do="redesign", parts=[2]), gate)
@@ -346,8 +357,8 @@ def lookable(findings=None, inner=None):
     designer = inner or dressed
 
     def route(request):
-        system = str(request["messages"][0]["content"])
-        if "demanding presentation designer" in system or "A designer looked at" in system:
+        prompt = request_text(request)
+        if "demanding presentation designer" in prompt or "A designer looked at" in prompt:
             return looks(request)
         return designer(request)
 
@@ -387,8 +398,7 @@ def test_an_overflowing_designed_slide_is_designed_again_with_the_problems_not_r
     assert fmt.design_of(slides[1])
     assert words(slides[1]) == words(before[1])
     assert not any(
-        "A designer looked at these slides" in str(r["messages"][0]["content"])
-        for r in fake.requests
+        "A designer looked at these slides" in request_text(r) for r in fake.requests
     )
     assert renderer.captures == 2  # before and after
 
@@ -408,7 +418,7 @@ def test_the_look_asks_the_designer_with_what_was_measured(tmp_path):
     request = asked[0]
     assert "text spills out of its box: li.row '3 summers' spills out of its box" in request
     assert "text under 18 px" in request and "412 buildings" in request
-    assert "never by cutting or rewording" in request
+    assert "Simplify the layout while keeping the existing words." in request
 
 
 def test_template_slides_keep_the_old_path_beside_designed_ones(tmp_path):
@@ -453,8 +463,7 @@ def test_what_the_eye_finds_on_a_designed_slide_leads_to_a_design_not_a_rewrite(
     slides = fmt.split_slides(built.content)
     assert fmt.parse_slide(slides[1]).layout == "stats" and fmt.design_of(slides[1])
     assert not any(
-        "A designer looked at these slides" in str(r["messages"][0]["content"])
-        for r in fake.requests
+        "A designer looked at these slides" in request_text(r) for r in fake.requests
     )
 
 

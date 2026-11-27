@@ -44,7 +44,7 @@ export function EditPane({ artifact, type, saving, onSave, onCancel, onCite, onD
     void restoreUnchangedScenes(artifact.content, draft).then(onSave);
   };
 
-  return <section className="outputs-edit" aria-label="Edit">
+  return <section className="outputs-edit reader-track" data-track="full" aria-label="Edit">
     <div className="outputs-edit-bar">
       <span>{changed ? "Unsaved changes" : "No changes yet"}{changed && typed > 0 ? ` · ${typed} ${typed === 1 ? "part" : "parts"} to re-check` : ""}</span>
       <div>

@@ -769,7 +769,8 @@ def test_backup_reads_originals_from_the_library_root(tmp_path: Path) -> None:
 def test_outputs_built_by_agents_are_verified_in_a_backup(tmp_path: Path) -> None:
     """Version 2 outputs cover their kind, citations, scope and inputs; the tool checks them."""
 
-    from fake_models import FakeProvider, output_replies
+    from fake_models import FakeProvider
+    from test_outputs import built, output_replies, plan_and_approve
 
     data = tmp_path / "data"
     data.mkdir(mode=0o700)
@@ -780,6 +781,7 @@ def test_outputs_built_by_agents_are_verified_in_a_backup(tmp_path: Path) -> Non
         ],
     }
     fake = FakeProvider(output_replies(outline, ["## T cells\n\nCD3D marks T cells [1]."]))
+    focus = "Résumé of the markers"
     # Direct Studio builds also seal correctly when earlier settings are on disk.
     (tmp_path / "service-settings.json").write_text(
         json.dumps(
@@ -810,24 +812,20 @@ def test_outputs_built_by_agents_are_verified_in_a_backup(tmp_path: Path) -> Non
             },
         )
         workspace_id = client.get("/api/workspace/bootstrap").json()["workspaceId"]
-        with client.stream(
-            "POST",
-            f"/api/knowledge-bases/{base_id}/outputs/build/stream",
+        artifact = built(plan_and_approve(
+            client, base_id, {"type": "report", "audience": "student", "focus": focus},
             headers={"X-Gunther-Workspace-Id": workspace_id},
-            json={
-                "clientRequestId": "backup_output_0001", "kind": "report", "audience": "student",
-                "brief": "Résumé of the markers",
-            },
-        ) as response:
-            body = response.read().decode()
-        assert "event: done" in body, body
-        artifact_id = json.loads(body.rsplit("data: ", 1)[1])["id"]
+            request_id="backup_output_0001",
+        ))["artifact"]
+        artifact_id = artifact["id"]
 
     # Verify the stored v2 seal independently of both production callers.
     with closing(sqlite3.connect(data / "gunther.sqlite")) as connection:
         connection.row_factory = sqlite3.Row
         row = connection.execute("SELECT * FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
-    assert row["brief"] == "Résumé of the markers"
+    assert row["brief"] == artifact["brief"] == (
+        f"Goal: {focus}\nAudience: student\nOutput type: report"
+    )
     sealed = {
         field: row[field] for field in ("audience", "title", "kind", "style", "brief", "origin")
     }
@@ -841,6 +839,7 @@ def test_outputs_built_by_agents_are_verified_in_a_backup(tmp_path: Path) -> Non
         scope=json.loads(row["scope_json"]),
         inputs=json.loads(row["inputs_json"]),
     )
+    assert sealed["provenance"]["creationPlan"]["options"]["focus"] == focus
     canonical = json.dumps(sealed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     assert row["manifest_hash"] == hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

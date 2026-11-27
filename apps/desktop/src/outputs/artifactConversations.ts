@@ -1,6 +1,7 @@
-import type { ArtifactSummary, ImportedArtifactConversation, ImportedArtifactTurn, OutputScope } from "@gunther/contracts";
+import type { ActivityOpen, ArtifactConversationSummary, ArtifactSummary, ImportedArtifactConversation, ImportedArtifactTurn, OutputActivityOpen, OutputScope, StudioWorkSummary } from "@gunther/contracts";
 import { knowledgeApi } from "../api";
 import { persistentStorage } from "../persistentStorage";
+import type { OutputTarget, PlanAddress } from "./useStudio";
 
 export const EARLIER_WORK = "earlier-work";
 export const libraryScope = (): OutputScope => ({ mode: "library", sourceIds: [], unitIds: [], sessionIds: [] });
@@ -11,8 +12,29 @@ export function scopeLabel(scope: OutputScope) {
 }
 export const artifactRequestId = () => globalThis.crypto?.randomUUID?.() ?? `request_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
+export const planAddressKey = ({ conversationId, planId }: PlanAddress) => JSON.stringify([conversationId, planId]);
+export function planAddress({ conversationId, planId }: OutputTarget): PlanAddress | null {
+  return conversationId && planId ? { conversationId, planId } : null;
+}
+
+export function outputTargetKey(target: OutputTarget): string | null {
+  if (target.artifactId) return `version:${target.artifactId}`;
+  if (target.lineageId) return `lineage:${target.lineageId}`;
+  if (target.planId) return `plan:${JSON.stringify([target.conversationId ?? null, target.planId])}`;
+  return target.conversationId ? `conversation:${target.conversationId}` : null;
+}
+
+export function outputActivityTarget(open: ActivityOpen | null): OutputActivityOpen | null {
+  return open?.view === "library" && open.tab === "outputs" ? open : null;
+}
+
+export type StudioWork = StudioWorkSummary & { conversationId: string };
+export function conversationWorks(conversations: readonly ArtifactConversationSummary[]): StudioWork[] {
+  return conversations.flatMap(({ id, studioWorks }) => (studioWorks ?? []).map((work) => ({ ...work, conversationId: id })));
+}
+
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
-const validScope = (value: unknown): value is OutputScope => {
+export const validScope = (value: unknown): value is OutputScope => {
   if (!value || typeof value !== "object") return false;
   const scope = value as Partial<OutputScope>;
   return (scope.mode === "library" || scope.mode === "selection") && strings(scope.sourceIds) && strings(scope.unitIds) && strings(scope.sessionIds);
