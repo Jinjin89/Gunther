@@ -885,3 +885,84 @@ def test_outputs_built_by_agents_are_verified_in_a_backup(tmp_path: Path) -> Non
         assert "Artifact" in rejected.stderr, (field, rejected.stderr)
         if damaged == "[":
             assert f"Artifact {artifact_id} contains invalid JSON" in rejected.stderr
+
+
+@pytest.fixture
+def approved_output_backup(tmp_path: Path) -> tuple[Path, dict, dict]:
+    from fake_models import FakeProvider
+    from test_outputs import (
+        ONE_SECTION,
+        app_for,
+        built,
+        library,
+        output_replies,
+        plan_and_approve,
+        route,
+        workspace,
+    )
+
+    data = tmp_path / "data"
+    fake = FakeProvider(output_replies(ONE_SECTION, ["## T cells\n\nCD3D marks T cells [1]."]))
+    with app_for(data, fake) as client:
+        base_id, _ = library(client)
+        headers = workspace(client)
+        first = built(plan_and_approve(client, base_id, {"type": "report"}, headers=headers))[
+            "artifact"
+        ]
+        descendant = client.post(
+            route(base_id, first["id"], "/edits"),
+            headers=headers,
+            json={"clientRequestId": "backup_output_edit", "content": first["content"] + "\n"},
+        ).raise_for_status().json()
+
+    created = _run("backup", "--data-dir", str(data), "--output-dir", str(tmp_path / "backups"))
+    assert created.returncode == 0, created.stderr
+    return Path(json.loads(created.stdout)["backup"]), first, descendant
+
+
+def test_backup_round_trip_with_creation_plan_reference(
+    approved_output_backup: tuple[Path, dict, dict],
+) -> None:
+    backup, first, descendant = approved_output_backup
+    assert (first["versionNumber"], descendant["versionNumber"]) == (1, 2)
+    assert descendant["supersedesArtifactId"] == first["id"]
+    assert descendant["lineageId"] == first["lineageId"]
+
+    verified = _run("verify", str(backup))
+    assert verified.returncode == 0, verified.stderr
+
+    uri = f"{(backup / 'gunther.sqlite').as_uri()}?mode=ro&immutable=1"
+    with closing(sqlite3.connect(uri, uri=True)) as connection:
+        (provenance_json,) = connection.execute(
+            "SELECT provenance_json FROM artifacts WHERE id = ?", (descendant["id"],)
+        ).fetchone()
+    plan = first["provenance"]["creationPlan"]
+    assert json.loads(provenance_json)["creationPlanRef"] == {
+        "firstVersionId": first["id"],
+        "planId": plan["planId"],
+        "revision": plan["revision"],
+    }
+
+
+def test_backup_rejects_creation_plan_reference_from_a_different_lineage(
+    tmp_path: Path, approved_output_backup: tuple[Path, dict, dict],
+) -> None:
+    backup, _, descendant = approved_output_backup
+    # The lineage is outside the artifact seal. Refresh only the outer manifest.
+    with closing(sqlite3.connect(backup / "gunther.sqlite")) as connection, connection:
+        connection.execute(
+            "UPDATE artifacts SET lineage_id = ? WHERE id = ?",
+            ("unrelated_lineage", descendant["id"]),
+        )
+    _reseal_manifest(backup)
+
+    error = f"Artifact {descendant['id']} has an invalid creation plan"
+    rejected = _run("verify", str(backup))
+    assert rejected.returncode == 2, rejected.stdout
+    assert error in rejected.stderr
+
+    output = tmp_path / "rejected-backups"
+    rejected = _run("backup", "--data-dir", str(backup), "--output-dir", str(output))
+    assert rejected.returncode == 2, rejected.stdout
+    assert error in rejected.stderr
+    assert list(output.iterdir()) == []

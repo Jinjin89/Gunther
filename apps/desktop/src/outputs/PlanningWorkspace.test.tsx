@@ -146,6 +146,7 @@ function mount({ type = flashcards, initial = detailFor(type), local, ...overrid
     };
     return <PlanDetailReader.Provider value={read}>
       <PlanningWorkspace {...{ address, type, controller, detail, work: detail?.works[0] ?? null, dirty }}
+        detailReadComplete={Boolean(detail)}
         sourceState={(scope) => scope.mode === "selection" && !scope.sourceIds.length && !scope.unitIds.length && !scope.sessionIds.length
           ? "empty" : "ready"} currentScope={library} modelMenu={models} webAvailable busy={false} stage={null} onStop={stop}
         {...overrides} {...changed} />
@@ -385,6 +386,7 @@ describe("PlanningWorkspace", () => {
 
     expect(screen.getByText("Needs answer")).toBeVisible();
     expect(approve()).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Plan again" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Second choice" }));
     expect(app.turn.mock.calls[0]?.[1]).toMatchObject({
       kind: "answer", planRevision: "p7", questionMessageId: "one", answer: { type: "choice", index: 1 },
@@ -560,7 +562,7 @@ describe("PlanningWorkspace", () => {
       return accepted;
     });
     expect(approve()).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Plan with these sources" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Plan again" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Use current model" }));
     expect(app.patch.mock.calls[0]?.[2]).toMatchObject({ options: { effort: "high", ...(model === "removed" ? { model: "studio" } : {}) } });
     expect(app.turn).not.toHaveBeenCalled();
@@ -711,6 +713,24 @@ describe("PlanningWorkspace", () => {
     await waitFor(() => expect(app.turn.mock.calls[0]?.[1]).toMatchObject({ kind: "approve", planRevision: "p8" }));
   });
 
+  it.each([
+    "A reviewed figure is unavailable or failed its integrity check. Plan again.",
+    "Evidence is unavailable for outline rows finding. Edit the outline or plan again.",
+  ])("replans a blocked proposal with empty feedback (%s)", async (blocker) => {
+    const plan = planFor(slides, { planStatus: "planning", blocker });
+    const app = mount({ type: slides, initial: detailFor(slides, plan) });
+    expect(approve()).toBeDisabled();
+    expect(text("What should change in this plan?")).toHaveValue("");
+
+    const replan = screen.getByRole("button", { name: "Plan again" });
+    expect(replan).toBeEnabled();
+    await userEvent.click(replan);
+
+    expect(app.turn).toHaveBeenCalledExactlyOnceWith(address.conversationId, {
+      kind: "plan", planId: address.planId, planRevision: plan.planRevision, clientRequestId: expect.any(String),
+    });
+  });
+
   it("requires a new plan when the source scope changes and keeps the captured scope while the Library changes", async () => {
     const app = mount({ currentScope: selection });
     expect(approve()).toBeEnabled();
@@ -718,7 +738,7 @@ describe("PlanningWorkspace", () => {
     expect(app.patch.mock.calls[0]?.[2]).toMatchObject({ baseEditVersion: 7, options: { scope: selection } });
     expect(approve()).toBeDisabled();
     expect(app.turn).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "Plan with these sources" }));
+    await userEvent.click(screen.getByRole("button", { name: "Plan again" }));
     expect(app.turn.mock.calls[0]?.[1]).toMatchObject({ kind: "plan", planId: address.planId, planRevision: "p8" });
   });
 

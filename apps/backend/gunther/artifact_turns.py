@@ -82,6 +82,7 @@ from gunther.schemas import (
     ArtifactTurnInput,
     ArtifactTurnOut,
     BuildTurnInput,
+    ConversationCitationOut,
     CreateArtifactConversationInput,
     InitialPlanTurnInput,
     OutputModelOut,
@@ -152,6 +153,66 @@ class _AgentResult:
     searched: list[SearchHit]
     key_results: KeyResultRefs
     progress: dict[str, Any] | None
+
+
+def _checkpoint_search_hits(hits: list[SearchHit], pool: Pool) -> list[dict[str, Any]]:
+    """Keep candidates in encounter order, pointing to pinned passages where possible."""
+
+    candidates = []
+    for hit in hits:
+        item = hit.item
+        held = pool.known.get(item.key)
+        candidate = {"kind": item.kind, "query": hit.query, "kept": (
+            hit.kept if hit.kept is not None else held is not None
+        )}
+        if held is not None:
+            candidate["ref"] = held.ref
+        else:
+            # Results outside the pool, such as web results the planner could not use.
+            candidate.update(
+                title=item.title, url=item.url, locator=item.locator, snippet=item.text,
+                source_id=getattr(item.citation, "source_id", None) or None,
+                block_id=getattr(item.citation, "block_id", None),
+            )
+        candidates.append(candidate)
+    return candidates
+
+
+def _restore_search_hits(candidates: list[dict[str, Any]], pool: Pool) -> list[SearchHit]:
+    by_ref = pool.by_ref()
+    hits = []
+    for candidate in candidates:
+        if "ref" in candidate:
+            hits.append(SearchHit(
+                by_ref[candidate["ref"]], candidate["query"], candidate["kept"],
+            ))
+            continue
+        note = SearchedHitOut.model_validate(candidate)
+        block_id = candidate.get("block_id")
+        if "block_id" not in candidate and note.kind == "library" and note.snippet:
+            # Historical checkpoints only kept a preview. Recover a block ID when the
+            # preview identifies exactly one pinned block.
+            blocks = {
+                item.citation.block_id for item in pool.items
+                if item.kind == note.kind and item.citation.source_id == note.source_id
+                and item.locator == note.locator and item.text.startswith(note.snippet)
+            }
+            if len(blocks) == 1:
+                block_id = blocks.pop()
+        item = workspaces.evidence_from_citation(ConversationCitationOut(
+            id="", kind=note.kind, url=note.url, source_id=note.source_id or "",
+            source_title=note.title, quote=note.snippet, locator=note.locator,
+            status="provisional", confidence=0, block_id=block_id,
+        ))
+        hits.append(SearchHit(item, note.query, note.kept))
+    return hits
+
+
+def _turn_request(conversation_id: str, command: _CREATION_INPUT | SavedArtifactTurnInput) -> dict:
+    return {
+        "conversationId": conversation_id,
+        **command.model_dump(mode="json", by_alias=True, exclude={"client_request_id"}),
+    }
 
 
 def _plan_text(command: _CREATION_INPUT) -> str:
@@ -250,18 +311,12 @@ class ArtifactTurns:
         payload: ArtifactTurnInput,
     ) -> tuple[str, ...]:
         command = payload.root
+        request = _turn_request(conversation_id, command)
+        if isinstance(command, InitialPlanTurnInput):
+            # Setup inherits omitted fields, including options with explicit defaults.
+            request["setupFields"] = sorted(command.setup.model_fields_set)
         fingerprint = self._output_fingerprint(
-            workspace_id,
-            base_id,
-            "artifact-turn",
-            {
-                "conversationId": conversation_id,
-                **command.model_dump(
-                    mode="json",
-                    by_alias=True,
-                    exclude={"client_request_id"},
-                ),
-            },
+            workspace_id, base_id, "artifact-turn", request,
         )
         if isinstance(command, SavedArtifactTurnInput):
             previous = self._output_fingerprint(
@@ -277,6 +332,25 @@ class ArtifactTurns:
             )
             return fingerprint, previous
         return (fingerprint,)
+
+    def _matches_turn_request(
+        self, row: ArtifactConversation, user: ArtifactMessage,
+        command: _CREATION_INPUT | SavedArtifactTurnInput, stored: dict, fingerprint: str,
+    ) -> bool:
+        saved = stored.get("requestFingerprint")
+        if saved == fingerprint:
+            return True
+        # The old hash filled Setup defaults, but the message kept the submitted fields.
+        return (
+            isinstance(command, InitialPlanTurnInput)
+            and user.kind == command.kind
+            and {key: value for key, value in stored.items() if key != "requestFingerprint"}
+            == command.request_fields()
+            and saved == self._output_fingerprint(
+                row.workspace_id, row.knowledge_base_id, "artifact-turn",
+                _turn_request(row.id, command),
+            )
+        )
 
     @staticmethod
     def _user_message(session: Session, row: ArtifactConversation, request_id: str):
@@ -304,7 +378,7 @@ class ArtifactTurns:
         stored = json.loads(user.payload_json or "{}")
         saved_fingerprint = stored.get("requestFingerprint")
         if saved_fingerprint is not None:
-            same = saved_fingerprint == fingerprint
+            same = self._matches_turn_request(row, user, command, stored, fingerprint)
         else:
             same = (
                 isinstance(command, SavedArtifactTurnInput)
@@ -670,7 +744,8 @@ class ArtifactTurns:
             legacy_build = legacy.build if legacy else None
             user = self._user_message(session, row, command.client_request_id)
             if user is not None:
-                if json.loads(user.payload_json or "{}").get("requestFingerprint") != fingerprint:
+                stored = json.loads(user.payload_json or "{}")
+                if not self._matches_turn_request(row, user, command, stored, fingerprint):
                     raise ArtifactConflictError(
                         "clientRequestId was already used for a different message"
                     )
@@ -1448,17 +1523,17 @@ class ArtifactTurns:
             pool.items, pool.known = [], {}
             pool.restore(canonical)
             pool.top = top
-            packed = pack_searched(searched, ())
+            candidates = _checkpoint_search_hits(searched, pool)
             packed_results = [
                 UsedKeyResultOut(id=id_, text=text, refs=sorted(refs.values()))
                 for id_, (text, refs) in key_results_read.items()
             ]
             if progress is not None and manifest["web_pass"] in ("complete", "unavailable"):
-                packed = [
-                    SearchedHitOut.model_validate(hit)
+                candidates = [
+                    hit
                     for hit in progress["manifest"].get("searched", ())
                     if hit["kind"] != "web"
-                ] + packed
+                ] + candidates
                 packed_results = [
                     UsedKeyResultOut.model_validate(item)
                     for item in progress["manifest"].get("key_results_used", ())
@@ -1475,7 +1550,7 @@ class ArtifactTurns:
                     {item.unit_id: item.evidence_count for item in material.snapshots}
                     if material.inputs else manifest.get("unit_evidence_counts", {})
                 ),
-                "searched": [hit.model_dump(mode="json") for hit in packed],
+                "searched": candidates,
                 "key_results_used": [item.model_dump(mode="json") for item in packed_results],
             }
             if legacy_build is not None:
@@ -1707,6 +1782,9 @@ class ArtifactTurns:
                 result = agent.rebuild(*rebuild)
             else:
                 result = agent.run()
+            if result.save is not None and progress is not None:
+                assert pinned is not None
+                searched = _restore_search_hits(progress["manifest"].get("searched", []), pinned)
             return _AgentResult(result, agent.brief, material, searched, key_results_read, progress)
 
     def _saved_turn(
@@ -1819,6 +1897,23 @@ class ArtifactTurns:
                 if work is None:
                     workspaces.import_work(shown, checks, workspace, brief)
                 else:
+                    if (
+                        work.version_id != shown.id and shown.origin == "edit"
+                        and SHAPES[shown.kind].outline
+                        and all(part.id for part in shown.outline)
+                    ):
+                        # Bind the outline before syncing text. A renamed row's identity
+                        # comes from the saved edit, even if sections were also added.
+                        previous = {item.id: item for item in work.outline}
+                        work.outline = [
+                            workspaces.ItemRec.model_validate(
+                                (previous[part.id].model_dump() if part.id in previous else {})
+                                | part.model_dump()
+                                | {"layout": part.layout or "", "notes": part.notes,
+                                   "requires": part.requires}
+                            )
+                            for part in shown.outline
+                        ]
                     workspaces.sync(work, shown, checks, workspace, brief)
                 versions[lineage], saved[lineage] = shown.version_number, shown.content
 
@@ -2231,18 +2326,9 @@ class ArtifactTurns:
         preferences = {"emphasize": brief.emphasize, "avoid": brief.avoid}
         title = self.artifact_conversation_title(base_id, workspace_id, conversation_id)
         cited = [workspaces.evidence_from_citation(item) for item in built.citations]
+        searched = pack_searched(attempt.searched, cited)
         if attempt.progress is not None:
             manifest = attempt.progress["manifest"]
-            cited_keys = {
-                (item.kind, item.citation.source_id or None, item.url, item.locator)
-                for item in cited
-            }
-            searched = [
-                hit
-                for value in manifest.get("searched", ())
-                if (hit := SearchedHitOut.model_validate(value))
-                and (hit.kind, hit.source_id, hit.url, hit.locator) not in cited_keys
-            ]
             refs = {ref: index for index, ref in enumerate(built.pool_refs, 1)}
             results = [
                 UsedKeyResultOut.model_validate(
@@ -2251,7 +2337,6 @@ class ArtifactTurns:
                 for value in manifest.get("key_results_used", ())
             ]
         else:
-            searched = pack_searched(attempt.searched, cited)
             results = pack_key_results(attempt.key_results, cited)
         response = None
 

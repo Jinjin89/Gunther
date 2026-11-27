@@ -25,7 +25,7 @@ from gunther.llm import ModelError, ModelInfo
 from gunther.llm import unfence as _unfence
 from gunther.model_profiles import Effort
 from gunther.output_document import assemble_output, number_output_part
-from gunther.output_types import DECK_USES, SHAPES
+from gunther.output_types import DECK_USES, SHAPES, OutputType
 from gunther.outputs import (
     BuiltOutput,
     Draft,
@@ -158,12 +158,11 @@ def _story_options(options: PlanOptionsOut) -> dict[str, Any]:
 
 
 def _story_digest(
-    prepared: Prepared, inputs: Any, plan: PlanDraftOut | None = None,
+    item: OutputType, prepare_key: str, inputs: dict[str, Any], plan: PlanDraftOut,
 ) -> str:
-    item = prepared.run.output_type
     return digest([
-        STORY_VERSION, prepared.progress["prepare_key"], item.id, item.plan, item.write,
-        inputs, plan.model_dump(mode="json") if plan is not None else None,
+        STORY_VERSION, prepare_key, item.id, item.plan, item.write,
+        inputs, plan.model_dump(mode="json"),
     ])
 
 
@@ -366,6 +365,7 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
         self.scientific_context = None
         use = (self.use or "talk") if spec.kind == "slides" else ""
         run = Run(spec, use)
+        item = run.output_type
         eye = vision_model(self.gateway, model, effort) if use else None
         vision = [eye[0].ref, eye[1]] if eye else None
         note_inputs = asdict(notes)
@@ -400,19 +400,31 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
             effort, vision, legacy_scope, legacy_web,
         )
         same_material = resumed.get("material_key") == material_key
-        if (
-            resumed.get("format") == PROGRESS_FORMAT
-            and same_material and resumed.get("prepare_key") == prepare_key
-        ):
-            fields = (*prep_fields, *_STORY_FIELDS, *_WRITE_FIELDS)
-            state.update({key: resumed[key] for key in fields if key in resumed})
+        same_preparation = resumed.get("prepare_key") == prepare_key
+
+        def keep_annotations(source: Mapping[str, Any]) -> None:
+            # Keep the reviewed row annotations through preparation checkpoints for approval.
+            if self._retained_plan(item, source)[1] is not None:
+                state["story_annotations"] = {
+                    key: source[key] for key in ("prepare_key", *_STORY_FIELDS)
+                }
+
+        if resumed.get("format") == PROGRESS_FORMAT and same_material:
+            if isinstance(annotations := resumed.get("story_annotations"), dict):
+                state["story_annotations"] = annotations
+            if same_preparation:
+                fields = (*prep_fields, *_STORY_FIELDS, *_WRITE_FIELDS)
+                state.update({key: resumed[key] for key in fields if key in resumed})
+            else:
+                keep_annotations(resumed)
         elif legacy_matches:
             state.update({key: resumed[key] for key in prep_fields if key in resumed})
 
         def discard(*fields: str) -> None:
+            keep_annotations(state)
             _drop_stages(state, (*fields, *_STORY_FIELDS, *_WRITE_FIELDS))
 
-        applying_preferences = same_material and resumed.get("prepare_key") != prepare_key
+        applying_preferences = same_material and not same_preparation
         if applying_preferences:
             self._stage(emit, "preferences", "Applying your preferences", "running")
 
@@ -584,7 +596,7 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
             "order_fixed": order_fixed,
             "coverage_fixed": coverage_fixed,
         }
-        kept, story = self._retained_plan(prepared)
+        kept, story = self._retained_plan(item, state)
         if kept and state.get("story_inputs") == request and (
             item.capabilities.pipeline == "direct" or story is not None
         ):
@@ -617,8 +629,12 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
                     "type": "outline", "title": plan.proposal.title,
                     "sections": [row.model_dump(mode="json") for row in plan.outline or []],
                 })
-            state.update(story_key=_story_digest(prepared, request, plan), story_inputs=request,
-                         plan_draft=plan.model_dump(mode="json"))
+            state.pop("story_annotations", None)
+            state.update(
+                story_key=_story_digest(item, state["prepare_key"], request, plan),
+                story_inputs=request,
+                plan_draft=plan.model_dump(mode="json"),
+            )
         return plan
 
     def _propose_direct(
@@ -676,10 +692,10 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
         valid_refs = set(prepared.pool.by_ref())
         suggested: dict[str, PlanPartOut] = {}
         source_units = []
-        summary_id = None
+        first_id = None
         for index, unit in enumerate(source):
-            if item.summary_box and index == 0:
-                identity = summary_id = ordered_rows[0].id if ordered_rows else _row_id()
+            if item.first_part_role and index == 0:
+                identity = first_id = ordered_rows[0].id if ordered_rows else _row_id()
             else:
                 identity = unit.id if unit.id in known and unit.id not in suggested else _row_id()
             old = known.get(identity)
@@ -703,8 +719,8 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
             story = story.with_parts(source_units, item.summary_box)
         rows = []
         order = fixed if order_fixed else suggested | fixed
-        if summary_id is not None:
-            order = {summary_id: suggested[summary_id], **order}
+        if first_id is not None:
+            order = {first_id: suggested[first_id], **order}
         for identity in order:
             manual = fixed.get(identity)
             row = suggested.get(identity) or manual
@@ -717,20 +733,6 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
                 row = row.model_copy(update=edited | {"edited_fields": manual.edited_fields})
             row = row.model_copy(update=_checked_row_refs(row.refs, row.required_refs, valid_refs))
             rows.append(row)
-        if not order_fixed and isinstance(story, DeckStory):
-            locked_title = next(
-                (row for row in rows if row.layout == "title" and "layout" in row.edited_fields),
-                None,
-            )
-            if locked_title is not None:
-                rows.remove(locked_title)
-                rows.insert(0, locked_title)
-                rows = [
-                    row.model_copy(update={"layout": None})
-                    if row is not locked_title and row.layout == "title"
-                    and "layout" not in row.edited_fields else row
-                    for row in rows
-                ]
         retained_ids = {row.id for row in rows}
         rows = [
             row.model_copy(update={
@@ -766,25 +768,28 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
             if problem := item.capabilities.outline_layout_error(row.layout, index):
                 raise ModelError(f"Part {row.id}: {problem}")
 
+    @staticmethod
     def _retained_plan(
-        self, prepared: Prepared,
+        item: OutputType, state: Mapping[str, Any],
     ) -> tuple[PlanDraftOut | None, DeckStory | ReportStory | None]:
-        state = prepared.progress
+        prepare_key = state.get("prepare_key")
         plan = decode_stage(PlanDraftOut, state.get("plan_draft"))
         inputs = state.get("story_inputs")
-        if plan is None or not isinstance(inputs, dict):
+        if plan is None or not isinstance(prepare_key, str) or not isinstance(inputs, dict):
             return None, None
         try:
-            matches = state.get("story_key") == _story_digest(prepared, inputs, plan)
+            matches = state.get("story_key") == _story_digest(item, prepare_key, inputs, plan)
         except (TypeError, ValueError):
             matches = False
         if not matches:
             return None, None
-        schema = DeckStory if prepared.run.spec.kind == "slides" else ReportStory
+        if plan.outline is None:
+            return plan, None
+        schema = DeckStory if item.shape == "slides" else ReportStory
         story = decode_stage(schema, state.get("storyline"))
-        if story is not None and plan.outline is not None:
+        if story is not None:
             units = (story.slides if isinstance(story, DeckStory)
-                     else story.parts(prepared.run.output_type.summary_box))
+                     else story.parts(item.summary_box))
             if len(units) != len(plan.outline) or any(
                 (unit.id, unit.job, unit.notes) != (row.id, row.goal, row.notes)
                 or (
@@ -882,7 +887,7 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
         if problem := item.part_count_error(plan.proposal.count.value):
             raise ModelError(problem)
         state = prepared.progress
-        kept, story = self._retained_plan(prepared)
+        kept, story = self._retained_plan(item, state)
         inputs = state["story_inputs"] if kept is not None else {}
         inputs = inputs | {"options": _story_options(options), "model": model.ref, "effort": effort}
         if item.capabilities.pipeline == "direct":
@@ -894,6 +899,9 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
             ):
                 raise ModelError("The approved part count must match the outline.")
             self._validate_rows(run, plan.outline)
+            if story is None:
+                _drop_stages(state, _WRITE_FIELDS)
+                kept, story = self._retained_plan(item, state.get("story_annotations", {}))
             by_id = {row.id: row for row in kept.outline or []} if kept else {}
             run.story = self._bind_story(prepared, plan.proposal, plan.outline, story, by_id)
             parts = (run.story.slides if isinstance(run.story, DeckStory)
@@ -901,12 +909,11 @@ class StudioAgents(StudioMaterial, StudioStudy, StudioDrafting, StudioVerificati
             run.plan = tuple(
                 _planned(row, part.refs) for row, part in zip(plan.outline, parts, strict=True)
             )
-            if kept is None or story is None:
-                _drop_stages(state, _WRITE_FIELDS)
-        story_key = _story_digest(prepared, inputs, plan)
+        story_key = _story_digest(item, state["prepare_key"], inputs, plan)
         contract = plan.model_dump(mode="json")
         parent = asdict(authority) if isinstance(authority, ParentWrite) else None
         with checkpoint_stage(emit, state, checkpoint):
+            state.pop("story_annotations", None)
             state.update(story_key=story_key, story_inputs=inputs, plan_draft=contract)
             if run.story is not None:
                 state["storyline"] = run.story.model_dump()

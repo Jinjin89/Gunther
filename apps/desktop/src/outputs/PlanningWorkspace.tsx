@@ -18,7 +18,7 @@ import "./planning.css";
 
 export interface PlanningWorkspaceProps {
   address: PlanAddress; type: OutputType; controller: StudioPlanning;
-  detail: ArtifactConversationDetail | null; work: ArtifactWork | null;
+  detail: ArtifactConversationDetail | null; work: ArtifactWork | null; detailReadComplete: boolean;
   sourceState: (scope: OutputScope) => SourceState; currentScope: OutputScope; modelMenu: ModelMenu | null; webAvailable: boolean;
   busy: boolean; stage: string | null; onStop: () => void; dirty: { current: boolean };
   editFlush?: EditFlush;
@@ -49,10 +49,6 @@ type Draft = {
 const EMPTY_MARKS: Readonly<Record<string, ArtifactMark>> = {};
 const OUTLINE_FIELDS = ["heading", "goal", "layout", "notes"] as const;
 const LINE_FIELDS = ["text"] as const;
-const MATERIAL_BLOCKER = "Plan with these sources before generating.";
-// WorkPlan.blocker carries these service messages for reviewed material.
-const MATERIAL_BLOCKERS = new Set([MATERIAL_BLOCKER, "Some reviewed evidence is unavailable.",
-  "Plan with eligible local material.", "Retry web search or turn Web off."]);
 const MODEL_BLOCKER = "Choose an available model.";
 const EFFORT_BLOCKER = "Choose a supported effort for this model.";
 const PLAN_CHANGED = "The plan changed. Review the current plan before generating.";
@@ -626,12 +622,12 @@ const approvable = (work: ArtifactWork) => {
 const materialEdited = (before: PlanOptions, after: PlanOptions) => !sameScope(before.scope, after.scope) || (!before.web && after.web);
 
 function PlanSettings({ type, value, preferences, entries, marks, optionsChanged, preferencesChanged, currentScope,
-  currentSourceState, modelMenu, webAvailable, disabled, title, onBlur, providerBlocked = false }: {
+  currentSourceState, modelMenu, webAvailable, disabled, title, onBlur }: {
   type: OutputType; value: PlanSetup; preferences: Required<Preferences>; marks: Readonly<Record<string, ArtifactMark>>;
   entries: LineEntries;
   optionsChanged: (options: Partial<PlanOptions>, completed?: boolean) => void;
   preferencesChanged: ChangeLineList;
-  currentScope: OutputScope; currentSourceState: SourceState; modelMenu: ModelMenu | null; providerBlocked?: boolean;
+  currentScope: OutputScope; currentSourceState: SourceState; modelMenu: ModelMenu | null;
   webAvailable: boolean; disabled: boolean; title?: string; onBlur?: (event: FocusEvent) => void;
 }) {
   const options = type.options;
@@ -715,7 +711,7 @@ function PlanSettings({ type, value, preferences, entries, marks, optionsChanged
           {model?.levels.map((level) => <option key={level.id} value={level.id}>{level.label}</option>)}
         </select>
       </label>}
-      {defaultModel && (modelError || providerBlocked) && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm"
+      {defaultModel && (modelError || value.model === null) && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm"
         disabled={disabled} onClick={() => chooseModel(defaultModel.ref)}>Use current model</button>}
     </div>}
     <PreferenceFields value={preferences} entries={entries} marks={marks} disabled={disabled} onChange={preferencesChanged} />
@@ -970,8 +966,7 @@ function PersistedPlan({ props, detail, work, sending, turn, problem }: {
   const approvalAvailability = settingsProblem(type, options, props, false);
   const invalid = workProblem(type, fields);
   const changedMaterial = materialEdited(plan.options, options);
-  const needsMaterial = changedMaterial || MATERIAL_BLOCKERS.has(plan.blocker ?? "");
-  const providerBlocked = plan.blocker === MODEL_BLOCKER || plan.blocker === EFFORT_BLOCKER;
+  const planAgain = Boolean(proposal && (plan.blocker !== null || changedMaterial));
   const canApprove = approvable(base.work) && !changedMaterial && !approvalAvailability && !invalid && !disabled && !draft.problem;
   const [feedback, setFeedback] = useState("");
   const feedbackId = useId();
@@ -1042,15 +1037,22 @@ function PersistedPlan({ props, detail, work, sending, turn, problem }: {
     }
   };
 
+  const recovery = activity && activity.state !== "running" ? activity : null;
+  const retryPlanning = recovery?.phase === "plan";
+  const needsFeedback = Boolean(proposal && !planAgain && !retryPlanning);
+  const canPlan = !disabled && !acting && !question && !availability && !invalid && !draft.problem
+    && (!needsFeedback || Boolean(feedback.trim()));
+  const submitPlan = () => { if (canPlan) void act("plan", { text: feedback }); };
+  const showFeedback = Boolean(proposal && !question && !generating);
+  const planLabel = planAgain ? "Plan again" : retryPlanning ? "Retry planning" : proposal ? "Update plan" : "Plan";
   const title = draftTitle(type, base, fields);
   const status = generating ? "Generating" : running ? "Planning" : question ? "Needs answer" :
-    needsMaterial ? "Plan with these sources" : approvable(base.work) ? (plan.basis === "user_edited" || Boolean(patchFor(base, fields)) ?
+    planAgain ? "Blocked" : approvable(base.work) ? (plan.basis === "user_edited" || Boolean(patchFor(base, fields)) ?
       "Edited · Ready to generate" : "Ready to approve") : plan.planStatus === "failed" ? "Failed" : "Planning";
-  const recovery = activity && activity.state !== "running" ? activity : null;
   const recoveryText = recovery ? `${recovery.phase === "plan" ? "Planning" : "Generation"} ${recovery.state}.` : "";
   const approveLabel = recovery?.phase === "generate" ? (recovery.state === "failed" ? "Review & retry" : "Review & resume") : "Approve & Generate";
   const count = proposal ? effectiveCount(type, proposal, fields) : null;
-  const whyApproval = approvalAvailability || invalid || (changedMaterial ? MATERIAL_BLOCKER : plan.blocker) ||
+  const whyApproval = approvalAvailability || invalid || (changedMaterial ? "Plan with these sources before generating." : plan.blocker) ||
     (!proposal ? "Plan this output before generating." : "");
 
   return <><div className="reader-track" data-track="plan">
@@ -1100,7 +1102,7 @@ function PersistedPlan({ props, detail, work, sending, turn, problem }: {
     </div>
     {!generating && <PlanSettings type={type} value={options} preferences={fields} entries={entries} marks={preferenceMarks(plan.preferences, fields)}
       optionsChanged={edits.editOptions} preferencesChanged={edits.editList} currentScope={currentScope} webAvailable={webAvailable}
-      currentSourceState={sourceState(currentScope)} modelMenu={modelMenu} providerBlocked={providerBlocked}
+      currentSourceState={sourceState(currentScope)} modelMenu={modelMenu}
       disabled={disabled} {...(proposal ? { title } : {})} onBlur={edits.onBlur} />}
     <div className="plan-followup">
       {recovery && !running && <div className="plan-problem" role={recovery.state === "failed" ? "alert" : "status"}>
@@ -1108,9 +1110,9 @@ function PersistedPlan({ props, detail, work, sending, turn, problem }: {
       </div>}
       {problem && <p className="plan-problem" role="alert">{problem}</p>}
       {!generating && <EditStatus edits={edits} showStatus={running} />}
-      {proposal && !question && !generating && <form className="plan-fields plan-feedback" aria-label="Plan feedback" id={feedbackId} onSubmit={(event) => {
+      {showFeedback && <form className="plan-fields plan-feedback" aria-label="Plan feedback" id={feedbackId} onSubmit={(event) => {
         event.preventDefault();
-        if (feedback.trim()) void act("plan", { text: feedback });
+        submitPlan();
       }}>
         <label>What should change in this plan?
           <textarea rows={3} maxLength={20_000} disabled={disabled} value={feedback}
@@ -1118,7 +1120,7 @@ function PersistedPlan({ props, detail, work, sending, turn, problem }: {
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
-                if (!disabled && !acting && feedback.trim()) void act("plan", { text: feedback });
+                submitPlan();
               }
             }} />
         </label>
@@ -1128,16 +1130,11 @@ function PersistedPlan({ props, detail, work, sending, turn, problem }: {
   </div>
     {!running && <footer className="plan-approval">
       <div className="plan-actions">
-        {!question && (!proposal || needsMaterial || recovery?.phase === "plan") && <button type="button"
-          className={canApprove ? "gx-btn gx-btn-quiet" : "gx-btn gx-btn-primary"}
-          disabled={disabled || acting || Boolean(availability) || Boolean(invalid)}
-          onClick={() => void act("plan", { text: feedback })}>{
-            recovery?.phase === "plan" ? "Retry planning" : needsMaterial && proposal ? "Plan with these sources" : "Plan"
-          }</button>}
         {proposal && <button type="button" className="gx-btn gx-btn-primary" disabled={!canApprove || acting}
           onClick={() => void act("approve")}>{approveLabel}</button>}
-        {proposal && !question && !needsMaterial && <button type="submit" form={feedbackId} className="gx-btn gx-btn-quiet"
-          disabled={disabled || acting || !feedback.trim() || Boolean(availability) || Boolean(invalid)}>Update plan</button>}
+        {!question && <button type={showFeedback ? "submit" : "button"} form={showFeedback ? feedbackId : undefined}
+          className={canApprove || needsFeedback ? "gx-btn gx-btn-quiet" : "gx-btn gx-btn-primary"}
+          disabled={!canPlan} onClick={showFeedback ? undefined : submitPlan}>{planLabel}</button>}
       </div>
       <SaveStatus draft={draft} />
       {whyApproval && <p className={invalid ? "plan-field-error" : "plan-hint"}>{whyApproval}</p>}
@@ -1146,7 +1143,7 @@ function PersistedPlan({ props, detail, work, sending, turn, problem }: {
 }
 
 export function PlanningWorkspace(props: PlanningWorkspaceProps) {
-  const { address, type, controller, detail, work, busy } = props;
+  const { address, type, controller, detail, work, detailReadComplete, busy } = props;
   const read = useContext(PlanDetailReader);
   const [sending, setSending] = useState<CreationTurn["kind"] | null>(null);
   const sendingRef = useRef(false);
@@ -1184,7 +1181,7 @@ export function PlanningWorkspace(props: PlanningWorkspaceProps) {
       local ? <Setup local={local} props={props} running={busy || sending !== null} turn={turn} problem={problem} /> :
         <div className="reader-track plan-review" data-track="plan"><header className="plan-heading"><h1>Plan {type.label}</h1></header>
           {busy || sending ? <Progress stage={props.stage} generating={sending === "approve"} onStop={props.onStop} /> :
-            <p role="status">Loading plan…</p>}
+            <p role="status">{detailReadComplete ? "This plan is unavailable." : "Loading plan…"}</p>}
           {problem && <p className="plan-problem" role="alert">{problem}</p>}
         </div>}
   </article>;

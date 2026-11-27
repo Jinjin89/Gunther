@@ -190,6 +190,23 @@ def test_uncited_exhibit_rows_cite_the_source_line(label):
     assert "| 指标 | 增速 |" in out
 
 
+def test_exhibit_row_citations_preserve_escaped_pipes_and_empty_trailing_cells():
+    text = "\r\n".join([
+        ":::exhibit", "Enrollment", "| Group | Count | Alternate count |", "| --- | --- | --- |",
+        r"| Control |  | 12\|", "| Arm | 12 ||", "Source: Trial [2]", ":::",
+    ])
+
+    cited = fmt.cite_exhibit_rows(text)
+
+    assert cited == text.replace(r"12\|", r"12\| [2]").replace("| 12 ||", "| 12 [2] ||")
+    [exhibit] = fmt.report_exhibits(cited)
+    lines = cited.splitlines(keepends=True)
+    assert [fmt.table_cells(lines[index]) for index in exhibit.rows[1:]] == [
+        ["Control", "", "12| [2]"], ["Arm", "12 [2]", ""],
+    ]
+    assert fmt.cite_exhibit_rows(cited) == cited
+
+
 def test_attribution_must_follow_the_table():
     text = (
         ":::exhibit\nSource: Trial [2]\n| Group | Result |\n| --- | --- |\n"

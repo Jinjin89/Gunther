@@ -28,10 +28,10 @@ from gunther.artifact_workspace import (
 )
 from gunther.model_profiles import Effort, nearest
 from gunther.output_types import DECK_USES, OUTPUT_TYPES, SHAPES, OutputType, output_type_for
-from gunther.outputs import document_units, heading_of
+from gunther.outputs import OutputUnit, _marked, document_units, heading_of, section_hash
 from gunther.schemas import (
     ArtifactAudience,
-    ArtifactOut,
+    OutlineItem,
     OutputScope,
     OutputVoicesOut,
     PlanAttemptOut,
@@ -347,30 +347,85 @@ def _project_row(row: ItemRec) -> PlanPartOut:
     )
 
 
-def project_saved_outline(version: ArtifactOut) -> list[PlanPartOut]:
-    """Give legacy rows an identity from the verified version and their source position."""
+def _outline_body(unit: OutputUnit) -> str:
+    """Read the body below the leading Markdown heading, if present."""
 
-    units = document_units(version.content, version.kind)
-    saved = version.outline if len(version.outline) == len(units) else []
-    rows = []
+    heading, _, body = _marked(unit.text).body.lstrip().partition("\n")
+    marker = heading.split(maxsplit=1)
+    return body.strip() if marker and 1 <= len(marker[0]) <= 6 and not marker[0].strip("#") else ""
+
+
+def project_saved_outline(
+    kind: str, source_id: str, content: str, saved: Sequence[OutlineItem], *,
+    previous: str | None = None,
+) -> list[OutlineItem]:
+    """Project rows in Markdown order, retaining metadata only for matched sections."""
+
+    units = document_units(content, kind)
+    before = document_units(previous, kind) if previous is not None else []
+    matched: dict[int, int] = {}
+    available = set(range(len(saved)))
+
+    def align(old_keys: Sequence[str], new_keys: Sequence[str], *, unique: bool = False) -> None:
+        old: dict[str, list[int]] = {}
+        new: dict[str, list[int]] = {}
+        for position, key in enumerate(old_keys):
+            if key and position in available:
+                old.setdefault(key, []).append(position)
+        for position, key in enumerate(new_keys):
+            if key and position not in matched:
+                new.setdefault(key, []).append(position)
+        for key, earlier in old.items():
+            current = new.get(key, [])
+            if unique and (len(earlier) != 1 or len(current) != 1):
+                continue
+            for old_position, new_position in zip(earlier, current, strict=False):
+                matched[new_position] = old_position
+                available.remove(old_position)
+
+    if before and len(before) == len(saved):
+        align([section_hash(unit) for unit in before], [section_hash(unit) for unit in units])
+        # A unique unchanged body identifies a section whose heading was renamed.
+        align([_outline_body(unit) for unit in before], [_outline_body(unit) for unit in units],
+              unique=True)
+        headings = [heading_of(unit) for unit in before]
+    else:
+        headings = [row.heading for row in saved]
+    align(
+        [heading.strip().casefold() for heading in headings],
+        [heading_of(unit).strip().casefold() for unit in units],
+    )
+
+    rows: list[OutlineItem] = []
     used: set[str] = set()
     reserved = {row.id for row in saved if row.id}
+    version_key = inputs_key([source_id, content]) if previous is not None else source_id
     for position, unit in enumerate(units):
-        row = saved[position] if saved else None
-        data = row.model_dump() if row is not None else {
-            "heading": heading_of(unit).strip()
-            or f"{SHAPES[version.kind].unit_label.capitalize()} {position + 1}",
-            "layout": _layout_of(version.kind, position, unit.text) or None,
-        }
-        identity = row.id if row and row.id not in used else ""
-        if not identity:
+        row = saved[matched[position]] if position in matched else None
+        identity = row.id if row is not None else ""
+        if row is None or identity in used:
             nonce = 0
-            while not identity or identity in reserved:
-                identity = "p_" + inputs_key([version.id, position, nonce])[:62]
+            while True:
+                identity = "p_" + inputs_key([version_key, position, nonce])[:62]
+                if identity not in reserved and identity not in used:
+                    break
                 nonce += 1
-        used.add(identity)
-        rows.append(PlanPartOut.model_validate(data | {"id": identity}))
-    return rows
+        if identity:
+            used.add(identity)
+        heading = heading_of(unit).strip() or f"{SHAPES[kind].unit_label.title()} {position + 1}"
+        layout = _layout_of(kind, position, unit.text, row.layout if row else None) or None
+        if row is None:
+            rows.append(OutlineItem(id=identity, heading=heading, layout=layout))
+        else:
+            rows.append(row.model_copy(
+                update={"id": identity, "heading": heading, "layout": layout},
+            ))
+    return [
+        row.model_copy(update={
+            "requires": [identity for identity in row.requires if identity in used],
+        })
+        for row in rows
+    ]
 
 
 def _plan_title(work: Work) -> str:

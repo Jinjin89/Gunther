@@ -41,6 +41,7 @@ from gunther.artifact_agent import ArtifactAgent
 from gunther.artifact_manifest import artifact_manifest_hash
 from gunther.artifact_workspace import Line, Work, WorkSpec, dump_workspace, evidence_from_citation
 from gunther.evidence import KeyResultMatch, Tool
+from gunther.library_lookup import MAX_SEARCHED
 from gunther.models import (
     Artifact,
     ArtifactConversation,
@@ -440,6 +441,59 @@ def test_studio_records_current_rejection_for_a_previously_held_hit(tmp_path, mo
         assert (result["url"], result["query"], result["kept"]) == (
             hit.url, "refinement sources", False,
         )
+
+
+def test_studio_research_notes_fill_the_limit_after_removing_citations(tmp_path):
+    with app_for(tmp_path, FakeProvider(plan_worker), ai_summaries="off") as client:
+        base, sources = library(client, notes={
+            f"Record {n}": f"The trial record gives observation {n}." for n in range(23)
+        })
+        cid = create(client, base)["id"]
+        plan = done(studio_plan(client, base, cid, {"type": "report"}))["plan"]
+        state, _ = kept(client, cid)
+        [work] = state.works
+        candidates = work.studio_progress["manifest"]["searched"]
+        assert len(candidates) == len(sources) == 23
+        passages = {item["ref"]: item for item in state.pool}
+        assert all(set(candidate) == {"kind", "ref", "query", "kept"} for candidate in candidates)
+        candidates_in_order = [passages[candidate["ref"]]["source_id"] for candidate in candidates]
+        assert set(candidates_in_order) == set(sources.values())
+
+        saved = done(output_turn(client, base, cid, approve_request(plan)))["artifact"]
+        [citation] = saved["citations"]
+        searched = saved["provenance"]["searched"]
+        assert [hit["sourceId"] for hit in searched] == [
+            source for source in candidates_in_order if source != citation["sourceId"]
+        ][:MAX_SEARCHED]
+        assert len(searched) == MAX_SEARCHED == 20
+
+
+def test_studio_research_notes_keep_other_blocks_with_the_cited_locator(tmp_path):
+    with app_for(tmp_path, FakeProvider(plan_worker), ai_summaries="off") as client:
+        base, sources = library(client, notes={"Trial": "The trial establishes the outcome."})
+        service = client.app.state.knowledge_service
+        second_text = "A separate passage describes another observation."
+        with service.sessions.begin() as session:
+            revision = session.get(SourceIndexHead, sources["Trial"]).revision_id
+            first = session.scalar(select(ContentBlock).where(ContentBlock.revision_id == revision))
+            first_id, second_id = first.id, "block_other_observation"
+            session.add(ContentBlock(
+                id=second_id, revision_id=revision, ordinal=first.ordinal + 1, kind=first.kind,
+                # This long block is read as a separate passage even under the same locator.
+                content=" ".join([second_text] * 32), locator=first.locator,
+                heading_path_json=first.heading_path_json,
+            ))
+
+        cid = create(client, base)["id"]
+        plan = done(studio_plan(client, base, cid, {"type": "report"}))["plan"]
+        state, _ = kept(client, cid)
+        assert {item["block_id"] for item in state.pool} == {first_id, second_id}
+        saved = done(output_turn(client, base, cid, approve_request(plan)))["artifact"]
+        [citation] = saved["citations"]
+        assert citation["blockId"] == first_id
+        [note] = saved["provenance"]["searched"]
+        assert (note["sourceId"], note["locator"]) == (citation["sourceId"], citation["locator"])
+        assert note["snippet"].startswith(second_text)
 
 
 def test_retry_reuses_a_failed_generations_memo_and_story(tmp_path):

@@ -1458,6 +1458,80 @@ def test_a_rebuild_gives_the_edited_outline_to_studio_and_is_the_next_version(
     assert name == "error" and error["status"] == 409 and "latest version" in error["detail"]
 
 
+@pytest.mark.parametrize("historical", [False, True], ids=["sealed", "historical"])
+def test_a_literal_edit_reopens_and_rebuilds_with_its_added_and_renamed_sections(
+    tmp_path: Path, historical: bool,
+) -> None:
+    fake = FakeProvider(
+        output_replies(OUTLINE, lambda index, prompt: f"## {heading(prompt)}\n\nA fact [1].")
+    )
+    original = [
+        {"id": "markers", "heading": "T cells", "goal": "Explain the marker", "layout": None,
+         "notes": "Keep the context"},
+        {"id": "receptors", "heading": "B cells", "goal": "Explain the receptor", "layout": None,
+         "notes": "Describe the assay"},
+    ]
+    with app_for(tmp_path, fake) as client:
+        base_id, _ = library(client)
+        headers = workspace(client)
+        first = built(build(client, base_id, body(outline=original)))
+        typed = first["content"].replace(
+            "## B cells", "## Appendix\n\nAdditional context.\n\n## B-cell receptors",
+        )
+        second = client.post(
+            route(base_id, first["id"], "/edits"), headers=headers,
+            json={"clientRequestId": "edited_structure", "content": typed},
+        ).raise_for_status().json()
+        assert second["content"] == typed
+        sessions = client.app.state.knowledge_service.sessions
+        with sessions.begin() as session:
+            row = session.get(Artifact, second["id"])
+            if historical:
+                # Older edits sealed the parent's outline verbatim.
+                row.outline_json = session.get(Artifact, first["id"]).outline_json
+                row.manifest_hash = artifact_manifest_hash(row.__getattribute__)
+            else:
+                assert [part["heading"] for part in json.loads(row.outline_json)] == [
+                    "T cells", "Appendix", "B-cell receptors",
+                ]
+            sealed_outline, manifest = row.outline_json, row.manifest_hash
+
+        reopened = client.get(
+            route(base_id, second["id"]), headers=headers,
+        ).raise_for_status().json()
+        assert reopened["manifestHash"] == manifest
+        parts = reopened["outline"]
+        assert parts == second["outline"]
+        if not historical:
+            assert json.loads(sealed_outline) == parts
+        assert [part["heading"] for part in parts] == [s["heading"] for s in reopened["sections"]]
+        assert [part["heading"] for part in parts] == ["T cells", "Appendix", "B-cell receptors"]
+        for stored, prior in zip(parts[::2], original, strict=True):
+            assert (stored["id"], stored["goal"], stored["notes"]) == (
+                prior["id"], prior["goal"], prior["notes"],
+            )
+        assert parts[1]["id"] not in {part["id"] for part in original}
+        assert not parts[1].get("notes")
+
+        name, result = output_turn(client, base_id, first["conversationId"], {
+            "kind": "rebuild", "clientRequestId": "rebuild_edited_structure",
+            "rebuild": {"artifactId": second["id"], "outline": [
+                {"id": part["id"], "heading": part["heading"], "goal": part["goal"],
+                 "layout": part.get("layout"), "notes": part.get("notes", "")}
+                for part in parts
+            ]},
+        }, headers)[-1]
+        assert name == "done", result
+        rebuilt = result["artifact"]
+        assert rebuilt["supersedesArtifactId"] == second["id"]
+        assert [s["heading"] for s in rebuilt["sections"]] == [part["heading"] for part in parts]
+        assert [(part["id"], part.get("notes")) for part in rebuilt["outline"]] == [
+            (part["id"], part.get("notes")) for part in parts
+        ]
+        with sessions() as session:
+            assert session.get(Artifact, second["id"]).outline_json == sealed_outline
+
+
 def test_verified_slide_rebuild_keeps_the_saved_decks_rendered_style_and_theme(tmp_path: Path):
     fake = FakeProvider(output_replies(SLIDES_OUTLINE, SLIDES))
     cover = slide_format.with_marker(SLIDES[0], "title", design="v2", theme="ink", style="dark")

@@ -190,6 +190,39 @@ def _read_database_metadata(database: Path) -> dict[str, Any]:
         connection.close()
 
 
+def _creation_plan_reference_matches(
+    connection: sqlite3.Connection, artifact: sqlite3.Row, reference: object
+) -> bool:
+    first_version_id = reference.get("firstVersionId") if isinstance(reference, dict) else None
+    if not isinstance(first_version_id, str) or first_version_id == artifact["id"]:
+        return False
+
+    first = connection.execute(
+        "SELECT provenance_json FROM artifacts WHERE id = ? "
+        "AND version_number = 1 AND supersedes_artifact_id IS NULL "
+        "AND workspace_id = ? AND knowledge_base_id = ? AND lineage_id = ?",
+        (
+            first_version_id,
+            artifact["workspace_id"],
+            artifact["knowledge_base_id"],
+            artifact["lineage_id"],
+        ),
+    ).fetchone()
+    if first is None:
+        return False
+
+    original = json.loads(first["provenance_json"])
+    if not isinstance(original, dict) or original.get("schema_version") != 2:
+        return False
+    plan = original.get("creationPlan", original.get("creation_plan"))
+    if not isinstance(plan, dict):
+        return False
+    plan_id = plan.get("planId", plan.get("plan_id"))
+    revision = plan.get("revision")
+    expected = {"firstVersionId": first_version_id, "planId": plan_id, "revision": revision}
+    return isinstance(plan_id, str) and isinstance(revision, str) and reference == expected
+
+
 def _verify_database_payload_integrity(
     database: Path,
     files: dict[str, Path],
@@ -408,6 +441,11 @@ def _verify_database_payload_integrity(
                     raise BackupError(
                         f"Artifact {artifact['id']} manifest hash differs"
                     )
+                reference = provenance.get("creationPlanRef")
+                if reference is not None and not _creation_plan_reference_matches(
+                    connection, artifact, reference
+                ):
+                    raise BackupError(f"Artifact {artifact['id']} has an invalid creation plan.")
     except (TypeError, ValueError, OverflowError) as error:
         raise BackupError(
             f"Managed payload contains invalid integrity metadata: {error}"

@@ -374,6 +374,48 @@ def test_planned_exhibits_drive_report_repair(planned):
         assert not repairs and ":::exhibit" not in built.content
 
 
+def test_approval_after_a_language_edit_repairs_a_missing_planned_exhibit(tmp_path):
+    from test_artifact_agent import conversations, done
+    from test_outputs import app_for, approve_output, library, send_plan, workspace
+
+    caption = "Trial enrollment"
+    exhibit = (
+        f":::exhibit\n{caption}\n| Group | Buildings |\n| --- | --- |\n"
+        "| All | 412 |\nSource: Sample [1]\n:::"
+    )
+    first, second = REPORT_ROWS
+    rows = [{**first, "exhibits": [caption]}, second]
+    draft = report_document([SUMMARY["summary_heading"], first["heading"], second["heading"]])
+    repaired = draft.replace("## Findings", f"{exhibit}\n\n## Findings", 1)
+    fake = FakeProvider(dispatch("report", report_rows=rows, report=draft, repair=repaired))
+
+    with app_for(tmp_path, fake) as client:
+        base, _ = library(client, notes={"Sample": "The trial followed 412 buildings.",
+                                        "Finding": "The saving was 9% after adjustment."})
+        cid = "edited_report"
+        plan_id, events = send_plan(client, base, cid, "report_plan", {
+            "type": "report", "scope": {"mode": "library"}, "language": "English",
+        })
+        planned = done(events)
+        edited = client.patch(
+            conversations(base, f"/{cid}/works/{plan_id}"), headers=workspace(client),
+            json={"baseEditVersion": planned["editVersion"], "options": {"language": "French"}},
+        ).raise_for_status().json()["works"][0]["plan"]
+        assert edited["planStatus"] == "ready" and edited["outline"] == planned["plan"]["outline"]
+
+        fake.requests.clear()
+        approved = approve_output(client, base, cid, plan_id, "report_approve", {"plan": edited})
+        artifact = done(approved)["artifact"]
+
+    tasks = [task_of(request) for request in fake.requests]
+    assert any("lead analyst" in task for task in tasks)
+    assert not any("planning a written report" in task for task in tasks)
+    [repair] = [task for task in tasks if "Your report breaks Gunther's report format" in task]
+    assert "Section 2 plans 1 exhibit(s) and has 0" in repair
+    assert artifact["provenance"]["language"] == "French"
+    assert fmt.check_report(artifact["content"], exhibit_counts=(0, 1, 0)) == []
+
+
 @pytest.mark.parametrize(
     "case", ["fenced-repair", "empty-grid-repair", "valid-repair", "fenced-assembly"]
 )
@@ -629,6 +671,37 @@ def test_edited_outline_reuses_preparation_and_rebinds_metadata_by_id():
     )
 
 
+@pytest.mark.parametrize("changed", ["language", "material", "row"])
+def test_resumed_preparation_limits_annotations_to_the_same_material_and_row(changed):
+    first, second = REPORT_ROWS
+    rows = [{**first, "exhibits": ["Trial enrollment"]}, second]
+    fake = FakeProvider(dispatch("report", report_rows=rows))
+    agents = StudioAgents(gateway(fake))
+    options = options_for("report")
+    prepared = prepare(agents, "report")
+    plan = propose(agents, prepared, options)
+
+    options = options.model_copy(update={"language": "French"})
+    spec = replace(spec_for("report"), language=options.language)
+    snapshots = []
+    prepare(agents, "report", spec=spec, resume=prepared.progress, checkpoint=snapshots.append)
+    # Reopen the first preparation checkpoint, before the new memo is saved.
+    saved = json.loads(json.dumps(snapshots[0]))
+    manifest = MANIFEST
+    if changed == "material":
+        manifest = MANIFEST | {"scope": {"mode": "library"}}
+    if changed == "row":
+        plan.outline[1] = plan.outline[1].model_copy(update={"id": "replacement"})
+    agents = StudioAgents(gateway(fake))
+    reopened = prepare(agents, "report", spec=spec, resume=saved, manifest=manifest)
+
+    if changed == "language":
+        with pytest.raises(ModelError, match=r"Section 2 plans 1 exhibit\(s\) and has 0"):
+            generate(agents, reopened, options, plan)
+    else:
+        assert ":::exhibit" not in generate(agents, reopened, options, plan).content
+
+
 def test_replan_preserves_locked_row_fields_and_membership():
     fake = FakeProvider(dispatch("report"))
     agents = StudioAgents(gateway(fake))
@@ -654,6 +727,27 @@ def test_replan_preserves_locked_row_fields_and_membership():
         (second.id, second.heading, second.goal, "User notes"),
         (first.id, "User heading", "New goal", first.notes),
     ]
+
+
+def test_replan_keeps_the_notes_only_cover_edit_when_the_proposal_omits_ids():
+    fake = FakeProvider(dispatch("slides"))
+    agents = StudioAgents(gateway(fake))
+    options = options_for("slides")
+    prepared = prepare(agents, "slides")
+    old = propose(agents, prepared, options)
+    cover = old.outline[0]
+    edited = cover.model_copy(update={"notes": "Pause for questions", "edited_fields": ["notes"]})
+    old.outline[0] = edited
+
+    # The presentation strategist in dispatch returns slides without IDs.
+    updated = propose(agents, prepared, options, previous=old, fixed_rows=(edited,))
+
+    [title_row] = [row for row in updated.outline if row.layout == "title"]
+    assert len(updated.outline) == len(old.outline)
+    assert title_row == updated.outline[0]
+    assert (title_row.id, title_row.notes, title_row.edited_fields) == (
+        cover.id, edited.notes, ["notes"],
+    )
 
 
 def test_replan_keeps_authored_coverage_and_count():

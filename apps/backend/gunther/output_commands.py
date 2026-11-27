@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from gunther import key_result_origins, usage
 from gunther.agent import AskAgent
+from gunther.artifact_plans import project_saved_outline
 from gunther.artifact_read import artifact_detail, latest_check_records
 from gunther.artifact_versions import (
     MAX_OUTPUT_BYTES,
@@ -362,7 +363,7 @@ class OutputCommands:
             parent = output_version(session, workspace_id, base_id, artifact_id, latest=True)
             self._require_agent_output(parent)
             records = latest_check_records(session, parent)
-            artifact_detail(session, parent, check_records=records)
+            shown = artifact_detail(session, parent, check_records=records)
             if SHAPES[parent.kind].pipeline == "direct":
                 item = output_type_for(parent.kind, parent.style)
                 problems = item.direct_problems(payload.content)
@@ -372,6 +373,15 @@ class OutputCommands:
                 section_hash(unit) for unit in document_units(payload.content, parent.kind)
             )
             checks = [records[digest] for digest in hashes if digest in records]
+            outline = json.loads(parent.outline_json)
+            if SHAPES[parent.kind].outline:
+                outline = [
+                    row.model_dump(mode="json")
+                    for row in project_saved_outline(
+                        parent.kind, parent.id, payload.content, shown.outline,
+                        previous=shown.content,
+                    )
+                ]
             fields = {
                 "kind": parent.kind,
                 "style": parent.style,
@@ -379,7 +389,7 @@ class OutputCommands:
                 "brief": parent.brief,
                 "scope": json.loads(parent.scope_json),
                 "inputs": json.loads(parent.inputs_json),
-                "outline": json.loads(parent.outline_json),
+                "outline": outline,
                 "citations": json.loads(parent.citations_json),
                 "snapshots": [
                     ArtifactUnitSnapshotOut.model_validate(item)

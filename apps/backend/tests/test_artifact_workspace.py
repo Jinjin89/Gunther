@@ -1056,8 +1056,10 @@ def test_a_version_with_no_matching_outline_gets_items_from_its_headings(tmp_pat
         head_id = hand_edit(client, base_id, saved["id"], content)
         version, checks = version_of(client, base_id, head_id)
 
-    assert len(version.outline) == 3 and len(split_document(version.content, "slides")[1]) == 4
-    work = import_work(version, checks, Workspace(), ConversationBrief())
+    assert len(version.outline) == 4 and len(split_document(version.content, "slides")[1]) == 4
+    assert version.outline[3].heading == "An extra slide"
+    mismatched = version.model_copy(update={"outline": version.outline[:3]})
+    work = import_work(mismatched, checks, Workspace(), ConversationBrief())
     assert [(item.id, item.heading, item.goal) for item in work.outline] == [
         ("p1", "Markers", ""),
         ("p2", "CD3D and CD19 set T and B cells apart", ""),

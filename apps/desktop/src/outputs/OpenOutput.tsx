@@ -187,11 +187,13 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, sourceS
   useEffect(() => { onArtifactChange(artifact); }, [artifact, onArtifactChange]);
   const { read, follow, reload } = studio;
   const openingLocal = Boolean(local && !planWork);
+  const [completedRead, setCompletedRead] = useState<{ conversationId: string; read: typeof read } | null>(null);
   useEffect(() => {
     if (!conversationId || openingLocal) return;
     let active = true;
     void read(conversationId).then(() => { if (active) follow(conversationId); })
-      .catch((reason) => { if (active) setError(message(reason)); });
+      .catch((reason) => { if (active) setError(message(reason)); })
+      .finally(() => { if (active) setCompletedRead({ conversationId, read }); });
     return () => { active = false; };
   }, [conversationId, openingLocal, read, follow]);
   useEffect(() => () => { styleRun.current = null; }, []);
@@ -445,7 +447,9 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, sourceS
     return <PlanDetailReader.Provider value={read}>
       {problem && <p className="output-error reader-track" data-track="prose" role="alert">{problem}</p>}
       <PlanningWorkspace key={address.planId} address={address} type={targetType} controller={studio.planning}
-        detail={conversation ?? null} work={planWork ?? null} sourceState={sourceState} currentScope={scope}
+        detail={conversation ?? null} work={planWork ?? null}
+        detailReadComplete={completedRead?.conversationId === address.conversationId && completedRead.read === read}
+        sourceState={sourceState} currentScope={scope}
         modelMenu={modelMenu} webAvailable={webAvailable} busy={Boolean(planJob || planActivity)}
         stage={planJob ? outputActivity(job.live) : planActivity?.detail || planActivity?.title || null} onStop={stop}
         dirty={dirty} editFlush={editFlush} />

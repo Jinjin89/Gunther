@@ -2774,6 +2774,33 @@ it("opens Activity's exact plan and prefers the selected unfinished work over a 
   expect(create).not.toHaveBeenCalled();
 });
 
+it.each(["conversation", "plan"] as const)("shows an unavailable plan when an idle Activity link points to a missing %s", async (missing) => {
+  const activity = { view: "library", libraryId: base.id, tab: "outputs", conversationId: "stale-conversation",
+    planId: "draft_missing", typeId: report.id } as const;
+  const detailPath = `/api/knowledge-bases/${base.id}/artifact-conversations/${activity.conversationId}`;
+  let resolveDetail!: (response: Response) => void;
+  const detailResponse = new Promise<Response>((resolve) => { resolveDetail = resolve; });
+  const fetch = vi.mocked(globalThis.fetch);
+  fetch.mockImplementation(async (url) => {
+    if (url === detailPath) return detailResponse;
+    if (url === `${detailPath}/stream`) return new Response(null, { status: 204 });
+    return Response.json([]);
+  });
+
+  render(<KnowledgeBaseWorkspace base={base} workspaceId={ws} onOpenSource={vi.fn()} onNotify={vi.fn()}
+    onAdd={vi.fn()} onTrashed={vi.fn()} outputActivity={activity} />);
+
+  expect(await screen.findByText("Loading plan…")).toBeVisible();
+  const detail = missing === "conversation"
+    ? Response.json({ detail: "No such conversation" }, { status: 404 })
+    : Response.json(planConversation(activity.conversationId, [plannedWork(report, "draft_other", "Other report")]));
+  await act(async () => resolveDetail(detail));
+
+  expect(await planningPane().findByText("This plan is unavailable.")).toBeVisible();
+  expect(planningPane().queryByText("Loading plan…")).not.toBeInTheDocument();
+  expect(fetch).toHaveBeenCalledWith(`${detailPath}/stream`, expect.objectContaining({ method: "GET" }));
+});
+
 it.each(["still viewing", "opened another work"])("remaps an explicit approval by plan identity (%s)", async (navigation) => {
   const user = userEvent.setup();
   const id = "shared-conversation";

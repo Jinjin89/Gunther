@@ -292,6 +292,45 @@ def _audio(session: Session, artifact: Artifact) -> ArtifactAudioOut | None:
     )
 
 
+def _saved_outline(session: Session, artifact: Artifact) -> list[OutlineItem]:
+    saved = json.loads(artifact.outline_json)
+    outline = [OutlineItem.model_validate(item) for item in saved]
+    if not SHAPES[artifact.kind].outline or (outline and artifact.origin != "edit"):
+        return outline
+
+    # Older literal edits copied the sealed outline. Follow those copies to the content
+    # that the rows described, then project each edit in order to keep new row IDs stable.
+    source = artifact
+    edits: list[Artifact] = []
+    while source.origin == "edit" and source.supersedes_artifact_id:
+        parent = session.get(Artifact, source.supersedes_artifact_id)
+        if parent is None or (
+            parent.workspace_id, parent.knowledge_base_id, parent.lineage_id,
+            parent.version_number, parent.kind,
+        ) != (
+            source.workspace_id, source.knowledge_base_id, source.lineage_id,
+            source.version_number - 1, source.kind,
+        ):
+            break
+        try:
+            if json.loads(parent.outline_json) != saved:
+                break
+            _verified_payload(session, parent)
+        except (ArtifactIntegrityError, ValueError):
+            break
+        edits.append(source)
+        source = parent
+
+    if not outline or source.origin == "edit":
+        outline = project_saved_outline(source.kind, source.id, source.content, outline)
+    for edit in reversed(edits):
+        outline = project_saved_outline(
+            edit.kind, source.id, edit.content, outline, previous=source.content,
+        )
+        source = edit
+    return outline
+
+
 def artifact_detail(
     session: Session, artifact: Artifact, *, check_records: dict[str, dict] | None = None
 ) -> ArtifactOut:
@@ -312,15 +351,13 @@ def artifact_detail(
         if check_records is None:
             check_records = latest_check_records(session, artifact)
         sections = _output_sections(artifact, check_records)
-    shown = ArtifactOut(
+    return ArtifactOut(
         **summary.model_dump(),
         content=artifact.content,
         unit_snapshots=snapshots,
         provenance=provenance,
         brief=artifact.brief,
-        outline=[
-            OutlineItem.model_validate(item) for item in json.loads(artifact.outline_json)
-        ],
+        outline=_saved_outline(session, artifact),
         citations=citations,
         scope=OutputScope.model_validate(scope) if scope else None,
         inputs=OutputInputsOut(
@@ -337,9 +374,6 @@ def artifact_detail(
         key_results=key_results.origin_states(session, "output", [artifact.id]).get(artifact.id),
         audio=_audio(session, artifact),
     )
-    if not shown.outline and SHAPES[shown.kind].outline:
-        shown.outline = project_saved_outline(shown)
-    return shown
 
 
 class ArtifactReader:

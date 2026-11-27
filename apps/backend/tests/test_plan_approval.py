@@ -18,6 +18,7 @@ from test_search_and_build import web_hit
 from test_studio_pipeline import request_text, router
 from test_studio_plan_stages import dispatch
 
+from evals.sse import read_events
 from gunther import artifact_conversations
 from gunther.answer_runs import AnswerRuns, output_key
 from gunther.artifact_plans import PlanConflictError
@@ -28,6 +29,7 @@ from gunther.evidence import Tool
 from gunther.models import (
     Artifact,
     ArtifactConversation,
+    ArtifactMessage,
     Asset,
     DocumentElement,
     ElementAsset,
@@ -169,6 +171,59 @@ def test_client_addressed_plan_reuses_material_and_seals_the_approved_revision(
         assert done(output_turn(client, base, cid, approve)) == saved
         conflict = output_turn(client, base, cid, approve | {"planId": "draft_other"})
         assert conflict[-1][1]["status"] == 409 and len(fake.requests) == calls
+
+
+@pytest.mark.parametrize("old_hash", [False, True], ids=["current", "historical"])
+@pytest.mark.parametrize("explicit_clear", [False, True], ids=["inherit", "clear"])
+def test_setup_replay_distinguishes_inheriting_and_clearing_preferences(
+    tmp_path, explicit_clear, old_hash,
+):
+    fake = FakeProvider(plan_worker)
+    with app_for(tmp_path, fake) as client:
+        base, _ = library(client)
+        cid = "setup_replay"
+        headers = workspace(client)
+        client.post(conversations(base), headers=headers, json={"id": cid}).raise_for_status()
+        preference = {"id": "avoid_detail", "text": "Leave out procedural detail"}
+        service = client.app.state.knowledge_service
+        with service.sessions.begin() as session:
+            row = session.get(ArtifactConversation, cid)
+            row.brief_json = json.dumps({"avoid": [preference | {"mark": "you"}]})
+
+        omitted = plan_request()
+        cleared = omitted | {"setup": omitted["setup"] | {"avoid": []}}
+        submitted, changed = (cleared, omitted) if explicit_clear else (omitted, cleared)
+        planned = done(output_turn(client, base, cid, submitted))
+        assert planned["plan"]["preferences"]["avoid"] == (
+            [] if explicit_clear else [preference | {"mark": "you"}]
+        )
+        calls = len(fake.requests)
+        if old_hash:
+            command = ArtifactTurnInput.model_validate(submitted).root
+            fingerprint = service._output_fingerprint(
+                headers["X-Gunther-Workspace-Id"], base, "artifact-turn", {
+                    "conversationId": cid,
+                    **command.model_dump(mode="json", by_alias=True, exclude={"client_request_id"}),
+                },
+            )
+            with service.sessions.begin() as session:
+                row = session.scalar(select(ArtifactMessage).where(
+                    ArtifactMessage.conversation_id == cid, ArtifactMessage.role == "user",
+                ))
+                row.payload_json = json.dumps(
+                    json.loads(row.payload_json) | {"requestFingerprint": fingerprint},
+                )
+
+        name, conflict = output_turn(client, base, cid, changed)[-1]
+        assert name == "error" and conflict["status"] == 409
+        assert "already used" in conflict["detail"]
+        with client.stream(
+            "POST", conversations(base, f"/{cid}/messages/stream"),
+            headers=headers, json=submitted,
+        ) as replay:
+            assert replay.status_code == 200
+            assert done(read_events(replay)) == planned
+        assert len(fake.requests) == calls
 
 
 def test_direct_patch_is_cas_and_approves_the_edited_topics_and_exact_count(tmp_path):

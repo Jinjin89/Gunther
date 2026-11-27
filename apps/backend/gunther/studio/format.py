@@ -190,27 +190,32 @@ _TABLE_DELIMITER = re.compile(r":?-+:?")
 
 def table_cells(line: str) -> list[str]:
     """Split one Markdown table line into trimmed cells, keeping escaped pipes."""
-    text = line.strip()
-    if text.startswith("|"):
-        text = text[1:]
-    if text.endswith("|") and not text.endswith(r"\|"):
-        text = text[:-1]
-    cells: list[str] = []
+    return [cell for cell, _ in _decode_table_cells(line)]
+
+
+def _decode_table_cells(line: str) -> Iterator[tuple[str, int]]:
+    """Yield each cell's value and its end offset before trailing whitespace."""
+    text = line.rstrip()
+    start = len(text) - len(text.lstrip())
+    if text[start:start + 1] == "|":
+        start += 1
     current: list[str] = []
-    index = 0
+    index = start
     while index < len(text):
-        if text[index] == "\\" and index + 1 < len(text) and text[index + 1] == "|":
+        if text.startswith(r"\|", index):
             current.append("|")
             index += 2
         elif text[index] == "|":
-            cells.append("".join(current).strip())
-            current = []
-            index += 1
+            yield "".join(current).strip(), start + len(text[start:index].rstrip())
+            start = index + 1
+            if start == len(text):
+                return
+            current.clear()
+            index = start
         else:
             current.append(text[index])
             index += 1
-    cells.append("".join(current).strip())
-    return cells
+    yield "".join(current).strip(), len(text)
 
 
 def is_table_separator(cells: Sequence[str]) -> bool:
@@ -892,11 +897,10 @@ def cite_exhibit_rows(text: str) -> str:
             continue
         for index in exhibit.rows[1:]:
             raw = lines[index]
-            cells = raw.strip().strip("|").split("|")
-            if re.search(r"\d", "".join(cells[1:])) and not has_markers(raw):
-                content = raw.rstrip("\r\n")
-                row = content.rstrip().rstrip("|").rstrip()
-                lines[index] = f"{row} {refs} |{raw[len(content):]}"
+            cells = list(_decode_table_cells(raw))[1:]
+            if any(re.search(r"\d", cell) for cell, _ in cells) and not has_markers(raw):
+                end = next(end for cell, end in reversed(cells) if cell)
+                lines[index] = f"{raw[:end]} {refs}{raw[end:]}"
     return "".join(lines)
 
 
