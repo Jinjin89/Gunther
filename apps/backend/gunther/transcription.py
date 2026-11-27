@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+from httpx import AsyncClient
 
 from gunther.qwen_stream import CONTEXT_TURN_CHARS, LIVE_RATE, split_sentences
 from gunther.speech_registry import Choice, qwen_upload_id
@@ -17,19 +18,69 @@ from gunther.speech_registry import Choice, qwen_upload_id
 CONTEXT_CHARS = 800
 
 
+class AsrHttpConfigurationError(httpx.TransportError):
+    """The ASR HTTP client cannot use its configured transport."""
+
+
+class AsrHttpTransport(httpx.AsyncBaseTransport):
+    """Own HTTPX's direct and proxy connection pools for one app lifespan."""
+
+    def __init__(self) -> None:
+        self._routing: httpx.AsyncClient | None = None
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if self._routing is None:
+            # Construction has no await, so requests on this lifespan's loop share it.
+            try:
+                self._routing = httpx.AsyncClient()
+            except (ImportError, ValueError) as error:
+                raise AsrHttpConfigurationError(
+                    "Speech transcription cannot use the configured HTTP proxy.",
+                    request=request,
+                ) from error
+        # Use the default proxy and NO_PROXY routing without sending through a shared client.
+        # Only the take's client may process response cookies or attach credentials.
+        transport = self._routing._transport_for_url(request.url)
+        return await transport.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        if self._routing is not None:
+            await self._routing.aclose()
+
+
+class _BorrowedTransport(httpx.AsyncBaseTransport):
+    """Let a request client close without closing the lifespan's connection pool."""
+
+    def __init__(self, transport: httpx.AsyncBaseTransport) -> None:
+        self._transport = transport
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        return await self._transport.handle_async_request(request)
+
+
+def asr_http_client(timeout: float, transport: httpx.AsyncBaseTransport | None) -> AsyncClient:
+    if transport is None:
+        return httpx.AsyncClient(timeout=timeout)
+    return AsyncClient(timeout=timeout, transport=_BorrowedTransport(transport))
+
+
 def sensevoice_root(url: str) -> str:
     normalized = url.rstrip("/")
     return normalized[:-3] if normalized.endswith("/v1") else normalized
 
 
-async def sensevoice_health(url: str, timeout: float = 1.2) -> dict[str, object] | None:
+async def sensevoice_health(
+    url: str, timeout: float = 1.2, *, transport: httpx.AsyncBaseTransport | None = None
+) -> dict[str, object] | None:
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with asr_http_client(timeout, transport) as client:
             response = await client.get(f"{sensevoice_root(url)}/health")
             response.raise_for_status()
             payload = response.json()
             return payload if isinstance(payload, dict) and payload.get("ok") is True else None
-    except (httpx.HTTPError, ValueError, TypeError):
+    except AsrHttpConfigurationError:
+        raise
+    except (httpx.HTTPError, ImportError, ValueError, TypeError):
         return None
 
 

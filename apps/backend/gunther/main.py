@@ -67,6 +67,7 @@ from gunther.speech_api import router as speech_router
 from gunther.storage_api import router as storage_router
 from gunther.storage_budget import StorageBudget
 from gunther.structure_model import create_structure_reviser
+from gunther.transcription import AsrHttpTransport
 from gunther.trash import TrashService
 from gunther.trash_api import router as trash_router
 from gunther.tts_api import router as tts_router
@@ -341,32 +342,37 @@ def create_app(
             logging.getLogger(__name__).warning("Audio copy cleanup failed", exc_info=True)
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await asyncio.to_thread(sweep_listen_copies)
         knowledge_service.ensure_saved_knowledge_units()
-        # In-memory SQLite uses a single shared connection: tests drive run_once
-        # explicitly rather than allowing concurrent transactions on that connection.
-        background = not active_settings.database_url.endswith(":memory:")
-        task = (
-            asyncio.create_task(worker.run())
-            if active_settings.processing_worker_enabled and background
-            else None
-        )
-        trash_task = asyncio.create_task(purge_trash()) if background else None
-        if library_folders and background:
-            library_folders.start()
+        transport = AsrHttpTransport()
+        app.state.asr_http_transport = transport
         try:
-            yield
+            # In-memory SQLite uses a single shared connection: tests drive run_once
+            # explicitly rather than allowing concurrent transactions on that connection.
+            background = not active_settings.database_url.endswith(":memory:")
+            task = (
+                asyncio.create_task(worker.run())
+                if active_settings.processing_worker_enabled and background
+                else None
+            )
+            trash_task = asyncio.create_task(purge_trash()) if background else None
+            try:
+                if library_folders and background:
+                    library_folders.start()
+                yield
+            finally:
+                if library_folders:
+                    library_folders.stop()
+                if trash_task:
+                    trash_task.cancel()
+                await retranscriber.close()
+                worker.stopping.set()
+                if task:
+                    await task
+                engine.dispose()
         finally:
-            if library_folders:
-                library_folders.stop()
-            if trash_task:
-                trash_task.cancel()
-            await retranscriber.close()
-            worker.stopping.set()
-            if task:
-                await task
-            engine.dispose()
+            await transport.aclose()
 
     application = FastAPI(
         title=active_settings.app_name,

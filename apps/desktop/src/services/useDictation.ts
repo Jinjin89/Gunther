@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { flushAudio } from "./audioQueue";
 import {
   appendLiveAudio,
   commitLiveAudio,
@@ -9,27 +10,37 @@ import { encodePcm16, pcm16Length } from "./pcm";
 import { dictationText, updateDictation, type DictationText } from "./dictationText";
 
 export type DictationState = "idle" | "starting" | "listening" | "finishing";
+export type DictationCompletion = "completed" | "no_speech" | "cancelled";
 const WAIT_MS = 30_000;
 const RATE = 16_000;
 const MAX_PENDING_SAMPLES = RATE * 30;
+const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
+const LEVEL_INTERVAL_MS = 60;
+const MIC_DISCONNECTED = "The microphone disconnected. Please try again.";
+const SOCKET_UNAVAILABLE = "Could not reach the transcription service. Your text has been kept.";
+const SOCKET_CLOSED = "The transcription connection closed before it finished. Your text has been kept.";
 
 interface Session {
   stream: MediaStream | null;
+  track: MediaStreamTrack | null;
   context: AudioContext | null;
+  source: MediaStreamAudioSourceNode | null;
   processor: ScriptProcessorNode | null;
   socket: WebSocket | null;
+  graphReady: boolean;
+  captured: boolean;
   ready: boolean;
   stopping: boolean;
   committed: boolean;
   queue: string[];
-  samples: number;
-  sourceSamples: number;
+  submittedSamples: number;
   pieces: DictationText;
-  timer: number | null;
+  micTimer: number | undefined;
+  socketTimer: number | undefined;
 }
-interface DictationOptions {
+export interface DictationOptions {
   onStart?: () => void;
-  onComplete?: (text: string) => void;
+  onComplete?: (text: string, outcome: DictationCompletion) => void;
   onError?: (message: string) => void;
 }
 let owner: Session | null = null;
@@ -41,7 +52,25 @@ function micMessage(reason: unknown): string {
   return "The microphone is busy or unavailable.";
 }
 
-/** A short, live dictation. Updates contain the whole take; completion follows the flush acknowledgement. */
+function stopCapture(session: Session) {
+  window.clearTimeout(session.micTimer);
+  session.micTimer = undefined;
+  if (session.processor) {
+    session.processor.onaudioprocess = null;
+    session.processor.disconnect();
+    session.processor = null;
+  }
+  session.source?.disconnect();
+  session.source = null;
+  if (session.track) session.track.onended = null;
+  session.track = null;
+  session.stream?.getTracks().forEach((track) => track.stop());
+  session.stream = null;
+  if (session.context) void session.context.close().catch(() => undefined);
+  session.context = null;
+}
+
+/** A short, live dictation. Updates contain the whole take. Captured takes complete after the flush. */
 export function useDictation(onText: (text: string, pieces: DictationText) => void, options: DictationOptions = {}) {
   const [state, setState] = useState<DictationState>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -55,25 +84,21 @@ export function useDictation(onText: (text: string, pieces: DictationText) => vo
   const mounted = useRef(true);
 
   const release = useCallback((session: Session) => {
-    if (session.timer !== null) window.clearTimeout(session.timer);
-    session.timer = null;
-    if (session.processor) {
-      session.processor.onaudioprocess = null;
-      session.processor.disconnect();
-    }
-    session.stream?.getTracks().forEach((track) => track.stop());
-    if (session.context) void session.context.close().catch(() => undefined);
+    if (current.current !== session) return;
+    current.current = null;
+    if (owner === session) owner = null;
+    stopCapture(session);
+    window.clearTimeout(session.socketTimer);
+    session.socketTimer = undefined;
     if (session.socket) {
       session.socket.onmessage = null;
       session.socket.onclose = null;
       session.socket.onerror = null;
       if (session.socket.readyState <= WebSocket.OPEN) session.socket.close();
+      session.socket = null;
     }
-    if (owner === session) owner = null;
-    if (current.current === session) {
-      current.current = null;
-      if (mounted.current) { setLevel(0); setState("idle"); }
-    }
+    session.queue.length = 0;
+    if (mounted.current) { setLevel(0); setState("idle"); }
   }, []);
 
   const fail = useCallback((session: Session, message: string) => {
@@ -88,38 +113,47 @@ export function useDictation(onText: (text: string, pieces: DictationText) => vo
     if (session) release(session);
   }, [release]);
 
-  const armTimeout = useCallback((session: Session, message: string) => {
-    if (session.timer !== null) window.clearTimeout(session.timer);
-    session.timer = window.setTimeout(() => fail(session, message), WAIT_MS);
+  const drain = useCallback((session: Session) => {
+    const socket = session.socket;
+    if (!session.ready || session.committed || !socket) return;
+    if (socket.readyState !== WebSocket.OPEN) { fail(session, SOCKET_CLOSED); return; }
+    try {
+      flushAudio(session.queue, (audio) => {
+        if (socket.bufferedAmount > MAX_BUFFERED_BYTES) {
+          throw new Error("The transcription connection is too slow. Your text has been kept.");
+        }
+        appendLiveAudio(socket, audio);
+      });
+      if (session.stopping) {
+        commitLiveAudio(socket);
+        session.committed = true;
+        session.socketTimer = window.setTimeout(() => {
+          fail(session, "The voice-input connection timed out. Your text is still here.");
+        }, WAIT_MS);
+      }
+    } catch (reason) {
+      fail(session, reason instanceof Error ? reason.message : "Could not send voice input. Your text has been kept.");
+    }
   }, [fail]);
-
-  const commit = useCallback((session: Session) => {
-    if (!session.ready || session.committed || session.socket?.readyState !== WebSocket.OPEN) return;
-    session.committed = true;
-    commitLiveAudio(session.socket);
-    armTimeout(session, "The voice-input connection timed out. Your text is still here.");
-  }, [armTimeout]);
 
   const stop = useCallback(() => {
     const session = current.current;
     if (!session || session.stopping) return;
-    // A permission request cannot be aborted, but its late stream is released by start().
-    if (!session.stream) { release(session); callbacks.current.onComplete?.(""); return; }
     session.stopping = true;
-    if (session.processor) {
-      session.processor.onaudioprocess = null;
-      session.processor.disconnect();
+    if (!session.graphReady) {
+      release(session);
+      callbacks.current.onComplete?.("", "cancelled");
+      return;
     }
-    session.stream.getTracks().forEach((track) => track.stop());
+    // Each delivered block is already queued or sent. ScriptProcessor cannot expose a partial block.
+    stopCapture(session);
     setLevel(0);
     setState("finishing");
-    armTimeout(session, "Voice input could not finish connecting. Your text has been kept.");
-    // While opening, keep the queued audio until service.ready, then commit it in order.
-    commit(session);
-  }, [armTimeout, commit, release]);
+    drain(session);
+  }, [drain, release]);
 
   const start = useCallback(async () => {
-    if (current.current) return;
+    if (!mounted.current || current.current) return;
     if (owner) {
       const message = "Voice input is already active in another field. Stop it first.";
       setError(message);
@@ -127,9 +161,9 @@ export function useDictation(onText: (text: string, pieces: DictationText) => vo
       return;
     }
     const session: Session = {
-      stream: null, context: null, processor: null, socket: null,
-      ready: false, stopping: false, committed: false, queue: [],
-      samples: 0, sourceSamples: 0, pieces: [], timer: null,
+      stream: null, track: null, context: null, source: null, processor: null, socket: null,
+      graphReady: false, captured: false, ready: false, stopping: false, committed: false,
+      queue: [], submittedSamples: 0, pieces: [], micTimer: undefined, socketTimer: undefined,
     };
     current.current = session;
     owner = session;
@@ -137,83 +171,117 @@ export function useDictation(onText: (text: string, pieces: DictationText) => vo
     setTranscript("");
     setState("starting");
     callbacks.current.onStart?.();
+    if (current.current !== session || session.stopping) return;
+
+    let socket: WebSocket;
+    try {
+      socket = openLiveTranscription("", "dictation", { offsetMs: 0 });
+    } catch {
+      fail(session, SOCKET_UNAVAILABLE);
+      return;
+    }
+    session.socket = socket;
+    socket.onmessage = (message) => {
+      if (current.current !== session) return;
+      const event = readLiveTranscriptionEvent(message);
+      if (!event) { fail(session, "The transcription service returned an invalid response."); return; }
+      if (event.type === "service.ready") {
+        if (session.ready) return;
+        session.ready = true;
+        window.clearTimeout(session.socketTimer);
+        session.socketTimer = undefined;
+        drain(session);
+      } else if (event.type === "service.error" || event.type === "transcript.gap") {
+        fail(session, String(event.message ?? "Some audio could not be transcribed. Your text has been kept."));
+      } else if (event.type === "transcript.piece") {
+        const next = updateDictation(session.pieces, event);
+        if (next === session.pieces) return;
+        session.pieces = next;
+        const text = dictationText(next);
+        setTranscript(text);
+        handler.current(text, next);
+      } else if (event.type === "transcript.flushed" && session.stopping && session.committed) {
+        const untilMs = event.until_ms;
+        const expectedMs = Math.floor((session.submittedSamples * 1000) / RATE);
+        if (typeof untilMs !== "number" || !Number.isInteger(untilMs) || untilMs !== expectedMs) return;
+        const text = dictationText(session.pieces);
+        release(session);
+        callbacks.current.onComplete?.(text, text.trim() ? "completed" : "no_speech");
+      }
+    };
+    socket.onerror = () => fail(session, SOCKET_UNAVAILABLE);
+    socket.onclose = () => fail(session, SOCKET_CLOSED);
+    session.socketTimer = window.setTimeout(() => {
+      fail(session, "Could not connect to live transcription. Please try again.");
+    }, WAIT_MS);
+
+    session.micTimer = window.setTimeout(() => {
+      fail(session, "The microphone could not start. Please try again.");
+    }, WAIT_MS);
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: { ideal: false } } });
     } catch (reason) { fail(session, micMessage(reason)); return; }
-    if (current.current !== session) { stream.getTracks().forEach((track) => track.stop()); return; }
+    if (current.current !== session || session.stopping) {
+      // A pending permission request can still grant a stream after the take ends.
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
     session.stream = stream;
     try {
+      const track = stream.getAudioTracks()[0];
+      if (!track || track.readyState !== "live") { fail(session, MIC_DISCONNECTED); return; }
+      session.track = track;
+      track.onended = () => {
+        if (current.current === session && !session.stopping) fail(session, MIC_DISCONNECTED);
+      };
       const context = new AudioContext();
       session.context = context;
-      armTimeout(session, "The microphone could not start. Please try again.");
       await context.resume();
-      if (current.current !== session) return;
-      const processor = context.createScriptProcessor(4_096, 1, 1);
+      if (current.current !== session || session.stopping) return;
+      const source = context.createMediaStreamSource(stream);
+      session.source = source;
+      const processor = context.createScriptProcessor(1_024, 1, 1);
       session.processor = processor;
-      const socket = openLiveTranscription("", "dictation", { offsetMs: 0 });
-      session.socket = socket;
-      context.createMediaStreamSource(stream).connect(processor);
-      processor.connect(context.destination);
-      // Capture and show listening immediately; service setup runs while audio is queued.
-      setState("listening");
-      let lastLevel = 0;
-      const send = (audio: string) => appendLiveAudio(socket, audio);
+      let sourceSamples = 0;
+      let lastLevel = -Infinity;
       processor.onaudioprocess = (event) => {
-        if (current.current !== session || session.stopping) return;
+        if (current.current !== session || session.stopping || track.readyState !== "live") return;
+        if (!session.captured && track.muted) return;
         const samples = event.inputBuffer.getChannelData(0);
+        if (!samples.length) return;
+        if (!session.captured) {
+          session.captured = true;
+          window.clearTimeout(session.micTimer);
+          session.micTimer = undefined;
+          setState("listening");
+        }
         const now = performance.now();
-        if (now - lastLevel > 90) {
+        if (now - lastLevel >= LEVEL_INTERVAL_MS) {
           lastLevel = now;
           let sum = 0;
           for (const sample of samples) sum += sample * sample;
           setLevel(Math.min(1, Math.sqrt(sum / samples.length) * 8));
         }
-        const audio = encodePcm16(samples, context.sampleRate, RATE, session.sourceSamples);
-        session.samples += pcm16Length(samples.length, context.sampleRate, RATE, session.sourceSamples);
-        session.sourceSamples += samples.length;
-        if (session.ready && socket.readyState === WebSocket.OPEN) {
-          if (socket.bufferedAmount > 2 * 1024 * 1024) { fail(session, "The transcription connection is too slow. Your text has been kept."); return; }
-          send(audio);
-        } else if (session.samples <= MAX_PENDING_SAMPLES) session.queue.push(audio);
-        else fail(session, "The transcription service did not connect in time. Please try again.");
-      };
-      armTimeout(session, "Could not connect to live transcription. Please try again.");
-      socket.onmessage = (message) => {
-        if (current.current !== session) return;
-        const event = readLiveTranscriptionEvent(message);
-        if (!event) { fail(session, "The transcription service returned an invalid response."); return; }
-        if (event.type === "service.ready") {
-          if (session.ready) return;
-          session.ready = true;
-          if (session.timer !== null) window.clearTimeout(session.timer);
-          session.timer = null;
-          session.queue.splice(0).forEach(send);
-          if (session.stopping) commit(session);
-          else setState("listening");
-        } else if (event.type === "service.error" || event.type === "transcript.gap") {
-          fail(session, String(event.message ?? "Some audio could not be transcribed. Your text has been kept."));
-        } else if (event.type === "transcript.piece") {
-          const next = updateDictation(session.pieces, event);
-          if (next === session.pieces) return;
-          session.pieces = next;
-          const text = dictationText(next);
-          setTranscript(text);
-          handler.current(text, next);
-        } else if (event.type === "transcript.flushed" && session.stopping && session.committed) {
-          // The service has finished the submitted audio. Use its latest text directly;
-          // do not add a separate per-sentence confidence/confirmation gate.
-          const text = dictationText(session.pieces);
-          release(session);
-          callbacks.current.onComplete?.(text);
+        const length = pcm16Length(samples.length, context.sampleRate, RATE, sourceSamples);
+        if (!session.ready && session.submittedSamples + length > MAX_PENDING_SAMPLES) {
+          fail(session, "The transcription service did not connect in time. Please try again.");
+          return;
         }
+        if (length > 0) {
+          session.queue.push(encodePcm16(samples, context.sampleRate, RATE, sourceSamples));
+          session.submittedSamples += length;
+        }
+        sourceSamples += samples.length;
+        drain(session);
       };
-      socket.onerror = () => fail(session, "Could not reach the transcription service. Your text has been kept.");
-      socket.onclose = () => fail(session, "The transcription connection closed before it finished. Your text has been kept.");
+      source.connect(processor);
+      processor.connect(context.destination);
+      session.graphReady = true;
     } catch (reason) {
       fail(session, reason instanceof Error ? reason.message : "Voice input is unavailable.");
     }
-  }, [armTimeout, commit, fail, release]);
+  }, [drain, fail, release]);
 
   const toggle = useCallback(() => {
     if (current.current) stop();

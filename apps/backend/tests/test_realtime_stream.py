@@ -7,10 +7,14 @@ finish-task, task-finished) on localhost, so no test touches the network.
 import asyncio
 import base64
 import json
+import sys
 import threading
 import time
+import wave
 from collections.abc import Callable, Iterator
+from concurrent.futures import Future
 from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +22,10 @@ import httpx
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocket, WebSocketDisconnect
 from websockets.asyncio.server import serve
+from websockets.exceptions import ConnectionClosed
+from websockets.protocol import State
 
 from gunther import realtime, speech_api, transcription
 from gunther.config import Settings
@@ -52,40 +59,54 @@ class FakeQwen:
         self,
         mode: str = "ok",
         drop_at: int | None = None,
+        draft_at: int | None = 2,
         finals: bool = True,
         never_finish: bool = False,
+        hold_start: bool = False,
+        empty_final: bool = False,
     ) -> None:
         self.finals = finals
         self.never_finish = never_finish
         self.mode = mode
         self.drop_at = drop_at
+        self.draft_at = draft_at
+        self.empty_final = empty_final
         self.tasks: list[dict[str, Any]] = []
         self.connections = 0
         self.loop = asyncio.new_event_loop()
-        self.port = 0
-        ready = threading.Event()
+        self.start_gate = asyncio.Event()
+        self.stop_event = asyncio.Event()
+        ready: Future[int] = Future()
 
         def serve_forever() -> None:
             asyncio.set_event_loop(self.loop)
 
-            async def start():
-                return await serve(self.handle, "127.0.0.1", 0)
+            async def run() -> None:
+                if not hold_start:
+                    self.start_gate.set()
+                async with serve(self.handle, "127.0.0.1", 0) as server:
+                    ready.set_result(server.sockets[0].getsockname()[1])
+                    await self.stop_event.wait()
 
-            server = self.loop.run_until_complete(start())
-            self.port = server.sockets[0].getsockname()[1]
-            ready.set()
-            self.loop.run_forever()
+            try:
+                self.loop.run_until_complete(run())
+            except Exception as error:
+                if ready.done():
+                    raise
+                ready.set_exception(error)
+            finally:
+                self.loop.close()
 
         self.thread = threading.Thread(target=serve_forever, daemon=True)
         self.thread.start()
-        ready.wait(5)
+        self.port = ready.result(timeout=5)
 
     @property
     def url(self) -> str:
         return f"http://127.0.0.1:{self.port}"
 
     def real_tasks(self) -> list[dict[str, Any]]:
-        """Tasks that carried audio (the start-up check sends none)."""
+        """Filter out empty tasks when checking replayed audio."""
 
         return [task for task in self.tasks if task["frames"] > 0]
 
@@ -98,6 +119,23 @@ class FakeQwen:
             }
         )
 
+    @staticmethod
+    def event(task_id: str, name: str, **fields: str) -> str:
+        return json.dumps({"header": {"event": name, "task_id": task_id, **fields}})
+
+    def send(self, task: dict[str, Any], message: str) -> None:
+        asyncio.run_coroutine_threadsafe(task["socket"].send(message), self.loop).result(timeout=5)
+
+    def end(self, task: dict[str, Any], name: str = "task-finished") -> None:
+        task["ended"] = True
+        self.send(task, self.event(task["id"], name))
+
+    def disconnect(self, task: dict[str, Any]) -> None:
+        asyncio.run_coroutine_threadsafe(task["socket"].close(), self.loop).result(timeout=3)
+
+    def wait_closed(self, task: dict[str, Any]) -> None:
+        asyncio.run_coroutine_threadsafe(task["socket"].wait_closed(), self.loop).result(timeout=3)
+
     async def handle(self, socket) -> None:
         self.connections += 1
         task: dict[str, Any] | None = None
@@ -106,7 +144,8 @@ class FakeQwen:
                 assert task is not None
                 task["frames"] += 1
                 task["bytes"] += len(message)
-                if task["frames"] == 2:
+                task["pcm"].extend(message)
+                if task["frames"] == self.draft_at:
                     await socket.send(
                         self.result(
                             task["id"],
@@ -125,10 +164,10 @@ class FakeQwen:
                             {
                                 "sentence_id": 1,
                                 "sentence_end": True,
-                                "text": "We'll use it.",
+                                "text": "" if self.empty_final else "We'll use it.",
                                 "begin_time": 0,
                                 "end_time": 300,
-                                "words": words,
+                                "words": [] if self.empty_final else words,
                             },
                         )
                     )
@@ -140,48 +179,45 @@ class FakeQwen:
             data = json.loads(message)
             action = data["header"]["action"]
             if action == "run-task":
-                if self.mode == "refuse":
-                    await socket.send(
-                        json.dumps(
-                            {
-                                "header": {
-                                    "event": "task-failed",
-                                    "task_id": data["header"]["task_id"],
-                                    "error_message": "url error, please check url",
-                                }
-                            }
-                        )
-                    )
-                    continue
-                if self.mode == "silent":
-                    continue
+                assert task is None or task["ended"], "a new task overlapped the preceding task"
                 task = {
                     "id": data["header"]["task_id"],
                     "payload": data["payload"],
                     "frames": 0,
                     "bytes": 0,
+                    "pcm": bytearray(),
                     "finished": False,
+                    "ended": False,
+                    "socket": socket,
                 }
                 self.tasks.append(task)
-                await socket.send(
-                    json.dumps(
-                        {"header": {"event": "task-started", "task_id": task["id"]}, "payload": {}}
+                await self.start_gate.wait()
+                if self.mode == "silent":
+                    continue
+                if self.mode == "refuse":
+                    task["ended"] = True
+                    message = self.event(
+                        task["id"], "task-failed", error_message="url error, please check url"
                     )
-                )
+                else:
+                    message = self.event(task["id"], "task-started")
+                try:
+                    await socket.send(message)
+                except ConnectionClosed:
+                    return
             elif action == "finish-task" and task is not None:
                 task["finished"] = True
                 if self.never_finish:
                     continue
-                await socket.send(
-                    json.dumps(
-                        {"header": {"event": "task-finished", "task_id": task["id"]}, "payload": {}}
-                    )
-                )
+                task["ended"] = True
+                await socket.send(self.event(task["id"], "task-finished"))
 
     dropped = False
 
     def stop(self) -> None:
-        self.loop.call_soon_threadsafe(self.loop.stop)
+        self.loop.call_soon_threadsafe(self.start_gate.set)
+        self.loop.call_soon_threadsafe(self.stop_event.set)
+        self.thread.join(timeout=5)
 
 
 @pytest.fixture
@@ -206,6 +242,7 @@ def make_app(tmp_path: Path, server: FakeQwen, model: str, **job: Any) -> Iterat
         recordings_dir=tmp_path / "recordings",
         deepseek_api_key=None,
         auth_token=SIDECAR_TOKEN,
+        processing_worker_enabled=False,
         service_settings_file=tmp_path / "service-settings.json",
     )
     with TestClient(create_app(settings)) as client:
@@ -337,8 +374,10 @@ def test_24_khz_stream_matches_the_mobile_v2_event_fixture(
             )
             if index == 0:
                 assert socket.receive_json() == {
-                    "type": "transcript.gap", "reason": "missing",
-                    "start_ms": first_offset - 100, "end_ms": first_offset,
+                    "type": "transcript.gap",
+                    "reason": "missing",
+                    "start_ms": first_offset - 100,
+                    "end_ms": first_offset,
                 }
             for expected in chunk["events"]:
                 actual = socket.receive_json()
@@ -353,19 +392,131 @@ def test_24_khz_stream_matches_the_mobile_v2_event_fixture(
         assert abs(task["bytes"] - chunk["duration_ms"] * BYTES_PER_MS) <= BYTES_PER_MS
 
 
-def test_a_commit_with_nothing_to_finish_is_flushed_at_once(tmp_path: Path, fake) -> None:
-    server = fake()
+def test_empty_task_cleanup_does_not_hold_another_commit_or_resumed_pcm(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(realtime, "TASK_END_TIMEOUT", 3.0)
+    server = fake(never_finish=True)
     app = make_app(tmp_path, server, "qwen-audio-3.1-asr-flash")
     with (
         app as client,
         client.websocket_connect(V2.format(offset=5_000), headers=SIDECAR) as socket,
     ):
         socket.receive_json()
+        (task,) = server.tasks
+        assert not task["finished"]
         socket.send_json({"type": "input_audio_buffer.commit"})
         assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 5_000}
+        wait_for(lambda: task["finished"])
+        assert task["bytes"] == 0
+
+        socket.send_json({"type": "input_audio_buffer.commit"})
+        assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 5_000}
+        assert task["socket"].state == State.OPEN
+
+        socket.send_json({"type": "input_audio_buffer.append", "audio": audio(400)})
+        assert socket.receive_json()["final"] is False
+        final = socket.receive_json()
+        assert final["final"] and final["start_ms"] == 5_000
+        assert task["socket"].state == State.OPEN
+        socket.send_json({"type": "input_audio_buffer.commit"})
+        wait_for(lambda: len(server.tasks) == 2 and server.tasks[1]["finished"])
+        resumed = server.tasks[1]
+        assert resumed["bytes"] == 4 * FRAME
+        assert resumed["socket"] is not task["socket"]
+        server.end(resumed)
+        assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 5_400}
+        socket.close()
+        server.wait_closed(task)
+    assert not task["ended"]  # The provider never acknowledged the unused task.
 
 
-def test_flushed_waits_for_the_task_to_end_even_when_it_has_to_be_given_up(
+def test_an_expired_unused_task_restarts_only_when_pcm_arrives(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(realtime, "RECONNECT_BACKOFF", ())
+    retired = threading.Event()
+    settle = realtime._LiveStream._settle
+
+    async def track_retirement(self, task):
+        await settle(self, task)
+        retired.set()
+
+    monkeypatch.setattr(realtime._LiveStream, "_settle", track_retirement)
+    server = fake()
+    with (
+        make_app(tmp_path, server, "qwen-audio-3.1-asr-flash") as client,
+        client.websocket_connect(V2.format(offset=0), headers=SIDECAR) as socket,
+    ):
+        assert socket.receive_json()["live"] == "stream"
+        (task,) = server.tasks
+        server.end(task, "task-failed")
+        assert retired.wait(3)
+        assert len(server.tasks) == 1 and task["bytes"] == 0
+        socket.send_json({"type": "input_audio_buffer.append", "audio": audio(400)})
+        assert socket.receive_json()["final"] is False
+        assert socket.receive_json()["final"] is True
+        socket.send_json({"type": "input_audio_buffer.commit"})
+        assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 400}
+    assert len(server.tasks) == 2
+
+
+@pytest.mark.parametrize(
+    "early_audio", [False, True], ids=["disconnect", "append-commit-disconnect"]
+)
+def test_disconnect_while_waiting_for_task_started_closes_upstream(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch, early_audio: bool
+) -> None:
+    server = fake(hold_start=True)
+    published = []
+    send = WebSocket.send_json
+
+    async def capture(self, event, *args, **kwargs):
+        published.append(event["type"])
+        await send(self, event, *args, **kwargs)
+
+    monkeypatch.setattr(WebSocket, "send_json", capture)
+    with (
+        make_app(tmp_path, server, "qwen-audio-3.1-asr-flash") as client,
+        client.websocket_connect(V2.format(offset=0), headers=SIDECAR) as socket,
+    ):
+        wait_for(lambda: len(server.tasks) == 1)
+        (task,) = server.tasks
+        if early_audio:
+            socket.send_json({"type": "input_audio_buffer.append", "audio": audio(100)})
+            socket.send_json({"type": "input_audio_buffer.commit"})
+        socket.close()
+        server.wait_closed(task)
+    assert task["bytes"] == 0 and not task["finished"]
+    assert "service.ready" not in published
+
+
+@pytest.mark.parametrize("limit", ["pcm", "controls"])
+def test_overflowing_the_early_input_buffer_reports_an_error_and_closes(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch, limit: str
+) -> None:
+    monkeypatch.setattr(realtime, "RETAIN_SECONDS", 0.1)
+    monkeypatch.setattr(realtime, "EARLY_CONTROL_LIMIT", 2)
+    server = fake(hold_start=True)
+    with (
+        make_app(tmp_path, server, "qwen-audio-3.1-asr-flash") as client,
+        client.websocket_connect(V2.format(offset=0), headers=SIDECAR) as socket,
+    ):
+        wait_for(lambda: len(server.tasks) == 1)
+        if limit == "pcm":
+            for _ in range(2):
+                socket.send_json({"type": "input_audio_buffer.append", "audio": audio(60)})
+        else:
+            for _ in range(3):
+                socket.send_json({"type": "input_audio_buffer.commit"})
+        event = socket.receive_json()
+        assert event["type"] == "service.error" and event["code"] == "startup_buffer_full"
+        with pytest.raises(WebSocketDisconnect):
+            socket.receive_json()
+        server.wait_closed(server.tasks[0])
+
+
+def test_audio_without_a_finish_acknowledgment_fails_instead_of_flushing(
     tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(realtime, "TASK_END_TIMEOUT", 0.6)
@@ -378,7 +529,6 @@ def test_flushed_waits_for_the_task_to_end_even_when_it_has_to_be_given_up(
         socket.receive_json()
         socket.send_json({"type": "input_audio_buffer.append", "audio": audio(400), "offset_ms": 0})
         socket.receive_json()  # the draft after the 2nd frame
-        started = time.monotonic()
         socket.send_json({"type": "input_audio_buffer.commit"})
         wait_for(lambda: server.real_tasks()[0]["finished"])
         # Resume and stop while the prior pause is still awaiting the upstream reply.
@@ -386,12 +536,98 @@ def test_flushed_waits_for_the_task_to_end_even_when_it_has_to_be_given_up(
             {"type": "input_audio_buffer.append", "audio": audio(600), "offset_ms": 400}
         )
         socket.send_json({"type": "input_audio_buffer.commit"})
-        flushed = socket.receive_json()
-        assert flushed == {"type": "transcript.flushed", "until_ms": 400}
-        assert time.monotonic() - started >= 0.25
-        draft = socket.receive_json()
-        assert draft["type"] == "transcript.piece" and draft["start_ms"] == 400
-        assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 1_000}
+        error = socket.receive_json()
+        assert error["type"] == "service.error" and error["code"] == "finish_unconfirmed"
+        with pytest.raises(WebSocketDisconnect) as disconnected:
+            socket.receive_json()
+        assert disconnected.value.code == 1011
+    assert len(server.tasks) == 1
+
+
+@pytest.mark.parametrize("terminal", ["task-finished", "task-failed"])
+def test_late_results_and_task_completion_precede_flush_after_exact_coverage(
+    tmp_path: Path, fake, terminal: str
+) -> None:
+    server = fake(never_finish=True)
+    with (
+        make_app(tmp_path, server, "qwen-audio-3.1-asr-flash") as client,
+        client.websocket_connect(V2.format(offset=5_000), headers=SIDECAR) as socket,
+    ):
+        assert socket.receive_json()["live"] == "stream"
+        (task,) = server.tasks
+        socket.send_json({"type": "input_audio_buffer.append", "audio": audio(100)})
+        wait_for(lambda: task["bytes"] == FRAME)
+
+        def final(number: int, text: str) -> None:
+            sentence = {"sentence_id": number, "text": text, "sentence_end": True, "end_time": 100}
+            server.send(task, server.result(task["id"], sentence))
+
+        final(1, "first")
+        piece = socket.receive_json()
+        assert piece["final"] and piece["end_ms"] == 5_100
+        socket.send_json({"type": "input_audio_buffer.commit"})
+        socket.send_json({"type": "input_audio_buffer.commit"})
+        wait_for(lambda: task["finished"])
+        final(2, "late")
+        assert socket.receive_json()["text"] == "late"
+        server.end(task, terminal)
+        if terminal == "task-finished":
+            for _ in range(2):
+                assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 5_100}
+        else:
+            error = socket.receive_json()
+            assert error["type"] == "service.error" and error["code"] == "finish_unconfirmed"
+            with pytest.raises(WebSocketDisconnect):
+                socket.receive_json()
+
+
+def test_qwen_empty_final_retracts_a_published_draft(tmp_path: Path, fake) -> None:
+    server = fake(empty_final=True)
+    with (
+        make_app(tmp_path, server, "qwen-audio-3.1-asr-flash") as client,
+        client.websocket_connect(V2.format(offset=8_000), headers=SIDECAR) as socket,
+    ):
+        socket.receive_json()
+        socket.send_json({"type": "input_audio_buffer.append", "audio": audio(400)})
+        draft, final = socket.receive_json(), socket.receive_json()
+        assert draft["text"] and draft["final"] is False
+        assert final == {
+            "type": "transcript.piece",
+            "id": draft["id"],
+            "start_ms": 8_000,
+            "end_ms": 8_300,
+            "text": "",
+            "final": True,
+            "sentences": [],
+        }
+
+
+def test_early_frames_go_onto_the_only_live_startup_task_in_order(tmp_path: Path, fake) -> None:
+    server = fake(hold_start=True)
+    early = b"\x01\x00" * 1_600
+    later = b"\x02\x00" * 4_800
+    with (
+        make_app(tmp_path, server, "qwen-audio-3.1-asr-flash") as client,
+        client.websocket_connect(V2.format(offset=0) + "&context=Terms", headers=SIDECAR) as socket,
+    ):
+        socket.send_json(
+            {"type": "input_audio_buffer.append", "audio": base64.b64encode(early).decode()}
+        )
+        socket.send_json(
+            {"type": "input_audio_buffer.append", "audio": base64.b64encode(later).decode()}
+        )
+        socket.send_json({"type": "input_audio_buffer.commit"})
+        wait_for(lambda: len(server.tasks) == 1)
+        (task,) = server.tasks
+        assert task["payload"]["input"]["context"] == context_turns("Terms", "")
+        assert task["bytes"] == 0 and not task["finished"]
+        server.loop.call_soon_threadsafe(server.start_gate.set)
+        ready = socket.receive_json()
+        assert ready["type"] == "service.ready" and ready["live"] == "stream"
+        assert socket.receive_json()["final"] is False
+        assert socket.receive_json()["final"] is True
+        assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 400}
+    assert len(server.tasks) == 1 and task["pcm"] == early + later
 
 
 def test_the_fallback_sends_v2_clients_final_pieces_on_the_recording_clock(
@@ -403,14 +639,9 @@ def test_the_fallback_sends_v2_clients_final_pieces_on_the_recording_clock(
     def answer(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"output": {"text": next(texts)}})
 
-    real = httpx.AsyncClient
     server = fake(mode="refuse")
     app = make_app(tmp_path, server, "qwen-audio-3.1-asr-flash")
-    monkeypatch.setattr(
-        realtime.httpx,
-        "AsyncClient",
-        lambda **kw: real(transport=httpx.MockTransport(answer), **kw),
-    )
+    monkeypatch.setattr("gunther.main.AsrHttpTransport", lambda: httpx.MockTransport(answer))
     with (
         app as client,
         client.websocket_connect(V2.format(offset=10_000), headers=SIDECAR) as socket,
@@ -441,12 +672,266 @@ def test_a_dropped_task_starts_again_where_the_last_final_ended(tmp_path: Path, 
         socket.send_json(
             {"type": "input_audio_buffer.append", "audio": audio(600), "offset_ms": 60_000}
         )
-        # A draft from the task that dropped, then the new task's draft and final.
-        seen = [socket.receive_json() for _ in range(3)]
-    assert seen[2]["final"] is True and seen[2]["sentences"][0]["start_ms"] == 60_000
-    assert all(event["type"] != "transcript.gap" for event in seen)
+        draft, retraction, replacement, final = [socket.receive_json() for _ in range(4)]
+    assert draft["final"] is False and draft["text"]
+    assert retraction["id"] == draft["id"] and retraction["final"] and retraction["text"] == ""
+    assert retraction["start_ms"] == draft["start_ms"]
+    assert replacement["id"] != draft["id"] and replacement["id"] == final["id"]
+    assert final["final"] is True and final["sentences"][0]["start_ms"] == 60_000
     assert server.connections == 2
     assert server.real_tasks()[1]["bytes"] == 6 * FRAME  # all of it was sent again
+
+
+def test_late_draft_retraction_does_not_confirm_unheard_audio(tmp_path: Path, fake) -> None:
+    server = fake(draft_at=None, finals=False)
+    pcm = b"\x01\x00\x02\x00" * 8_000
+    with (
+        make_app(tmp_path, server, "qwen-audio-3.1-asr-flash") as client,
+        client.websocket_connect(V2.format(offset=0), headers=SIDECAR) as socket,
+    ):
+        assert socket.receive_json()["live"] == "stream"
+        (task,) = server.tasks
+        socket.send_json(
+            {"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm).decode()}
+        )
+        wait_for(lambda: task["bytes"] == len(pcm))
+        draft = {"sentence_id": 1, "text": "late speech", "begin_time": 650}
+        server.send(task, server.result(task["id"], draft))
+        preview = socket.receive_json()
+        assert preview["final"] is False and preview["start_ms"] == 650
+        server.disconnect(task)
+
+        assert socket.receive_json() == {
+            "type": "transcript.piece",
+            "id": preview["id"],
+            "start_ms": 0,
+            "end_ms": 0,
+            "text": "",
+            "final": True,
+            "sentences": [],
+        }
+        wait_for(lambda: len(server.tasks) == 2 and server.tasks[1]["bytes"] == len(pcm))
+        assert server.tasks[1]["pcm"] == pcm
+        socket.send_json({"type": "input_audio_buffer.commit"})
+        assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 1_000}
+
+
+def test_retraction_after_a_word_timed_final_preserves_the_clients_replay(
+    tmp_path: Path, fake
+) -> None:
+    server = fake(draft_at=None, finals=False)
+    pcm = np.arange(19_200, dtype="<i2").tobytes()  # 1.2 s at 16 kHz
+    with make_app(tmp_path, server, "qwen-audio-3.1-asr-flash") as client:
+        with client.websocket_connect(V2.format(offset=0), headers=SIDECAR) as socket:
+            assert socket.receive_json()["live"] == "stream"
+            (task,) = server.tasks
+            socket.send_json(
+                {"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm).decode()}
+            )
+            wait_for(lambda: task["bytes"] == len(pcm))
+            final = {
+                "sentence_id": 1,
+                "sentence_end": True,
+                "text": "confirmed",
+                "end_time": 900,
+                "words": [{"text": "confirmed", "begin_time": 0, "end_time": 300}],
+            }
+            server.send(task, server.result(task["id"], final))
+            piece = socket.receive_json()
+            assert piece["final"] and piece["end_ms"] == 300
+            assert piece["sentences"] == [{"start_ms": 0, "end_ms": 300, "text": "confirmed"}]
+
+            upstream_replay = pcm[900 * BYTES_PER_MS :]
+            retained_ms = piece["end_ms"]
+            for index, origin_ms in enumerate((0, 900)):
+                task = server.tasks[index]
+                draft = {"sentence_id": 2, "text": "pending", "begin_time": 950 - origin_ms}
+                server.send(task, server.result(task["id"], draft))
+                preview = socket.receive_json()
+                assert preview["final"] is False and preview["start_ms"] == 950
+                server.disconnect(task)
+                retraction = socket.receive_json()
+                assert retraction == {
+                    "type": "transcript.piece",
+                    "id": preview["id"],
+                    "start_ms": 300,
+                    "end_ms": 300,
+                    "text": "",
+                    "final": True,
+                    "sentences": [],
+                }
+                # A recording client discards PCM through the end of each published final.
+                retained_ms = max(retained_ms, retraction["end_ms"])
+                wait_for(
+                    lambda next_index=index + 1: (
+                        len(server.tasks) == next_index + 1
+                        and server.tasks[next_index]["pcm"] == upstream_replay
+                    )
+                )
+
+        retained = pcm[retained_ms * BYTES_PER_MS :]
+        with client.websocket_connect(V2.format(offset=retained_ms), headers=SIDECAR) as socket:
+            assert socket.receive_json()["live"] == "stream"
+            socket.send_json(
+                {
+                    "type": "input_audio_buffer.append",
+                    "audio": base64.b64encode(retained).decode(),
+                    "offset_ms": retained_ms,
+                }
+            )
+            socket.send_json({"type": "input_audio_buffer.commit"})
+            assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 1_200}
+    assert server.tasks[3]["pcm"] == pcm[300 * BYTES_PER_MS :]
+
+
+def test_a_task_starting_between_milliseconds_replays_without_a_gap(tmp_path: Path, fake) -> None:
+    server = fake(draft_at=None, finals=False)
+    first = b"\x15\x00" * 341  # 682 bytes, or 21.3125 ms
+    second = b"\x12\x00\x34\x00" * 3_200
+    with (
+        make_app(tmp_path, server, "qwen-audio-3.1-asr-flash") as client,
+        client.websocket_connect(V2.format(offset=0), headers=SIDECAR) as socket,
+    ):
+        assert socket.receive_json()["live"] == "stream"
+        socket.send_json(
+            {"type": "input_audio_buffer.append", "audio": base64.b64encode(first).decode()}
+        )
+        socket.send_json({"type": "input_audio_buffer.commit"})
+        assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 21}
+
+        socket.send_json(
+            {"type": "input_audio_buffer.append", "audio": base64.b64encode(second).decode()}
+        )
+        wait_for(lambda: len(server.tasks) == 2 and server.tasks[1]["pcm"] == second)
+        server.disconnect(server.tasks[1])
+        wait_for(lambda: len(server.tasks) == 3 and server.tasks[2]["pcm"] == second)
+        socket.send_json({"type": "input_audio_buffer.commit"})
+        assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 421}
+
+
+@pytest.mark.parametrize("first_samples", [336, 341])
+def test_final_on_fractional_origin_requires_finish_confirmation(
+    tmp_path: Path, fake, first_samples: int
+) -> None:
+    server = fake(draft_at=None, finals=False)
+    first = b"\x15\x00" * first_samples
+    second = b"\x22\x00" * 1_600  # exactly 100 ms (3,200 bytes)
+    with (
+        make_app(tmp_path, server, "qwen-audio-3.1-asr-flash") as client,
+        client.websocket_connect(V2.format(offset=0), headers=SIDECAR) as socket,
+    ):
+        assert socket.receive_json()["live"] == "stream"
+        socket.send_json(
+            {"type": "input_audio_buffer.append", "audio": base64.b64encode(first).decode()}
+        )
+        socket.send_json({"type": "input_audio_buffer.commit"})
+        assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 21}
+
+        socket.send_json(
+            {"type": "input_audio_buffer.append", "audio": base64.b64encode(second).decode()}
+        )
+        wait_for(lambda: len(server.tasks) == 2 and server.tasks[1]["pcm"] == second)
+        final = {"sentence_id": 1, "text": "done", "sentence_end": True, "end_time": 100}
+        server.send(server.tasks[1], server.result(server.tasks[1]["id"], final))
+        piece = socket.receive_json()
+        assert piece["final"] and piece["text"] == "done"
+
+        server.never_finish = True
+        socket.send_json({"type": "input_audio_buffer.commit"})
+        wait_for(lambda: server.tasks[1]["finished"])
+        server.disconnect(server.tasks[1])
+        error = socket.receive_json()
+        assert error["type"] == "service.error" and error["code"] == "finish_unconfirmed"
+    assert len(server.tasks) == 2
+
+
+def test_draft_retraction_after_queue_eviction_stays_at_last_acknowledged_boundary(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(realtime, "RETAIN_SECONDS", 0.2)
+    server = fake(draft_at=None, finals=False, never_finish=True)
+    with (
+        make_app(tmp_path, server, "qwen-audio-3.1-asr-flash") as client,
+        client.websocket_connect(
+            "/api/recordings/live?protocol=2&sample_rate=24000&offset_ms=0", headers=SIDECAR
+        ) as socket,
+    ):
+        assert socket.receive_json()["live"] == "stream"
+        socket.send_json({"type": "input_audio_buffer.append", "audio": audio(100, rate=24_000)})
+        socket.send_json({"type": "input_audio_buffer.commit"})
+        wait_for(lambda: server.tasks[0]["finished"])
+
+        # Overflow the 200 ms retain window while task 1's finish reply is held.
+        socket.send_json({"type": "input_audio_buffer.append", "audio": audio(350, rate=24_000)})
+        gap = socket.receive_json()
+        assert gap["type"] == "transcript.gap" and gap["reason"] == "connection"
+        assert gap["end_ms"] > 100
+
+        server.end(server.tasks[0])
+        assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 100}
+
+        wait_for(lambda: len(server.tasks) == 2 and server.tasks[1]["frames"] > 0)
+        server.send(
+            server.tasks[1],
+            server.result(
+                server.tasks[1]["id"],
+                {"sentence_id": 7, "text": "Post-gap draft", "begin_time": 0},
+            ),
+        )
+        draft = socket.receive_json()
+        assert draft["type"] == "transcript.piece" and not draft["final"]
+        server.disconnect(server.tasks[1])
+
+        retracted = socket.receive_json()
+        assert retracted["type"] == "transcript.piece"
+        assert retracted["id"] == draft["id"]
+        assert retracted["final"] is True and retracted["text"] == ""
+        assert retracted["start_ms"] == 100 and retracted["end_ms"] == 100
+
+
+@pytest.mark.parametrize("next_event", ["audio", "commit"])
+def test_upstream_loss_after_full_coverage_stays_idle_until_pcm_or_commit(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch, next_event: str
+) -> None:
+    server = fake()
+    idle = threading.Event()
+    drain = realtime._LiveStream._drain
+
+    async def observe_idle(self):
+        await drain(self)
+        if self.task is None:
+            idle.set()
+
+    monkeypatch.setattr(realtime._LiveStream, "_drain", observe_idle)
+    with (
+        make_app(tmp_path, server, "qwen-audio-3.1-asr-flash") as client,
+        client.websocket_connect(V2.format(offset=0), headers=SIDECAR) as socket,
+    ):
+        assert socket.receive_json()["live"] == "stream"
+        (task,) = server.tasks
+        socket.send_json({"type": "input_audio_buffer.append", "audio": audio(100)})
+        wait_for(lambda: task["bytes"] == FRAME)
+        final = {"sentence_id": 1, "text": "first", "sentence_end": True, "end_time": 100}
+        server.send(task, server.result(task["id"], final))
+        piece = socket.receive_json()
+        assert piece["final"] and piece["end_ms"] == 100
+        server.disconnect(task)
+        assert idle.wait(3)
+        assert len(server.tasks) == 1 and not task["finished"]
+
+        if next_event == "audio":
+            socket.send_json({"type": "input_audio_buffer.append", "audio": audio(400)})
+            assert socket.receive_json()["final"] is False
+            resumed = socket.receive_json()
+            assert resumed["final"] and resumed["start_ms"] == 100
+            socket.send_json({"type": "input_audio_buffer.commit"})
+            assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 500}
+        else:
+            socket.send_json({"type": "input_audio_buffer.commit"})
+            event = socket.receive_json()
+            assert event["type"] == "service.error" and event["code"] == "finish_unconfirmed"
+            with pytest.raises(WebSocketDisconnect):
+                socket.receive_json()
 
 
 def test_a_stalled_live_socket_is_dropped_and_the_task_starts_again_on_a_new_one(
@@ -490,7 +975,7 @@ def test_a_stalled_live_socket_is_dropped_and_the_task_starts_again_on_a_new_one
         for _ in range(10):
             event = socket.receive_json()
             assert event["type"] != "transcript.gap"
-            if event.get("final"):
+            if event.get("final") and event["text"]:
                 final = event
                 break
     assert final is not None and final["sentences"][0]["start_ms"] == 60_000
@@ -548,7 +1033,8 @@ def test_run_task_carries_the_title_and_what_was_said_before_each_within_400_cha
         app as client,
         client.websocket_connect(V2.format(offset=0) + f"&context={title}", headers=SIDECAR) as s,
     ):
-        s.receive_json()
+        assert s.receive_json()["live"] == "stream"
+        assert len(server.tasks) == 1 and not server.tasks[0]["finished"]
         s.send_json({"type": "input_audio_buffer.append", "audio": audio(600), "offset_ms": 0})
         s.receive_json()
         s.receive_json()
@@ -562,8 +1048,8 @@ def test_run_task_carries_the_title_and_what_was_said_before_each_within_400_cha
     assert texts[1] == ["x" * 400, "We'll use it."]
 
 
-@pytest.mark.parametrize("mode", ["refuse", "silent"])
-def test_a_model_with_no_live_version_falls_back_to_uploaded_pieces(
+@pytest.mark.parametrize("mode", ["refuse", "silent", "connect-error", "connect-timeout"])
+def test_live_start_failure_falls_back_once_and_keeps_early_frames_in_order(
     tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
     monkeypatch.setattr(realtime, "TASK_START_TIMEOUT", 0.3)
@@ -573,22 +1059,64 @@ def test_a_model_with_no_live_version_falls_back_to_uploaded_pieces(
         uploads.append(json.loads(request.content))
         return httpx.Response(200, json={"output": {"text": "piece"}})
 
-    real = httpx.AsyncClient
-    server = fake(mode=mode)
+    server = fake(mode=mode, hold_start=True)
+    cancelled = threading.Event()
+    if mode == "connect-error":
+        allow_failure = threading.Event()
+
+        async def refused_connection(*args, **kwargs):
+            assert await asyncio.to_thread(allow_failure.wait, 3)
+            raise OSError("connection refused")
+
+        monkeypatch.setattr(realtime, "connect", refused_connection)
+    elif mode == "connect-timeout":
+        monkeypatch.setattr(realtime, "LIVE_SETUP_TIMEOUT", 0.3)
+
+        async def stalled_connection(*args, **kwargs):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        monkeypatch.setattr(realtime, "connect", stalled_connection)
     app = make_app(tmp_path, server, "qwen-audio-3.1-asr-flash")
-    monkeypatch.setattr(
-        realtime.httpx,
-        "AsyncClient",
-        lambda **kw: real(transport=httpx.MockTransport(answer), **kw),
-    )
-    with app as client, client.websocket_connect("/api/recordings/live", headers=SIDECAR) as socket:
+    monkeypatch.setattr("gunther.main.AsrHttpTransport", lambda: httpx.MockTransport(answer))
+    first, second = b"\x01\x00" * 16_000, b"\x02\x00" * 16_000
+    with (
+        app as client,
+        client.websocket_connect(V2.format(offset=1_000), headers=SIDECAR) as socket,
+    ):
+        started = time.monotonic()
+        for pcm, start in ((first, 1_000), (second, 2_000)):
+            socket.send_json(
+                {
+                    "type": "input_audio_buffer.append",
+                    "audio": base64.b64encode(pcm).decode(),
+                    "offset_ms": start,
+                }
+            )
+            socket.send_json({"type": "input_audio_buffer.commit"})
+        if mode == "connect-error":
+            allow_failure.set()
+        elif mode == "connect-timeout":
+            assert cancelled.wait(2)
+        else:
+            server.loop.call_soon_threadsafe(server.start_gate.set)
         ready = socket.receive_json()
         assert ready["type"] == "service.ready" and ready["live"] == "segments-fixed"
-        socket.send_json({"type": "input_audio_buffer.append", "audio": audio(1_000, 24_000)})
-        socket.send_json({"type": "input_audio_buffer.commit"})
-        event = socket.receive_json()
-    assert event["type"] == "transcript.piece" and event["text"] == "piece"
-    assert uploads[0]["model"] == "qwen-audio-3.1-asr-flash"
+        if mode == "connect-timeout":
+            assert time.monotonic() - started < 2
+        for start in (1_000, 2_000):
+            event = socket.receive_json()
+            assert event["type"] == "transcript.piece" and event["text"] == "piece"
+            assert event["start_ms"] == start
+            assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": start + 1000}
+    assert len(server.tasks) == (0 if mode.startswith("connect-") else 1)
+    for request, pcm in zip(uploads, (first, second), strict=True):
+        assert request["model"] == "qwen-audio-3.1-asr-flash"
+        data = request["input"]["messages"][-1]["content"][0]["input_audio"]["data"]
+        with wave.open(BytesIO(base64.b64decode(data.split(",", 1)[1]))) as wav:
+            assert wav.readframes(wav.getnframes()) == pcm
 
 
 def test_a_saved_streaming_id_uploads_without_the_suffix(
@@ -600,14 +1128,9 @@ def test_a_saved_streaming_id_uploads_without_the_suffix(
         uploads.append(json.loads(request.content))
         return httpx.Response(200, json={"output": {"text": "hello"}})
 
-    real = httpx.AsyncClient
     server = fake()
     app = make_app(tmp_path, server, "qwen-audio-3.1-asr-flash-streaming")
-    monkeypatch.setattr(
-        realtime.httpx,
-        "AsyncClient",
-        lambda **kw: real(transport=httpx.MockTransport(answer), **kw),
-    )
+    monkeypatch.setattr("gunther.main.AsrHttpTransport", lambda: httpx.MockTransport(answer))
     with app as client:
         with client.websocket_connect(
             "/api/recordings/live?purpose=dictation", headers=SIDECAR
@@ -695,7 +1218,10 @@ def test_the_live_check_reports_a_refusal_and_a_silence_plainly(
     async def check(server: FakeQwen) -> str | None:
         return await realtime.try_qwen_live(server.url, KEY, "qwen-audio-3.1-asr-flash")
 
-    assert asyncio.run(check(fake())) is None
+    server = fake()
+    assert asyncio.run(check(server)) is None
+    (task,) = server.tasks
+    assert task["finished"] and task["ended"] and task["bytes"] == 0
     refused = asyncio.run(check(fake(mode="refuse")))
     assert refused and "url error" in refused
     silent = asyncio.run(check(fake(mode="silent")))
@@ -720,15 +1246,10 @@ def test_silence_answered_with_an_empty_400_is_empty_text_but_other_400s_are_err
     def answer(request: httpx.Request) -> httpx.Response:
         return response(400, body["text"])
 
-    real = httpx.AsyncClient
-    monkeypatch.setattr(
-        realtime.httpx,
-        "AsyncClient",
-        lambda **kw: real(transport=httpx.MockTransport(answer), **kw),
-    )
+    monkeypatch.setattr("gunther.main.AsrHttpTransport", lambda: httpx.MockTransport(answer))
 
     async def probe() -> str | None:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
             return await transcription.try_qwen_model(client, "https://qwen.example", KEY, "m")
 
     assert asyncio.run(probe()) is None
@@ -826,3 +1347,42 @@ def test_the_live_socket_goes_direct_even_with_a_socks_proxy_in_the_system(monke
         realtime.try_qwen_live("http://127.0.0.1:9", "sk-test", "qwen-audio-3.1-asr-flash")
     )
     assert reason is not None and reason.startswith("could not connect")
+
+
+def test_an_unsupported_socks_proxy_only_fails_at_the_http_asr_request(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for variable in ("all_proxy", "http_proxy", "https_proxy", "no_proxy"):
+        monkeypatch.delenv(variable, raising=False)
+        monkeypatch.delenv(variable.upper(), raising=False)
+    monkeypatch.setenv("ALL_PROXY", "socks5://127.0.0.1:9")
+    monkeypatch.setitem(sys.modules, "socksio", None)
+    server = fake()
+    with make_app(tmp_path, server, "qwen-audio-3.1-asr-flash") as client:
+        assert client.get("/api/health", headers=SIDECAR).is_success
+        with client.websocket_connect(V2.format(offset=0), headers=SIDECAR) as socket:
+            assert socket.receive_json()["live"] == "stream"
+            socket.send_json({"type": "input_audio_buffer.append", "audio": audio(400)})
+            assert socket.receive_json()["final"] is False
+            assert socket.receive_json()["final"] is True
+            socket.send_json({"type": "input_audio_buffer.commit"})
+            assert socket.receive_json() == {"type": "transcript.flushed", "until_ms": 400}
+
+        dictation = V2.format(offset=0) + "&purpose=dictation"
+        with client.websocket_connect(dictation, headers=SIDECAR) as socket:
+            assert socket.receive_json()["stream"] is False
+            socket.send_json({"type": "input_audio_buffer.append", "audio": audio(100)})
+            socket.send_json({"type": "input_audio_buffer.commit"})
+            error = socket.receive_json()
+            assert error["type"] == "service.error" and error["code"] == "segment_failed"
+            assert "configured HTTP proxy" in error["message"]
+
+        roles = {"dictation": {"model": "sensevoice/sensevoice-small", "stream": True}}
+        saved = client.put("/api/settings/speech/roles", headers=SIDECAR, json={"roles": roles})
+        assert saved.is_success
+        with client.websocket_connect(dictation, headers=SIDECAR) as socket:
+            error = socket.receive_json()
+            assert error["type"] == "service.error" and error["code"] == "provider_unavailable"
+            assert "configured HTTP proxy" in error["message"]
+
+        assert client.get("/api/health", headers=SIDECAR).is_success

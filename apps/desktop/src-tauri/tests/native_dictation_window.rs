@@ -1,5 +1,5 @@
 //! Opt-in macOS smoke check for dictation panel placement, visibility, alpha and non-key window state.
-//! Drives the production toggle path with blank content; no backend, microphone, or live shortcut.
+//! Drives the production toggle and completion paths with blank content.
 #![allow(dead_code)]
 
 #[cfg(target_os = "macos")]
@@ -9,7 +9,10 @@ mod dictation_shell;
 
 #[cfg(target_os = "macos")]
 mod check {
-    use crate::dictation_shell::{self, native_window, placement};
+    use crate::dictation_shell::{
+        self, native_window, placement, CompleteStatus, DictationAction, DictationOutcome,
+        DictationRequest,
+    };
     use objc2::{
         msg_send,
         runtime::{AnyClass, AnyObject},
@@ -28,6 +31,15 @@ mod check {
     fn toggle(app: &tauri::AppHandle) {
         dictation_shell::handle_shortcut(app, ShortcutState::Pressed);
         dictation_shell::handle_shortcut(app, ShortcutState::Released);
+    }
+
+    fn panel(app: &tauri::AppHandle) -> tauri::WebviewWindow {
+        app.get_webview_window(dictation_shell::WINDOW_LABEL)
+            .unwrap()
+    }
+
+    fn request(app: &tauri::AppHandle) -> DictationRequest {
+        dictation_shell::dictation_request(app.clone(), panel(app)).unwrap()
     }
 
     fn expected_visible_area() -> placement::Rect {
@@ -55,13 +67,17 @@ mod check {
     }
 
     fn placed_in(frame: NSRect, area: placement::Rect) -> bool {
-        fits_axis(frame.origin.x, frame.size.width, area.origin.x, area.size.width)
-            && fits_axis(
-                frame.origin.y,
-                frame.size.height,
-                area.origin.y,
-                area.size.height,
-            )
+        fits_axis(
+            frame.origin.x,
+            frame.size.width,
+            area.origin.x,
+            area.size.width,
+        ) && fits_axis(
+            frame.origin.y,
+            frame.size.height,
+            area.origin.y,
+            area.size.height,
+        )
     }
 
     fn intersects(frame: NSRect, area: placement::Rect) -> bool {
@@ -72,9 +88,7 @@ mod check {
     }
 
     fn move_offscreen(app: &tauri::AppHandle) {
-        let window = app
-            .get_webview_window(dictation_shell::WINDOW_LABEL)
-            .unwrap();
+        let window = panel(app);
         let (_, screens) = native_window::displays().unwrap();
         let right = screens
             .iter()
@@ -93,16 +107,16 @@ mod check {
             let _: () = msg_send![native, setFrameOrigin: target];
             let moved: NSRect = msg_send![native, frame];
             assert!(
-                !screens.iter().any(|screen| intersects(moved, screen.bounds)),
+                !screens
+                    .iter()
+                    .any(|screen| intersects(moved, screen.bounds)),
                 "off-screen displacement still overlaps a display: {moved:?}"
             );
         }
     }
 
     fn assert_visible(app: &tauri::AppHandle, expected: placement::Rect) {
-        let window = app
-            .get_webview_window(dictation_shell::WINDOW_LABEL)
-            .unwrap();
+        let window = panel(app);
         assert!(window.is_visible().unwrap());
         unsafe {
             let native = window.ns_window().unwrap().cast::<AnyObject>();
@@ -118,9 +132,11 @@ mod check {
             let key: *mut AnyObject = msg_send![application, keyWindow];
             assert_ne!(key, native, "voice panel must not become keyWindow");
         }
-        let request =
-            serde_json::to_value(dictation_shell::dictation_request(app.clone()).unwrap()).unwrap();
-        assert_eq!(request["listening"], true);
+    }
+
+    fn assert_hidden(app: &tauri::AppHandle) {
+        assert!(!panel(app).is_visible().unwrap());
+        assert_eq!(request(app).action, DictationAction::Idle);
     }
 
     pub fn run() {
@@ -142,27 +158,55 @@ mod check {
                 later(app.handle().clone(), move |app| {
                     move_offscreen(&app);
                     let first_area = expected_visible_area();
+                    let reduced_motion = native_window::reduced_motion();
                     toggle(&app);
+                    if reduced_motion {
+                        assert_visible(&app, first_area);
+                    }
                     later(app, move |app| {
                         assert_visible(&app, first_area);
+                        let first = request(&app);
+                        assert_eq!(first.action, DictationAction::Start);
                         println!("PASS: toggle shows an opaque non-key panel on the pointer's display");
                         toggle(&app);
                         later(app, move |app| {
-                            assert!(
-                                !app.get_webview_window(dictation_shell::WINDOW_LABEL)
-                                    .unwrap()
-                                    .is_visible()
-                                    .unwrap()
-                            );
-                            move_offscreen(&app);
-                            let second_area = expected_visible_area();
-                            toggle(&app);
-                            later(app, move |app| {
-                                assert_visible(&app, second_area);
-                                println!("PASS: reopening recovers an off-screen panel onto the pointer's display");
-                                dictation_shell::stop(&app).unwrap();
-                                finished.store(true, Ordering::SeqCst);
-                                app.exit(0);
+                            assert_visible(&app, first_area);
+                            let stopped = request(&app);
+                            assert_eq!(stopped.action, DictationAction::Stop);
+                            assert_eq!(stopped.take_id, first.take_id);
+                            assert!(stopped.revision > first.revision);
+                            println!("PASS: Stop leaves the same opaque non-key panel visible");
+                            tauri::async_runtime::spawn(async move {
+                                let completed = dictation_shell::settle_take(
+                                    &app, first.take_id, DictationOutcome::Cancelled,
+                                ).await.unwrap();
+                                assert_eq!(completed.status, CompleteStatus::Applied);
+                                assert!(!completed.copied);
+                                if reduced_motion {
+                                    let handle = app.clone();
+                                    app.run_on_main_thread(move || assert_hidden(&handle)).unwrap();
+                                }
+                                later(app, move |app| {
+                                    assert_hidden(&app);
+                                    println!("PASS: completion hides the panel");
+                                    move_offscreen(&app);
+                                    let second_area = expected_visible_area();
+                                    toggle(&app);
+                                    later(app, move |app| {
+                                        assert_visible(&app, second_area);
+                                        let second = request(&app);
+                                        assert_eq!(second.action, DictationAction::Start);
+                                        assert!(second.take_id > first.take_id);
+                                        dictation_shell::stop_dictation_window(
+                                            app.clone(), panel(&app), stopped.take_id, stopped.revision,
+                                        ).unwrap();
+                                        assert_eq!(request(&app), second);
+                                        assert_visible(&app, second_area);
+                                        println!("PASS: reopening recovers an off-screen panel onto the pointer's display");
+                                        finished.store(true, Ordering::SeqCst);
+                                        app.exit(0);
+                                    });
+                                });
                             });
                         });
                     });
@@ -172,7 +216,7 @@ mod check {
             .build(context)
             .expect("native dictation fixture must start");
         std::thread::spawn(|| {
-            // Bound a stalled event loop; normal checks take four one-second intervals.
+            // Bound a stalled event loop; normal checks take five one-second intervals.
             std::thread::sleep(Duration::from_secs(15));
             eprintln!("FAIL: native dictation window check timed out");
             std::process::exit(1);

@@ -537,7 +537,9 @@ pub fn run() {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     #[cfg(target_os = "macos")]
-                    let _ = dictation_shell::stop(window.app_handle());
+                    if let Err(error) = dictation_shell::stop(window.app_handle()) {
+                        log::error!("Could not close the voice-input window: {error}");
+                    }
                 }
             }
             if matches!(window.label(), "main" | capture_shell::CAPTURE_WINDOW_LABEL) {
@@ -616,8 +618,7 @@ pub fn run() {
             microphone_access::ask_microphone_access,
             dictation_shell::dictation_request,
             dictation_shell::stop_dictation_window,
-            dictation_shell::dictation_finished,
-            dictation_shell::copy_dictation_text,
+            dictation_shell::complete_dictation,
             print_output,
         ])
         .build(tauri::generate_context!())

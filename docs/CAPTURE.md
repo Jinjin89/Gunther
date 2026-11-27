@@ -31,15 +31,25 @@ Saving either recorded URL in the same library reuses the existing source. An ex
 
 The authorized socket is `/api/recordings/live?protocol=2`. Desktop recording and dictation send 16 kHz PCM, and the phone sends 24 kHz PCM. The backend resamples as needed for the provider. Qwen can use a live task, and local SenseVoice and compatible HTTP transcription use bounded pieces. See [Transcription settings](SETTINGS.md#transcription).
 
-Clients send PCM in `input_audio_buffer.append` frames stamped with their recording offsets. The first stamp sets the clock on each connection. Sample count advances it, with sub-frame stamp differences treated as jitter. The clock excludes paused time and retains real gaps. Pause and Stop send pending PCM, commit the boundary and use the acknowledged flush. Reconnect replays retained frames at their original positions. A known lost segment stays visible after Stop.
+Recording clients stamp `input_audio_buffer.append` frames with recording offsets. The first stamp sets the clock on each connection. Sample count advances it, with sub-frame stamp differences treated as jitter. The clock excludes paused time and retains real gaps. Pause and Stop send pending PCM, commit the boundary and use the acknowledged flush. Reconnect replays retained frames at their original positions. A known lost segment stays visible after Stop.
+
+Desktop dictation starts at offset zero and advances the clock by sample count using unstamped appends. Stop waits for the flush acknowledgment at the committed sample boundary. Connection loss fails the take and keeps any transcript preview in the panel.
 
 `transcript.piece` carries text, time and final sentence pieces. `transcript.gap` marks a gap, and `transcript.flushed` acknowledges a commit. The clients show time-aligned paragraphs. When available, Analysis groups the transcript, and Listen again can correct saved time ranges using the recording's live audio copy. These are separate from saving the recording. [Server codec](../apps/backend/gunther/realtime.py) · [Desktop projection](../apps/desktop/src/services/liveTranscript.ts) · [Mobile transport](../apps/mobile/lib/data/services/live_transcription_service.dart)
 
 ## Dictation and menu bar
 
-Use the microphone in a supported desktop text field to insert a transcript. Ask's composer also supports its dictation shortcut. macOS global dictation uses Option+Space and copies the result to the clipboard. Dictation uses its own transcription job. [Desktop shortcut registry](../apps/desktop/src/shortcuts/shortcuts.ts)
+Use the microphone in a supported desktop text field to insert a transcript. Ask's composer also supports its dictation shortcut. Dictation uses its own transcription job. [Desktop shortcut registry](../apps/desktop/src/shortcuts/shortcuts.ts)
 
-The global voice panel opens on the display under the pointer, above its usable lower edge. Placement is recalculated in macOS logical points on every opening, so moving between displays with different scales or disconnecting a display keeps the panel visible.
+On macOS, press Option+Space to open the dictation panel while your current app keeps focus. The panel shows **正在启动…** while the microphone starts and **正在听…** once it receives audio. It opens on the display under the pointer, above the usable lower edge, and works across displays with different scales.
+
+Press Option+Space again or click Stop to release the microphone. The panel keeps the preview visible under **正在整理…** while transcription and the clipboard write finish. The panel closes after the clipboard write succeeds. You can then paste into the app that still has focus. Press Option+Space during finishing to queue a new take in the same panel after the copy. Press it again to withdraw that request.
+
+While the panel says **正在启动…**, Stop cancels the take if microphone permission or audio context startup is pending. The panel closes immediately or opens the queued take. Once the capture graph is wired, Stop commits even if zero audio blocks have arrived. The panel shows **未识别到语音** if no speech was heard.
+
+Desktop dictation commits all blocks delivered by its 1,024-frame ScriptProcessor. Stop disconnects the processor immediately and can leave an in-flight block undelivered. One block spans 21.3 ms at 48 kHz, 23.2 ms at 44.1 kHz, or 64 ms at 16 kHz. Device buffering and delayed main-thread callbacks can add to that interval.
+
+No speech, capture or transcription failure, and clipboard write failure each clear a queued restart and keep the panel visible until you dismiss it or start again. A retryable clipboard failure keeps the text available and **重试复制** retries the write. If the copy succeeds but the window fails to close or start the next take, the panel confirms the copy and offers dismissal.
 
 The menu-bar G has idle, draft, preparing, recording, paused, review and attention states. Recording shows a red light with elapsed time, and pause uses amber bars. The menu offers the actions for the current state, including Pause, Resume, Mark Moment, Finish and Show Recorder. Settings can show the item only during work. A preference change applies after it is saved. Hiding Capture keeps an active recording going. Quit checks for unsaved or active capture work. [Tray states SVG](CAPTURE_TRAY_STATES.svg) · [Native capture shell](../apps/desktop/src-tauri/src/capture_shell.rs)
 

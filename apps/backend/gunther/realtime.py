@@ -8,11 +8,13 @@ import logging
 import secrets
 import uuid
 from collections import deque
+from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+from anyio import CancelScope
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 from websockets.asyncio.client import ClientConnection, connect
@@ -33,6 +35,8 @@ from gunther.qwen_stream import (
 from gunther.speech_registry import Choice, qwen_live_id
 from gunther.transcription import (
     CONTEXT_CHARS,
+    AsrHttpConfigurationError,
+    asr_http_client,
     sensevoice_health,
     sensevoice_root,
     transcribe_segment,
@@ -50,86 +54,212 @@ async def _accept(websocket: WebSocket) -> None:
 
 # How long Qwen's live socket may take to start a task before the model counts as not live.
 TASK_START_TIMEOUT = 10.0
+# Leave time within the desktop's 30 s ready deadline for cleanup and upload fallback.
+LIVE_SETUP_TIMEOUT = 10.0
 # How long to wait for a task to finish after finish-task.
 TASK_END_TIMEOUT = 10.0
 # How long one frame may take to go out before the live socket counts as stalled.
 SEND_TIMEOUT = 10.0
 CONNECT_TIMEOUT = 30.0
+# Bound the close handshake on a failed setup before starting the fallback.
+CLOSE_TIMEOUT = 2.0
 # Audio kept to send again if the live socket drops, and queued while it reconnects.
 RETAIN_SECONDS = 30.0
+# Bound non-audio messages while the client is waiting for its provider to start.
+EARLY_CONTROL_LIMIT = 64
 RECONNECT_BACKOFF = (0.5, 1.0, 2.0, 4.0)
-# The live socket goes direct, like the HTTP requests: websockets would otherwise follow the
+# The live socket goes direct: websockets would otherwise follow the
 # system's proxy settings (a SOCKS proxy from a VPN app needs python-socks, which isn't here,
 # and failed the whole request).
 LIVE_PROXY = None
 FRAME_BYTES = 100 * BYTES_PER_MS  # 100 ms of audio per binary frame
 
 
-async def _next_event(socket: ClientConnection, *names: str) -> str | None:
-    """Read events until one of ``names`` arrives (None) or the task fails (its message)."""
+def _task_event(message: str | bytes, task_id: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    if isinstance(message, bytes):
+        return None
+    try:
+        data = json.loads(message)
+    except ValueError:
+        return None
+    header = data.get("header") if isinstance(data, dict) else None
+    if isinstance(header, dict) and header.get("task_id") == task_id:
+        return header, data
+    return None
+
+
+def _task_error(header: dict[str, Any]) -> str:
+    return str(header.get("error_message") or header.get("error_code") or "task failed")
+
+
+async def _next_event(socket: ClientConnection, task_id: str, name: str) -> str | None:
+    """Read until this task reports the requested event or fails."""
 
     while True:
-        message = await socket.recv()
-        if isinstance(message, bytes):
+        matching = _task_event(await socket.recv(), task_id)
+        if matching is None:
             continue
-        try:
-            header = json.loads(message).get("header") or {}
-        except (ValueError, AttributeError):
-            continue
+        header, _ = matching
         event = header.get("event")
-        if event in names:
+        if event == name:
             return None
         if event == "task-failed":
-            return str(header.get("error_message") or header.get("error_code") or "task failed")
+            return _task_error(header)
 
 
-async def open_live_socket(
-    base_url: str, api_key: str, model: str
-) -> tuple[ClientConnection | None, str]:
-    """Connect to Qwen's live socket and run one empty task to see that the model works there.
+async def _connect_live_socket(base_url: str, api_key: str) -> ClientConnection:
+    return await connect(
+        stream_url(base_url),
+        additional_headers={"Authorization": f"Bearer {api_key}"},
+        open_timeout=CONNECT_TIMEOUT,
+        close_timeout=CLOSE_TIMEOUT,
+        max_size=None,
+        proxy=LIVE_PROXY,
+    )
 
-    Returns the open socket (ready for more tasks) and "", or None and why it failed:
-    refused outright, or no answer within ``TASK_START_TIMEOUT``.
-    """
 
+async def _start_live_task(
+    socket: ClientConnection, model: str, turns: list[dict[str, Any]], number: int
+) -> _Task:
+    task = _Task(uuid.uuid4().hex, number)
     try:
-        socket = await connect(
-            stream_url(base_url),
-            additional_headers={"Authorization": f"Bearer {api_key}"},
-            open_timeout=CONNECT_TIMEOUT,
-            max_size=None,
-            proxy=LIVE_PROXY,
-        )
+        async with asyncio.timeout(TASK_START_TIMEOUT):
+            await socket.send(run_task_message(task.id, model, turns))
+            refusal = await _next_event(socket, task.id, "task-started")
+    except TimeoutError as error:
+        raise TimeoutError(
+            f"no answer to run-task within {TASK_START_TIMEOUT:g} seconds"
+        ) from error
+    if refusal is not None:
+        raise ConnectionError(f"Qwen refused it ({refusal})")
+    return task
+
+
+async def _close_live_socket(socket: ClientConnection) -> None:
+    with CancelScope(shield=True), suppress(OSError, WebSocketException):
+        await socket.close()
+
+
+async def _prepare_live_task(
+    base_url: str, api_key: str, model: str, context: str = "", *, timeout: float | None = None
+) -> tuple[tuple[ClientConnection, _Task] | None, str]:
+    """Hand off an open socket only after Qwen starts its first task."""
+
+    socket = None
+    task = None
+    budget = asyncio.timeout(timeout)
+    try:
+        async with budget:
+            socket = await _connect_live_socket(base_url, api_key)
+            task = await _start_live_task(socket, model, context_turns(context, ""), 1)
+            return (socket, task), ""
     except InvalidStatus as error:
         return None, f"Qwen answered {error.response.status_code} when connecting"
-    except (OSError, WebSocketException, TimeoutError) as error:
-        return None, f"could not connect ({error})"
-    task_id = uuid.uuid4().hex
-    try:
-        await socket.send(run_task_message(task_id, model, []))
-        refusal = await asyncio.wait_for(_next_event(socket, "task-started"), TASK_START_TIMEOUT)
-        if refusal is not None:
-            await socket.close()
-            return None, f"Qwen refused it ({refusal})"
-        await socket.send(finish_task_message(task_id))
-        with suppress(TimeoutError, ConnectionClosed):
-            await asyncio.wait_for(_next_event(socket, "task-finished"), 5.0)
-        return socket, ""
-    except TimeoutError:
-        await socket.close()
-        return None, f"no answer to run-task within {TASK_START_TIMEOUT:g} seconds"
     except (OSError, WebSocketException) as error:
+        if budget.expired():
+            return None, f"live setup did not complete within {timeout:g} seconds"
+        if socket is None:
+            return None, f"could not connect ({error})"
+        if isinstance(error, (ConnectionError, TimeoutError)):
+            return None, str(error)
         return None, f"the socket closed ({error})"
+    finally:
+        if socket is not None and task is None:
+            await _close_live_socket(socket)
 
 
 async def try_qwen_live(base_url: str, api_key: str, model: str) -> str | None:
     """Why a Qwen model has no live version here, or None if its live id starts a task."""
 
-    socket, reason = await open_live_socket(base_url, api_key, qwen_live_id(model))
-    if socket is None:
+    prepared, reason = await _prepare_live_task(base_url, api_key, qwen_live_id(model))
+    if prepared is None:
         return reason
-    await socket.close()
-    return None
+    socket, task = prepared
+    try:
+        # Settings checks that the model starts. An empty task may have no finish reply.
+        with suppress(TimeoutError, ConnectionClosed):
+            async with asyncio.timeout(5.0):
+                await socket.send(finish_task_message(task.id))
+                await _next_event(socket, task.id, "task-finished")
+        return None
+    finally:
+        await _close_live_socket(socket)
+
+
+def _early_pcm_size(message: str) -> int:
+    """Count the PCM in an append's base64 field without decoding it twice."""
+
+    try:
+        payload = json.loads(message)
+    except ValueError:
+        return 0
+    if isinstance(payload, dict) and payload.get("type") == "input_audio_buffer.append":
+        audio = payload.get("audio")
+        if isinstance(audio, str):
+            padding = int(audio.endswith("=")) + int(audio.endswith("=="))
+            return (len(audio) - padding) * 3 // 4
+    return 0
+
+
+class _ClientFrames:
+    """Own downstream reads, including the FIFO handed over after live setup."""
+
+    def __init__(self, websocket: WebSocket) -> None:
+        self.websocket = websocket
+        self.buffered: deque[str] = deque()
+        self.pending: asyncio.Task[str] | None = None
+
+    async def buffer_during(self, setup: asyncio.Task[Any], sample_rate: int) -> None:
+        pcm_limit = int(RETAIN_SECONDS * sample_rate * 2)
+        # Budget for base64 plus JSON framing, including frames that contain no valid PCM.
+        wire_limit = 2 * pcm_limit + EARLY_CONTROL_LIMIT * 1024
+        pcm_bytes = controls = wire_chars = 0
+        while True:
+            self.pending = asyncio.create_task(self.websocket.receive_text())
+            await asyncio.wait((setup, self.pending), return_when=asyncio.FIRST_COMPLETED)
+            if self.pending.done():
+                message = self.pending.result()  # A simultaneous disconnect wins over ready.
+                self.pending = None
+                wire_chars += len(message)
+                size = _early_pcm_size(message) if wire_chars <= wire_limit else 0
+                pcm_bytes += size
+                controls += size == 0
+                if (
+                    pcm_bytes > pcm_limit
+                    or controls > EARLY_CONTROL_LIMIT
+                    or wire_chars > wire_limit
+                ):
+                    raise _Fatal(
+                        "startup_buffer_full",
+                        "Too much input arrived before transcription was ready.",
+                    )
+                self.buffered.append(message)
+            if setup.done():
+                return
+
+    async def __aiter__(self) -> AsyncIterator[str]:
+        while self.buffered:
+            yield self.buffered.popleft()
+        if self.pending is not None:
+            # Transfer the in-flight receive so cancellation cannot lose an ASGI frame.
+            message = await self.pending
+            self.pending = None
+            yield message
+        while True:
+            yield await self.websocket.receive_text()
+
+    async def aclose(self) -> None:
+        if self.pending is not None:
+            await _cancel_tasks(self.pending)
+
+
+async def _cancel_tasks(*tasks: asyncio.Task[Any]) -> list[Any]:
+    for task in tasks:
+        if not task.cancelling():
+            task.cancel()
+    # Finish joining owned tasks even when the ASGI request scope is already cancelled.
+    with CancelScope(shield=True):
+        return await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class _V2InputClock:
@@ -212,6 +342,7 @@ def _warn_no_pause_model() -> None:
 
 async def _proxy_segmented_transcription(
     websocket: WebSocket,
+    frames: _ClientFrames,
     *,
     choice: Choice,
     context: str,
@@ -224,6 +355,7 @@ async def _proxy_segmented_transcription(
     listen: listen_copy.ListenCopy | None = None,
     check_again: bool = False,
     group_paragraphs: bool = False,
+    transport: httpx.AsyncBaseTransport | None = None,
 ) -> None:
     """Cut live audio into pieces and have an OpenAI-style server write each one.
 
@@ -237,35 +369,38 @@ async def _proxy_segmented_transcription(
     """
 
     await _accept(websocket)
-    detector = vad.new_detector() if pause_cuts else None
+    detector = await asyncio.to_thread(vad.new_detector) if pause_cuts else None
     if pause_cuts and detector is None:
         _warn_no_pause_model()
         ready = {**ready, "live": "segments-fixed"}
-    segmenter: vad.Segmenter | vad.FixedBlocks
-    if detector is not None:
-        segmenter = vad.Segmenter(detector)
-    else:
-        segmenter = vad.FixedBlocks(int(LIVE_RATE * 2 * max(1.0, segment_seconds)))
+
+    def new_segmenter() -> vad.Segmenter | vad.FixedBlocks:
+        if detector is not None:
+            return vad.Segmenter(detector)
+        return vad.FixedBlocks(int(LIVE_RATE * 2 * max(1.0, segment_seconds)))
+
+    segmenter = new_segmenter()
     drafts = choice.kind == "sensevoice" and detector is not None
     audio = bytearray()  # 16 kHz audio from ``audio_base`` on that a piece may still need
     audio_base = 0
     odd = b""  # a half sample when the client's chunk ends inside one
-    # The recording clock: ``clock_ms`` at byte ``clock_byte`` of the 16 kHz stream.
-    clock_byte = 0
+    # 16 kHz bytes before the current segment, counted from ``clock_ms``.
+    clock_bytes = 0
     clock_ms = max(0, offset_ms)
     input_clock = _V2InputClock(offset_ms, sample_rate)
 
     def at_ms(byte: int) -> int:
-        return clock_ms + (byte - clock_byte) // BYTES_PER_MS
+        return clock_ms + (clock_bytes + byte) // BYTES_PER_MS
 
     tag = secrets.token_hex(2)
     resampler = Pcm16Resampler(sample_rate, LIVE_RATE) if sample_rate != LIVE_RATE else None
     copy_cursor = max(0, offset_ms) * BYTES_PER_MS
     jobs: asyncio.Queue[tuple[Any, ...]] = asyncio.Queue()
     outstanding = 0  # jobs queued or running
-    pieces_closed = 0  # pieces handed to the worker; the next one is number pieces_closed + 1
+    pieces_closed = 0  # the next open piece is number pieces_closed + 1
     draft_marks: dict[int, int] = {}  # piece number -> its end byte when the last draft went
     drafted: set[int] = set()  # pieces whose draft put text on screen
+    active_draft: tuple[int, asyncio.Task[str]] | None = None
     recent = ""  # the tail of what was written, the context for the next piece
 
     def enqueue(job: tuple[Any, ...]) -> None:
@@ -273,17 +408,34 @@ async def _proxy_segmented_transcription(
         outstanding += 1
         jobs.put_nowait(job)
 
-    def enqueue_pieces(found: list[vad.Piece]) -> None:
+    def close_piece() -> int:
         nonlocal pieces_closed
+        pieces_closed += 1
+        draft_marks.pop(pieces_closed, None)
+        if active_draft is not None and active_draft[0] == pieces_closed:
+            active_draft[1].cancel()
+        return pieces_closed
+
+    def enqueue_pieces(found: list[vad.Piece]) -> None:
         for start, end in found:
-            pieces_closed += 1
-            number = pieces_closed
+            number = close_piece()
             chunk = bytes(audio[start - audio_base : end - audio_base])
             enqueue(("piece", number, chunk, at_ms(start), at_ms(end)))
-            draft_marks.pop(number, None)
+
+    def reset_segmenter() -> None:
+        nonlocal segmenter, audio_base, clock_bytes
+        # A partial VAD frame and lookbehind belong to the preceding segment.
+        clock_bytes += segmenter.total
+        segmenter = new_segmenter()
+        audio.clear()
+        audio_base = 0
+
+    def flush_pieces() -> None:
+        enqueue_pieces(segmenter.flush())
+        reset_segmenter()
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with asr_http_client(30.0, transport) as client:
             if reset_url:
                 with suppress(httpx.HTTPError):
                     await client.post(reset_url)
@@ -316,20 +468,33 @@ async def _proxy_segmented_transcription(
                         )
                         text = ""
                 # Empty speech clears a draft that was on screen.
+                had_draft = number in drafted
+                drafted.discard(number)
                 if text:
                     recent = f"{recent} {text}".strip()[-CONTEXT_CHARS:]
-                elif number not in drafted:
+                elif not had_draft:
                     return
                 await websocket.send_json(_piece_event(f"{tag}-{number}", start_ms, end_ms, text))
 
             async def write_draft(number: int, chunk: bytes, start_ms: int) -> None:
+                nonlocal active_draft
                 if number <= pieces_closed:
                     return  # its final is already queued: a draft now would only be stale
+                request = asyncio.create_task(
+                    transcribe_segment(client, choice, chunk, title=context)
+                )
+                active_draft = number, request
                 try:
-                    text = await transcribe_segment(client, choice, chunk, title=context)
+                    text = await asyncio.shield(request)
+                except asyncio.CancelledError:
+                    if worker.cancelling() or number > pieces_closed:
+                        raise
+                    return
                 except (httpx.HTTPError, ValueError, TypeError) as error:
                     logger.debug("Draft of a live piece failed: %s", error)
                     return
+                finally:
+                    active_draft = None
                 if text and number > pieces_closed:
                     drafted.add(number)
                     await websocket.send_json(_piece_event(f"{tag}-{number}", start_ms, None, text))
@@ -376,8 +541,7 @@ async def _proxy_segmented_transcription(
 
             worker = asyncio.create_task(work())
             try:
-                while True:
-                    message = await websocket.receive_text()
+                async for message in frames:
                     payload = json.loads(message)
                     message_type = payload.get("type")
                     if message_type == "input_audio_buffer.append":
@@ -392,10 +556,10 @@ async def _proxy_segmented_transcription(
                         until_ms = input_clock.until_ms
                         raw, start = input_clock.append(raw, payload.get("offset_ms"))
                         if start is not None:
-                            enqueue_pieces(segmenter.flush())
+                            flush_pieces()
                             if start > until_ms:
                                 enqueue(("event", _gap_event(until_ms, start, "missing")))
-                            clock_byte, clock_ms = segmenter.total, start
+                            clock_bytes, clock_ms = 0, start
                             copy_cursor = start * BYTES_PER_MS
                             odd = b""
                             if resampler is not None:
@@ -417,14 +581,20 @@ async def _proxy_segmented_transcription(
                             del audio[: keep - audio_base]
                             audio_base = keep
                     elif message_type == "input_audio_buffer.commit":
-                        enqueue_pieces(segmenter.flush())
+                        flush_pieces()
                         enqueue(("event", _flushed_event(input_clock.until_ms)))
                     elif message_type == "input_audio_buffer.clear":
+                        opened = segmenter.open_piece()
+                        if opened is not None:
+                            number = close_piece()
+                            enqueue(("piece", number, b"", at_ms(opened[0]), input_clock.until_ms))
                         segmenter.discard()
+                        reset_segmenter()
             finally:
-                worker.cancel()
-                with suppress(asyncio.CancelledError):
-                    await worker
+                tasks = [worker]
+                if active_draft is not None:
+                    tasks.append(active_draft[1])
+                await _cancel_tasks(*tasks)
     except WebSocketDisconnect:
         return
     except Exception as error:
@@ -437,9 +607,6 @@ async def _proxy_segmented_transcription(
                 }
             )
             await websocket.close(code=1011)
-    finally:
-        if listen is not None:
-            listen.close()
 
 
 class _Fatal(Exception):
@@ -465,22 +632,22 @@ class _Chunk:
 
 @dataclass
 class _Task:
-    """One upstream task: a stretch of continuous audio. Its times count from ``start_ms``."""
+    """One upstream task whose timestamps are relative to its first submitted frame."""
 
     id: str
     number: int
-    start_ms: int
-    started: asyncio.Event = field(default_factory=asyncio.Event)
+    start_byte: int | None = None  # exact recording-clock origin once audio is submitted
     ended: asyncio.Event = field(default_factory=asyncio.Event)
     outcome: str = ""  # "finished", or "failed" with ``error``
     error: str = ""
     finish_sent: bool = False
-    last_final_end_ms: int = 0
+    submitted_until: int = 0  # recording-clock bytes
+    confirmed_until_byte: int = 0  # provider-confirmed recording-clock bytes
+    drafts: set[str] = field(default_factory=set)
 
     def end(self, outcome: str, error: str = "") -> None:
         if not self.ended.is_set():
             self.outcome, self.error = outcome, error
-        self.started.set()
         self.ended.set()
 
 
@@ -497,7 +664,7 @@ class _LiveStream:
     def __init__(
         self,
         websocket: WebSocket,
-        upstream: ClientConnection,
+        prepared: tuple[ClientConnection, _Task],
         choice: Choice,
         *,
         sample_rate: int,
@@ -511,6 +678,7 @@ class _LiveStream:
         self.listen = listen
         self.check_again = check_again
         self.group_paragraphs = group_paragraphs
+        upstream, task = prepared
         self.up: ClientConnection | None = upstream
         self.choice = choice
         self.model = qwen_live_id(choice.model)
@@ -520,11 +688,14 @@ class _LiveStream:
             Pcm16Resampler(sample_rate, LIVE_RATE) if sample_rate != LIVE_RATE else None
         )
         self.cursor = max(0, offset_ms) * BYTES_PER_MS  # where the next audio should start
+        self.client_ack_ms = max(0, offset_ms)
         self.input_clock = _V2InputClock(offset_ms, sample_rate)
         self.chunks: list[_Chunk] = []  # audio no final sentence has covered yet
         self.sent = 0  # how many of ``chunks`` went to the current task
-        self.task: _Task | None = None
-        self.task_count = 0
+        self.task: _Task | None = task
+        self.task_count = task.number
+        # Track an audio-bearing task whose loss still awaits replay or commit failure.
+        self.interrupted_task: _Task | None = None
         self.failures = 0
         self.recent = ""
         # Finish each task at the next pending commit's recording-clock byte offset.
@@ -532,7 +703,7 @@ class _LiveStream:
         self.wake = asyncio.Event()
         self.send_lock = asyncio.Lock()
         self.reader: asyncio.Task[None] | None = None
-        self.worker: asyncio.Task[None] | None = None
+        self.retiring: dict[asyncio.Task[None], _Task] = {}
         self.gone = False
 
     # Talking to the client ----------------------------------------------------
@@ -547,12 +718,11 @@ class _LiveStream:
             self.gone = True
 
     async def gap(self, start_byte: int, end_byte: int, reason: str) -> None:
-        if end_byte > start_byte:
-            start_ms, end_ms = start_byte // BYTES_PER_MS, end_byte // BYTES_PER_MS
+        start_ms, end_ms = start_byte // BYTES_PER_MS, end_byte // BYTES_PER_MS
+        if end_ms > start_ms:
             await self.send(_gap_event(start_ms, end_ms, reason))
 
-    async def run(self) -> None:
-        await _accept(self.websocket)
+    async def run(self, frames: _ClientFrames) -> None:
         ready: dict[str, Any] = {
             "type": "service.ready",
             "provider": self.choice.kind,
@@ -565,27 +735,29 @@ class _LiveStream:
             "check_again": self.check_again,
             "group_paragraphs": self.group_paragraphs,
         }
-        await self.send(ready)
-        self._attach(self.up)
-        self.worker = asyncio.create_task(self._work())
+        worker = None
         try:
-            while True:
+            await self.send(ready)
+            assert self.up is not None and self.task is not None
+            self._attach(self.up, self.task)
+            worker = asyncio.create_task(self._work())
+            async for message in frames:
                 try:
-                    payload = json.loads(await self.websocket.receive_text())
+                    payload = json.loads(message)
                 except json.JSONDecodeError:
                     continue
                 await self._on_client(payload)
-        except WebSocketDisconnect:
-            return
         finally:
-            if self.listen is not None:
-                self.listen.close()
-            for task in (self.worker, self.reader):
-                if task is not None:
-                    task.cancel()
-            if self.up is not None:
-                with suppress(Exception):
-                    await self.up.close()
+            self.gone = True
+            if worker is not None:
+                await _cancel_tasks(worker)
+            retiring = tuple(self.retiring.items())
+            for _, task in retiring:
+                task.end("failed", "the client disconnected")
+            await self._close_upstream()
+            if retiring:
+                with CancelScope(shield=True):
+                    await asyncio.gather(*(job for job, _ in retiring))
 
     # Audio in -----------------------------------------------------------------
 
@@ -613,7 +785,7 @@ class _LiveStream:
         if start_ms is not None:
             if start_ms > until_ms:
                 await self.send(_gap_event(until_ms, start_ms, "missing"))
-                if self.task is not None or self.chunks:
+                if self.chunks or (self.task is not None and self.task.start_byte is not None):
                     mark = (self.cursor, until_ms)
                     if not self.flush_marks or self.flush_marks[-1] != mark:
                         self._commit(until_ms)
@@ -644,11 +816,19 @@ class _LiveStream:
         self.wake.set()
 
     async def _flush(self) -> None:
-        while self.flush_marks and (
-            not self.chunks or self.chunks[0].start >= self.flush_marks[0][0]
-        ):
-            _, until_ms = self.flush_marks.popleft()
+        while self.flush_marks:
+            boundary, until_ms = self.flush_marks[0]
+            if self.chunks and self.chunks[0].start < boundary:
+                break  # There is still audio to send (or replay) for this commit.
+            interrupted = self.interrupted_task
+            if interrupted is not None and interrupted.submitted_until <= boundary:
+                raise _Fatal(
+                    "finish_unconfirmed", "Qwen ended before the audio could be confirmed."
+                )
+            self.flush_marks.popleft()
             await self.send(_flushed_event(until_ms))
+            if not self.gone:
+                self.client_ack_ms = max(self.client_ack_ms, until_ms)
 
     def _remove_front(self, count: int) -> None:
         del self.chunks[:count]
@@ -669,91 +849,124 @@ class _LiveStream:
         if lost_start is not None:
             await self.gap(lost_start, lost_end, "connection")
 
-    def _confirm_until(self, end_ms: int) -> None:
-        """A final sentence ended at ``end_ms``: audio before it need not be kept."""
+    def _confirm_until_byte(self, end_byte: int) -> None:
+        """A final sentence covered through ``end_byte``: audio before it need not be kept."""
 
-        end = end_ms * BYTES_PER_MS
         count = 0
-        while count < self.sent and self.chunks[count].end <= end:
+        while count < self.sent and self.chunks[count].end <= end_byte:
             count += 1
         if count:
             self._remove_front(count)
 
     # The upstream socket ------------------------------------------------------
 
-    def _attach(self, upstream: ClientConnection | None) -> None:
-        if self.reader is not None:
-            self.reader.cancel()
-        if upstream is not None:
-            self.reader = asyncio.create_task(self._read(upstream))
+    def _attach(self, upstream: ClientConnection, task: _Task) -> None:
+        assert self.reader is None
+        self.reader = asyncio.create_task(self._read(upstream, task))
 
-    async def _read(self, upstream: ClientConnection) -> None:
+    async def _stop_reader(self) -> None:
+        if self.reader is not None:
+            await _cancel_tasks(self.reader)
+            self.reader = None
+
+    async def _close_upstream(self) -> None:
+        await self._stop_reader()
+        if self.up is not None:
+            await _close_live_socket(self.up)
+            self.up = None
+
+    def _retire_unused(self, upstream: ClientConnection, task: _Task) -> None:
+        reader = self.reader
+        assert reader is not None
+        self.reader = self.task = self.up = None
+        job = asyncio.create_task(self._finish_unused(upstream, task, reader))
+        self.retiring[job] = task
+        job.add_done_callback(self.retiring.pop)
+
+    @staticmethod
+    async def _finish_unused(
+        upstream: ClientConnection, task: _Task, reader: asyncio.Task[None]
+    ) -> None:
+        try:
+            if not task.ended.is_set():
+                task.finish_sent = True
+                with suppress(OSError, WebSocketException):
+                    async with asyncio.timeout(TASK_END_TIMEOUT):
+                        await upstream.send(finish_task_message(task.id))
+                        await task.ended.wait()
+        finally:
+            await _cancel_tasks(reader)
+            await _close_live_socket(upstream)
+
+    async def _read(self, upstream: ClientConnection, task: _Task) -> None:
         reason = "the connection closed"
         try:
             async for message in upstream:
-                if not isinstance(message, bytes):
-                    await self._on_upstream(message)
+                await self._on_upstream(task, message)
+                if task.ended.is_set():
+                    return
         except ConnectionClosed as error:
             reason = f"the connection closed ({error})"
         except Exception as error:  # noqa: BLE001
             reason = f"the connection failed ({error})"
-        if upstream is self.up and self.task is not None:
-            self.task.end("failed", reason)
-            self.wake.set()
+        task.end("failed", reason)
+        self.wake.set()
 
-    async def _on_upstream(self, message: str) -> None:
-        try:
-            data = json.loads(message)
-            header = data.get("header") or {}
-        except (ValueError, AttributeError):
+    async def _on_upstream(self, task: _Task, message: str | bytes) -> None:
+        matching = _task_event(message, task.id)
+        if matching is None:
             return
-        task = self.task
-        if task is None or header.get("task_id") not in (None, task.id):
-            return
+        header, data = matching
         event = header.get("event")
-        if event == "task-started":
-            task.started.set()
-        elif event == "task-finished":
+        if event == "task-finished":
             if task.finish_sent:
                 task.end("finished")
             else:
                 task.end("failed", "the task ended on its own")
             self.wake.set()
         elif event == "task-failed":
-            task.end("failed", str(header.get("error_message") or header.get("error_code") or ""))
+            task.end("failed", _task_error(header))
             self.wake.set()
-        elif event == "result-generated":
+        elif event == "result-generated" and task.start_byte is not None:
             output = (data.get("payload") or {}).get("output") or {}
             sentence = output.get("sentence") or {}
             if sentence and not sentence.get("heartbeat"):
                 await self._on_result(task, sentence)
 
     async def _on_result(self, task: _Task, sentence: dict[str, Any]) -> None:
+        assert task.start_byte is not None
+        origin_ms = task.start_byte // BYTES_PER_MS
         text = str(sentence.get("text") or "")
         piece_id = f"{self.tag}-{task.number}-{sentence.get('sentence_id', 0)}"
         begin = sentence.get("begin_time")
-        start_ms = task.start_ms + int(begin if begin is not None else 0)
+        start_ms = origin_ms + int(begin if begin is not None else 0)
         if not sentence.get("sentence_end"):
             if text.strip():
+                task.drafts.add(piece_id)
                 await self.send(_piece_event(piece_id, start_ms, None, text))
             return
         end = sentence.get("end_time")
-        end_ms = task.start_ms + int(end) if end is not None else start_ms
-        sentences = split_sentences(sentence.get("words") or [], task.start_ms)
+        end_rel_ms = int(end) if end is not None else int(begin if begin is not None else 0)
+        end_ms = origin_ms + end_rel_ms
+        sentences = split_sentences(sentence.get("words") or [], origin_ms)
         if not sentences and text.strip():
             sentences = [{"start_ms": start_ms, "end_ms": end_ms, "text": text.strip()}]
-        task.last_final_end_ms = max(task.last_final_end_ms, end_ms)
+        confirmed_byte = task.start_byte + max(0, end_rel_ms) * BYTES_PER_MS
+        task.confirmed_until_byte = max(task.confirmed_until_byte, confirmed_byte)
         self.failures = 0
-        self._confirm_until(end_ms)
-        if not sentences:
-            return  # noise taken for speech: not a sentence
-        spoken = " ".join(item["text"] for item in sentences)
-        self.recent = f"{self.recent} {spoken}".strip()[-2 * 400 :]
-        await self.send(
-            _piece_event(
-                piece_id, sentences[0]["start_ms"], sentences[-1]["end_ms"], spoken, sentences
-            )
-        )
+        self._confirm_until_byte(confirmed_byte)
+        had_draft = piece_id in task.drafts
+        task.drafts.discard(piece_id)
+        if not sentences and not had_draft:
+            return
+        spoken = ""
+        if sentences:
+            start_ms, end_ms = sentences[0]["start_ms"], sentences[-1]["end_ms"]
+            spoken = " ".join(item["text"] for item in sentences)
+            self.recent = f"{self.recent} {spoken}".strip()[-2 * 400 :]
+        await self.send(_piece_event(piece_id, start_ms, end_ms, spoken, sentences))
+        if not self.gone:
+            self.client_ack_ms = max(self.client_ack_ms, end_ms)
 
     # Keeping a task going -----------------------------------------------------
 
@@ -764,10 +977,15 @@ class _LiveStream:
                 self.wake.clear()
                 await self._drain()
         except _Fatal as error:
-            await self.send({"type": "service.error", "code": error.code, "message": error.message})
-            with suppress(RuntimeError, WebSocketDisconnect):
-                await self.websocket.close(code=1011)
-            self.gone = True
+            try:
+                await self.send(
+                    {"type": "service.error", "code": error.code, "message": error.message}
+                )
+                with suppress(RuntimeError, WebSocketDisconnect):
+                    await self.websocket.close(code=1011)
+            finally:
+                self.gone = True
+                await self._close_upstream()
 
     async def _drain(self) -> None:
         while True:
@@ -781,43 +999,62 @@ class _LiveStream:
                     return
                 await self._start_task()
                 continue
-            if self.up is None:
-                return
+            upstream = self.up
+            assert upstream is not None
             try:
-                while not task.finish_sent and self.sent < len(self.chunks):
+                while (
+                    not task.ended.is_set()
+                    and not task.finish_sent
+                    and self.sent < len(self.chunks)
+                ):
                     chunk = self.chunks[self.sent]
                     if self.flush_marks and chunk.start >= self.flush_marks[0][0]:
                         break
+                    if task.start_byte is None:
+                        # The provider may receive this frame before send() returns.
+                        task.start_byte = chunk.start
+                        task.confirmed_until_byte = chunk.start
+                        self.interrupted_task = None
+                    task.submitted_until = chunk.end
                     self.sent += 1
-                    await asyncio.wait_for(self.up.send(chunk.data), SEND_TIMEOUT)
-                if self.flush_marks and not task.finish_sent:
+                    await asyncio.wait_for(upstream.send(chunk.data), SEND_TIMEOUT)
+                if self.flush_marks and not task.finish_sent and not task.ended.is_set():
+                    if task.start_byte is None:
+                        self._retire_unused(upstream, task)
+                        continue
                     task.finish_sent = True
-                    await asyncio.wait_for(self.up.send(finish_task_message(task.id)), SEND_TIMEOUT)
-            except ConnectionClosed as error:
-                task.end("failed", f"the connection closed ({error})")
+                    await asyncio.wait_for(
+                        upstream.send(finish_task_message(task.id)), SEND_TIMEOUT
+                    )
             except TimeoutError:
-                # Qwen stopped taking audio (a stalled link, or a starved machine): drop this
-                # socket so the task starts again on a new one, from the last final sentence.
-                stalled, self.up = self.up, None
-                if stalled is not None:
-                    asyncio.create_task(stalled.close())
-                task.end("failed", f"Qwen took no audio for {SEND_TIMEOUT:g} seconds")
+                task.end("failed", f"Qwen stopped receiving for {SEND_TIMEOUT:g} seconds")
+                await self._close_upstream()
+            except (OSError, WebSocketException) as error:
+                task.end("failed", f"the connection closed ({error})")
+                await self._close_upstream()
             if task.finish_sent and not task.ended.is_set():
                 try:
                     await asyncio.wait_for(task.ended.wait(), TASK_END_TIMEOUT)
                 except TimeoutError:
-                    task.end("finished")
+                    if not task.ended.is_set():
+                        raise _Fatal(
+                            "finish_unconfirmed",
+                            "Qwen did not confirm the end of the audio "
+                            f"within {TASK_END_TIMEOUT:g} seconds.",
+                        ) from None
                 continue
             if not task.ended.is_set():
                 return
 
     async def _settle(self, task: _Task) -> None:
+        await self._stop_reader()
         self.task = None
         if task.outcome == "finished":
-            if task.finish_sent:
-                self._remove_front(self.sent)
-            self.sent = 0
+            self._remove_front(self.sent)
             return
+        if task.start_byte is None:
+            return
+        self.interrupted_task = task
         logger.warning("Live transcription task failed: %s", task.error)
         await self._recover(f"the task failed ({task.error})", task)
 
@@ -831,7 +1068,11 @@ class _LiveStream:
             )
         self.sent = 0
         if task is not None:
-            resume = task.last_final_end_ms * BYTES_PER_MS
+            assert task.start_byte is not None
+            confirmed_ms = self.client_ack_ms
+            for piece_id in task.drafts:
+                await self.send(_piece_event(piece_id, confirmed_ms, confirmed_ms, ""))
+            resume = max(task.start_byte, task.confirmed_until_byte)
             while self.chunks and self.chunks[0].end <= resume:
                 self._remove_front(1)
             if self.chunks and self.chunks[0].start < resume:
@@ -840,72 +1081,46 @@ class _LiveStream:
                 self.chunks[0] = _Chunk(first.start + cut, first.data[cut:])
             if self.chunks and self.chunks[0].start > resume:
                 await self.gap(resume, self.chunks[0].start, "connection")
-        if self.up is not None and self.up.state != State.OPEN:
-            self.up = None
         await asyncio.sleep(RECONNECT_BACKOFF[self.failures - 1])
 
     async def _start_task(self) -> None:
         """Open a task at the first audio waiting, reconnecting first if the socket closed."""
 
-        while True:
-            self.task = None
-            if not self.chunks:
-                return
-            try:
-                if self.up is None:
-                    self.up = await connect(
-                        stream_url(self.choice.base_url),
-                        additional_headers={"Authorization": f"Bearer {self.choice.api_key}"},
-                        open_timeout=CONNECT_TIMEOUT,
-                        max_size=None,
-                        proxy=LIVE_PROXY,
-                    )
-                    self._attach(self.up)
-                self.task_count += 1
-                start_ms = self.chunks[0].start // BYTES_PER_MS
-                task = _Task(uuid.uuid4().hex, self.task_count, start_ms)
-                task.last_final_end_ms = start_ms
-                self.task = task
-                await self.up.send(
-                    run_task_message(task.id, self.model, context_turns(self.context, self.recent))
+        try:
+            if self.up is not None and self.up.state != State.OPEN:
+                await self._close_upstream()
+            if self.up is None:
+                self.up = await _connect_live_socket(
+                    self.choice.base_url, self.choice.api_key or ""
                 )
-                await asyncio.wait_for(task.started.wait(), TASK_START_TIMEOUT)
-                if task.ended.is_set():
-                    raise ConnectionError(task.error or "the task did not start")
-                return
-            except (OSError, WebSocketException, TimeoutError, ConnectionError) as error:
-                self.task = None
-                if self.up is not None:
-                    with suppress(Exception):
-                        await self.up.close()
-                self.up = None
-                await self._recover(str(error) or type(error).__name__, None)
+            self.task_count += 1
+            self.task = await _start_live_task(
+                self.up, self.model, context_turns(self.context, self.recent), self.task_count
+            )
+            self._attach(self.up, self.task)
+        except (OSError, WebSocketException) as error:
+            await self._close_upstream()
+            await self._recover(str(error) or type(error).__name__, None)
 
 
-async def _proxy_live_stream(
-    websocket: WebSocket,
-    upstream: ClientConnection,
-    choice: Choice,
-    *,
-    sample_rate: int,
-    offset_ms: int,
-    context: str,
-    listen: listen_copy.ListenCopy | None = None,
-    check_again: bool = False,
-    group_paragraphs: bool = False,
-) -> None:
-    live = _LiveStream(
-        websocket,
-        upstream,
-        choice,
-        sample_rate=sample_rate,
-        offset_ms=offset_ms,
-        context=context,
-        listen=listen,
-        check_again=check_again,
-        group_paragraphs=group_paragraphs,
+async def _prepare_for_client(
+    frames: _ClientFrames, choice: Choice, live_model: str, context: str, sample_rate: int
+) -> tuple[tuple[ClientConnection, _Task] | None, str]:
+    setup = asyncio.create_task(
+        _prepare_live_task(
+            choice.base_url, choice.api_key or "", live_model, context, timeout=LIVE_SETUP_TIMEOUT
+        )
     )
-    await live.run()
+    try:
+        await frames.buffer_during(setup, sample_rate)
+        return setup.result()
+    except BaseException:
+        (result,) = await _cancel_tasks(setup)
+        if not isinstance(result, BaseException):
+            prepared, _ = result
+            if prepared is not None:
+                await _close_live_socket(prepared[0])
+        raise
 
 
 # A take sent whole is cut only when it gets long (Qwen takes about five minutes).
@@ -930,6 +1145,7 @@ async def proxy_realtime_transcription(
     listen: listen_copy.ListenCopy | None = None,
     check_again: bool = False,
     group_paragraphs: bool = False,
+    transport: httpx.AsyncBaseTransport | None = None,
 ) -> None:
     """Have the model chosen for a job write the words of audio sent over the socket.
 
@@ -939,64 +1155,80 @@ async def proxy_realtime_transcription(
     short uploaded segments (once, for the whole socket) and the recording goes on.
     """
 
-    if choice is None:
-        await _fail(
-            websocket,
-            "not_configured",
-            f"No transcription is set up. {problem} Choose one in Settings → Transcription.",
-        )
-        return
-    seconds = max(1.0, min(segment_seconds, 10.0)) if choice.stream else WHOLE_TAKE_SECONDS
-    ready = {"model": choice.model, "stream": choice.stream, "local": False, "diarize": False}
-    reset_url = None
-    if choice.kind == "sensevoice":
-        status = await sensevoice_health(choice.base_url)
-        if status is None:
+    frames = _ClientFrames(websocket)
+    try:
+        if choice is None:
             await _fail(
                 websocket,
-                "provider_unavailable",
-                f"SenseVoice is not running at {choice.base_url}. Start it, or choose "
-                "another model, such as Qwen, in Settings → Transcription.",
+                "not_configured",
+                f"No transcription is set up. {problem} Choose one in Settings → Transcription.",
             )
             return
-        ready = {**ready, "local": True, "diarize": bool(status.get("diarize"))}
-        reset_url = f"{sensevoice_root(choice.base_url)}/reset"
-    elif choice.kind == "qwen" and choice.stream:
-        # Accept first: checking the live model can take seconds on a slow link, and the
-        # client's audio waits in the socket meanwhile instead of in its own small queue.
-        await _accept(websocket)
-        live_model = qwen_live_id(choice.model)
-        upstream, reason = await open_live_socket(choice.base_url, choice.api_key or "", live_model)
-        if upstream is not None:
-            await _proxy_live_stream(
-                websocket,
-                upstream,
-                choice,
-                sample_rate=sample_rate,
-                offset_ms=offset_ms,
-                context=context,
-                listen=listen,
-                check_again=check_again,
-                group_paragraphs=group_paragraphs,
+        seconds = max(1.0, min(segment_seconds, 10.0)) if choice.stream else WHOLE_TAKE_SECONDS
+        ready = {"model": choice.model, "stream": choice.stream, "local": False, "diarize": False}
+        reset_url = None
+        if choice.kind == "sensevoice":
+            status = await sensevoice_health(choice.base_url, transport=transport)
+            if status is None:
+                await _fail(
+                    websocket,
+                    "provider_unavailable",
+                    f"SenseVoice is not running at {choice.base_url}. Start it, or choose "
+                    "another model, such as Qwen, in Settings → Transcription.",
+                )
+                return
+            ready = {**ready, "local": True, "diarize": bool(status.get("diarize"))}
+            reset_url = f"{sensevoice_root(choice.base_url)}/reset"
+        elif choice.kind == "qwen" and choice.stream:
+            await _accept(websocket)
+            live_model = qwen_live_id(choice.model)
+            prepared, reason = await _prepare_for_client(
+                frames, choice, live_model, context, sample_rate
             )
-            return
-        logger.warning(
-            "%s has no live text here (%s); recording sends short pieces instead",
-            live_model,
-            reason,
+            if prepared is not None:
+                live = _LiveStream(
+                    websocket,
+                    prepared,
+                    choice,
+                    sample_rate=sample_rate,
+                    offset_ms=offset_ms,
+                    context=context,
+                    listen=listen,
+                    check_again=check_again,
+                    group_paragraphs=group_paragraphs,
+                )
+                await live.run(frames)
+                return
+            logger.warning(
+                "%s has no live text here (%s); recording sends short pieces instead",
+                live_model,
+                reason,
+            )
+            ready = {**ready, "live": "segments"}
+        await _proxy_segmented_transcription(
+            websocket,
+            frames,
+            choice=choice,
+            context=context,
+            segment_seconds=seconds,
+            ready=ready,
+            reset_url=reset_url,
+            sample_rate=sample_rate,
+            pause_cuts=choice.stream,
+            offset_ms=offset_ms,
+            listen=listen,
+            check_again=check_again,
+            group_paragraphs=group_paragraphs,
+            transport=transport,
         )
-        ready = {**ready, "live": "segments"}
-    await _proxy_segmented_transcription(
-        websocket,
-        choice=choice,
-        context=context,
-        segment_seconds=seconds,
-        ready=ready,
-        reset_url=reset_url,
-        sample_rate=sample_rate,
-        pause_cuts=choice.stream,
-        offset_ms=offset_ms,
-        listen=listen,
-        check_again=check_again,
-        group_paragraphs=group_paragraphs,
-    )
+    except WebSocketDisconnect:
+        return
+    except _Fatal as error:
+        with suppress(WebSocketDisconnect):
+            await _fail(websocket, error.code, error.message)
+    except AsrHttpConfigurationError as error:
+        await _fail(websocket, "provider_unavailable", str(error))
+    finally:
+        if listen is not None:
+            listen.close()
+        await frames.aclose()
