@@ -3,13 +3,14 @@
 import json
 from pathlib import Path
 
-from fake_models import FakeProvider, gateway, is_writing, output_replies
+from fake_models import FakeProvider, gateway, is_writing
 from test_outputs import (
     app_for,
     body,
     build,
     built,
     library,
+    output_replies,
     refine,
     saved_output,
     versions,

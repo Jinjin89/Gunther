@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
-from fake_models import FakeProvider, agent_replies, output_replies, studio_task
+from fake_models import FakeProvider, agent_replies, studio_task
 from test_artifact_agent import turn
 from test_key_results import checks, create_session, list_results, old_answer, setup
 from test_outputs import (
@@ -11,6 +11,7 @@ from test_outputs import (
     body,
     build,
     built,
+    output_replies,
     plan_and_approve,
     saved_output,
     workspace,

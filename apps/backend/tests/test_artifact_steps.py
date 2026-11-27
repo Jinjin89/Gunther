@@ -13,10 +13,10 @@ from fake_models import (
     is_outlining,
     is_replacing,
     is_writing,
-    output_replies,
     studio_task,
 )
 from test_output_skills import OUTLINE, REPORT, SLIDES, SLIDES_OUTLINE
+from test_outputs import output_replies
 
 from gunther.artifact_steps import PassageNotFound, WorkSteps
 from gunther.artifact_workspace import (
@@ -183,6 +183,8 @@ def test_understand_keeps_claim_ids_and_stales_the_previous_outline() -> None:
 
     steps.plan_whole()
     original_stamp = work.outline_inputs
+    expected_headings = [row["heading"] for row in OUTLINE["sections"]]
+    assert [item.heading for item in work.outline] == expected_headings
     assert outline_state(work).state == "ok"
     news = passage("Trial update", "A later trial confirms the marker.", "web", "https://news.test/a")
     assert steps.pool.adopt(news).ref == 3

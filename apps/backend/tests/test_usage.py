@@ -562,8 +562,7 @@ def test_ask_and_brief_are_tagged_at_their_entry_points(tmp_path):
 
 
 def test_output_build_tags_every_nested_request(tmp_path):
-    from fake_models import output_replies
-    from test_outputs import ONE_SECTION, app_for, body, build, built, library
+    from test_outputs import ONE_SECTION, app_for, body, build, built, library, output_replies
 
     fake = CountingProvider(
         output_replies(ONE_SECTION, ["## T cells\n\nCD3D marks T cells [1]."]), counts=COUNTS

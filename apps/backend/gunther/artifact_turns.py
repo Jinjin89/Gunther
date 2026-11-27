@@ -1492,7 +1492,14 @@ class ArtifactTurns:
             notes = scoped_notes
             return notes, manifest
 
-        with usage.job("outputs", ref=conversation_id):
+        target_work = planning_work
+        if approved is not None:
+            target_work = approved[0]
+        elif rebuild is not None:
+            target_work = rebuild[0]
+        with usage.job(
+            "outputs", detail=target_work.spec.kind if target_work else None, ref=conversation_id,
+        ):
             budget = RunBudget(
                 agent_limits.searches,
                 agent_limits.searches,

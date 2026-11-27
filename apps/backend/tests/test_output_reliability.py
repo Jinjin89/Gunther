@@ -353,7 +353,7 @@ def test_revising_another_slide_preserves_a_verified_chart(tmp_path, historical_
 
 
 def test_output_with_omitted_claim_verdicts_is_saved_as_unchecked(tmp_path):
-    replies = output_replies(OUTLINE, REPORT)
+    replies = planned_output_replies(OUTLINE, REPORT)
 
     def reply(request):
         return json.dumps({"sentences": []}) if is_sentence_checking(request) else replies(request)
@@ -383,7 +383,7 @@ def test_report_keeps_authored_citations_without_borrowing_for_uncited_figures(
         f"## Summary\n\n{cited}",
         f"## The measurements bound the comparison\n\n{measured}\n\n{other_unit}",
     ]
-    replies = output_replies(outline, written)
+    replies = planned_output_replies(outline, written)
 
     def reply(request):
         if checker_fails and is_sentence_checking(request):

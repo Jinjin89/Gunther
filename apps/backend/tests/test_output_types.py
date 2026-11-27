@@ -159,12 +159,13 @@ def test_catalog_types_build_with_their_recipe_and_save_their_label(
         writer = next(task for task in tasks if "Write the report" in task)
         assert recipe in planner
         assert ("Executive summary first:" if style == "report" else recipe) in writer
-        assert (SUMMARY_MARK in result["content"]) == summary
+        assert result["content"].count(SUMMARY_MARK) == int(summary)
         assert misplaced_marker not in result["content"]
-        assert any("add at least 1 exhibit" in task for task in tasks) == summary
+        assert not any("Your report breaks Gunther's report format" in task for task in tasks)
         [preview] = [event["sections"] for name, event in events if name == "outline"]
         assert len(preview) == len(result["outline"]) == story["requested_count"]
         if summary:
+            assert f"## {story['summary_heading']}\n{SUMMARY_MARK}\n" in result["content"]
             sealed = result["provenance"]["creationPlan"]
             assert sealed["outline"][0]["id"] == result["outline"][0]["id"]
             assert sealed["outline"][0]["heading"] == result["sections"][0]["heading"]

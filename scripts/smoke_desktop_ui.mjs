@@ -532,10 +532,11 @@ async function run() {
     const marker = `ui-smoke-${crypto.randomUUID().slice(0, 8)}`;
     const noteTitle = `Capture before organize ${marker}`;
     const libraryTitle = `Bioinformatics ${marker}`;
+    const studio = '.library-inspector .studio-column[aria-label="Studio"]';
     const libraryChatOpen = `Boolean(
       document.querySelector('.library-workspace .contents[aria-label="Sources"]') &&
       document.querySelector('.library-workspace .library-chat:not([hidden]) [aria-label="Conversation"]') &&
-      document.querySelector('.library-workspace [aria-label="Studio"]')
+      document.querySelector('${studio}')
     )`;
     const libraryWelcome = `${libraryChatOpen} && document.querySelector('.chat-welcome h1')?.textContent.trim() === ${JSON.stringify(libraryTitle)}`;
     if (!await cdp.evaluate(clickExpression("button", "All capture options"))) {
@@ -788,10 +789,10 @@ async function run() {
     const askReadyMilliseconds = Date.now() - askReadyStartedAt;
     // The fixture provider also exercises the model menu with a long display label.
     await waitForEvaluation(cdp, "document.querySelector('.composer [data-chip=model]')?.textContent.includes('A model with a long display name')", "long model menu fixture");
-    // Chat keeps All sources and the two action buttons usable with Studio collapsed.
+    // Chat keeps All sources and the two action buttons usable with Inspector collapsed.
     await resizeViewport(900, 640);
-    const studioRailAt900 = `window.innerWidth === 900 && document.querySelector('button[aria-label="Expand Studio"]')?.getClientRects().length > 0`;
-    await waitForEvaluation(cdp, studioRailAt900, "narrow Ask window with a Studio rail");
+    const inspectorRailAt900 = `window.innerWidth === 900 && document.querySelector('.library-inspector button[aria-label="Expand Studio"]')?.getClientRects().length > 0`;
+    await waitForEvaluation(cdp, inspectorRailAt900, "narrow Ask window with an Inspector rail");
     const composerLayout = await cdp.evaluate(`(() => {
       const composer = document.querySelector('.composer').getBoundingClientRect();
       const options = document.querySelector('.composer-options').getBoundingClientRect();
@@ -810,6 +811,21 @@ async function run() {
     if (!await cdp.evaluate(setAriaValueExpression("Message Gunther", question))) {
       throw new SmokeFailure("Ask composer was not editable");
     }
+
+    const planning = 'article[aria-label="Output planning"]';
+    const planActions = `${planning} .plan-actions`;
+    const planButton = `${planActions} button`;
+    const planBlocked = (hint) => `document.querySelector('${planButton}')?.disabled === true
+      && document.querySelector('${planActions} .plan-hint')?.textContent.trim() === ${JSON.stringify(hint)}`;
+    const openReportSetup = async () => {
+      await waitForEvaluation(cdp, clickExpression(`${studio} .studio-tile > button:only-of-type`, "Report"), "Report tile with one action");
+      await waitForEvaluation(
+        cdp,
+        `document.querySelector('${planning} h1')?.textContent.trim() === 'Set up Report'
+          && [...document.querySelectorAll('${planButton}')].map((button) => button.textContent.trim()).join('|') === 'Plan'`,
+        "Report Setup with Plan as its action",
+      );
+    };
 
     // Arrange a source under a nested section and change the shared scope from its parent.
     const makeSection = async (title, parentId, sourceIds = []) => {
@@ -846,22 +862,41 @@ async function run() {
       `${courseSelection(false)}
         && document.querySelector('#empty-source-scope')?.textContent.includes('Select at least one source')
         && document.querySelector('button[aria-label="Send message"]')?.disabled === true
-        && document.querySelector('.studio-tile > button')?.disabled === true`,
-      "empty scope disables Chat Send and Studio builds",
+        && document.querySelector('${studio} .studio-scope')?.textContent.trim() === 'Add sources to plan outputs.'`,
+      "empty scope disables Chat Send and is shown in Studio",
+    );
+    await openReportSetup();
+    await waitForEvaluation(
+      cdp,
+      planBlocked("Select sources in the Library and choose Use current selection."),
+      "Report Setup blocks Plan for an empty selection",
     );
     if (!await cdp.evaluate(clickExpression("input", "Select sources in Course materials"))) {
       throw new SmokeFailure("The course could not be ticked");
     }
+    const sourceNoun = sources.length === 1 ? "source" : "sources";
     await waitForEvaluation(
       cdp,
       `${courseSelection(true)} && !document.querySelector('.contents-picker-overlay')
-        && document.querySelector('.studio-tile > button')?.disabled === false`,
+        && document.querySelector('${studio} .studio-scope')?.textContent.trim() === ${JSON.stringify(`Using ${sources.length} selected ${sourceNoun}`)}`,
       "section ticks choose its descendants for Chat and Studio",
     );
+    if (!await cdp.evaluate(clickExpression(`${planning} button`, "Use current selection"))) {
+      throw new SmokeFailure("Report Setup could not adopt the current source selection");
+    }
+    await waitForEvaluation(
+      cdp,
+      `document.querySelector('${planButton}')?.disabled === false
+        && document.querySelector('${planning} .plan-source-scope p')?.textContent.trim() === ${JSON.stringify(`Using ${sources.length} ${sourceNoun}`)}`,
+      "Report Setup enables Plan with the current source selection",
+    );
+    if (!await cdp.evaluate(clickExpression("button", "Back to chat"))) {
+      throw new SmokeFailure("Report Setup could not return to Chat");
+    }
 
     await waitForEvaluation(
       cdp,
-      `document.querySelector('button[aria-label="Send message"]')?.disabled === false`,
+      `${libraryChatOpen} && document.querySelector('button[aria-label="Send message"]')?.disabled === false`,
       "enabled Ask send",
     );
     if (!await cdp.evaluate(clickExpression("button", "Send message"))) {
@@ -893,16 +928,35 @@ async function run() {
     if (!await cdp.evaluate(clickExpression(".message-sources-button", "1 source"))) {
       throw new SmokeFailure("The answer's sources could not be opened");
     }
-    const evidencePanel = '[role="tabpanel"][aria-label="Evidence"]:not([hidden])';
+    const evidencePanel = '.library-inspector [role="tabpanel"][aria-label="Evidence"]:not([hidden])';
     const citationOpener = `${evidencePanel} [aria-label="Cited sources"] button.evidence-card-open`;
     await waitForEvaluation(cdp, `document.querySelector(${JSON.stringify(citationOpener)})?.getClientRects().length > 0`, "answer sources in Inspector");
+    await resizeViewport(1728, 820);
+    await waitForEvaluation(
+      cdp,
+      `(() => {
+        const workspace = document.querySelector('.library-workspace');
+        const library = workspace.querySelector('.library-sources');
+        const middle = workspace.querySelector('.library-middle');
+        const inspector = workspace.querySelector('.library-inspector');
+        const grip = inspector.querySelector('[role="separator"][aria-label="Resize Inspector"]');
+        const remaining = workspace.getBoundingClientRect().width - library.getBoundingClientRect().width;
+        return grip?.getClientRects().length > 0
+          && Number(grip.getAttribute('aria-valuemax')) === Math.floor(remaining / 2)
+          && Math.abs(inspector.getBoundingClientRect().width - 400) < 1
+          && middle.getBoundingClientRect().width >= 480;
+      })()`,
+      "wider Evidence Inspector while preserving room for Chat",
+    );
+    await wideViewport();
     if (!await cdp.evaluate(clickExpression(citationOpener, noteTitle))) {
       throw new SmokeFailure("The answer's source could not be opened");
     }
     await waitForEvaluation(
       cdp,
-      `document.querySelector('${evidencePanel} .gx-evidence-detail .gx-evidence-title > strong')?.textContent.trim() === ${JSON.stringify(noteTitle)}`,
-      "answer source opens its evidence",
+      `document.querySelector('${evidencePanel} .gx-evidence-title > strong')?.textContent.trim() === ${JSON.stringify(noteTitle)}
+        && document.querySelector('${evidencePanel} [aria-label="Passage from the source"]')?.textContent.includes('BRCA1 regulates DNA repair.')`,
+      "answer source opens its cited passage",
     );
     if (!await cdp.evaluate(`(() => {
       const back = document.querySelector('${evidencePanel} nav[aria-label="Evidence navigation"] > button:first-of-type');
@@ -981,6 +1035,7 @@ async function run() {
     );
 
     // The saved answer stays available after removing its model from Settings.
+    // This fixture answers Chat prompts. The Studio check stops at the Setup gate.
     const { providers: [fixtureProvider] } = await jsonFrom(`${backendOrigin}/api/settings/models`);
     if (!fixtureProvider) throw new SmokeFailure("The fixture Ask provider was not configured");
     const removedProvider = await fetch(
@@ -1002,20 +1057,19 @@ async function run() {
       "document.querySelector('.message-sources-button') !== null && document.querySelector('.message-actions .key-results-status')?.textContent.includes('Key results need an Analysis model')",
       "saved answer and sources remain visible after the model is removed",
     );
+    await openReportSetup();
     await waitForEvaluation(
       cdp,
-      `(() => {
-        const studio = document.querySelector('[aria-label="Studio"]');
-        const buttons = [...(studio?.querySelectorAll('.studio-tile button') ?? [])];
-        return studio?.querySelector('.studio-model-note [role="status"]')?.textContent.includes('Studio needs a model')
-          && studio.querySelector('.studio-model-note button')?.disabled === false
-          && buttons.length > 0 && buttons.every((button) => button.disabled);
-      })()`,
-      "Studio shows model setup with its tiles disabled",
+      planBlocked("Choose an available model in Settings."),
+      "Report Setup blocks Plan when the model is removed",
     );
+    if (!await cdp.evaluate(clickExpression("button", "Back to chat"))) {
+      throw new SmokeFailure("Model-free Report Setup could not return to Chat");
+    }
+    await waitForEvaluation(cdp, libraryChatOpen, "Chat after checking Report Setup without a model");
 
     await resizeViewport(900, 640);
-    await waitForEvaluation(cdp, studioRailAt900, "narrow Sources window");
+    await waitForEvaluation(cdp, inspectorRailAt900, "narrow Sources window");
     await screenshot("sources-900");
     const sourcesFit = await cdp.evaluate(`(() => {
       const tree = document.querySelector('.library-workspace .contents');
@@ -1028,7 +1082,7 @@ async function run() {
     if (!await cdp.evaluate(clickExpression("button", "Expand Studio"))) {
       throw new SmokeFailure("Studio could not be reopened from its rail");
     }
-    await waitForEvaluation(cdp, "document.querySelector('.studio-column')?.getClientRects().length > 0", "Studio visible after reopening its rail");
+    await waitForEvaluation(cdp, `document.querySelector('${studio}')?.getClientRects().length > 0`, "Studio visible in the Inspector overlay");
     await resizeViewport(800, 640);
     await waitForEvaluation(
       cdp,
@@ -1039,6 +1093,42 @@ async function run() {
       throw new SmokeFailure("Library could not be reopened from its rail");
     }
     await waitForEvaluation(cdp, "document.querySelector('.contents')?.getClientRects().length > 0", "Sources visible after reopening its rail");
+    if (!await cdp.evaluate(clickExpression("button", "Collapse Library"))) {
+      throw new SmokeFailure("The Library overlay could not be closed");
+    }
+
+    // The rail-to-strip breakpoint uses the workspace width after app navigation.
+    const workspaceWidth = "document.querySelector('.library-workspace').getBoundingClientRect().width";
+    const navigationWidth = await cdp.evaluate(`innerWidth - ${workspaceWidth}`);
+    const panelStrip = '[role="group"][aria-label="Workspace panels"]';
+    await resizeViewport(567 + navigationWidth, 640);
+    await waitForEvaluation(
+      cdp,
+      `(() => {
+        const strip = document.querySelector('${panelStrip}');
+        const triggers = [...(strip?.querySelectorAll('button') ?? [])];
+        return ${workspaceWidth} === 567
+          && triggers.map((button) => button.getAttribute('aria-label')).join('|') === 'Expand Library|Expand Evidence|Expand Studio'
+          && triggers.every((button) => button.getClientRects().length > 0);
+      })()`,
+      "Library, Evidence and Studio in the workspace panel strip below 568px",
+    );
+    if (!await cdp.evaluate(clickExpression(`${panelStrip} button`, "Expand Studio"))) {
+      throw new SmokeFailure("Studio could not be opened from the panel strip");
+    }
+    await waitForEvaluation(
+      cdp,
+      `document.querySelector('${studio}')?.getClientRects().length > 0
+        && document.querySelector('.inspector-panel')?.getBoundingClientRect().top >= document.querySelector('${panelStrip}')?.getBoundingClientRect().bottom`,
+      "Studio overlay below the workspace panel strip",
+    );
+    await resizeViewport(568 + navigationWidth, 640);
+    await waitForEvaluation(
+      cdp,
+      `${workspaceWidth} === 568 && !document.querySelector('${panelStrip}')
+        && document.querySelector('.library-sources button[aria-label="Expand Library"]')?.getClientRects().length > 0`,
+      "side rails at a 568px workspace",
+    );
     await wideViewport();
 
     // The answer preference remains available in General Settings and survives reopening.
@@ -1131,14 +1221,15 @@ async function run() {
         "filed source written to its readable library folder",
         "successful local retry copy cleared",
         "filed note showed its row actions and drag handle and reopened through its summary with preserved content",
-        "grounded Chat answer persisted with sources that open evidence",
+        "grounded Chat answer persisted with a cited passage, Brief and Trace in the wider Evidence Inspector",
         "Chats search reopened a saved answer",
         "grounded answer showed key results waiting for an Analysis model",
-        "Studio showed model setup with disabled tiles after the saved answer was reopened",
+        "Report opened Setup and blocked Plan after the model was removed",
         "Chat kept All sources and side-by-side voice/send actions at 900 × 640",
         "Sources showed the total and fit at 900 × 640, with Studio available from its rail",
         "Library collapsed at 800 × 640 and reopened from its rail",
-        "section ticks set Chat and Studio scope, blocked empty selection, and persisted on library reopen",
+        "Workspace panels replaced the side rails below 568px and opened the Studio overlay",
+        "section ticks set Chat and Studio scope, enabled Plan with the current selection, and persisted on library reopen",
         "Answer style moved to General Settings, persisted and stayed out of Ask/Home composers",
         "capture moved to Trash from Inbox and brought back with Undo",
         "capture restored from the Trash page",

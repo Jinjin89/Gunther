@@ -9,13 +9,7 @@ import pytest
 from fake_models import FakeProvider, orchestrator_replies, output_replies
 from sqlalchemy import func, inspect, select
 from sqlalchemy.exc import IntegrityError
-from test_output_skills import (
-    OUTLINE,
-    REPORT,
-    SLIDES,
-    SLIDES_OUTLINE,
-    saved_skill_output,
-)
+from test_output_skills import SLIDES, SLIDES_OUTLINE, saved_skill_output
 from test_outputs import SIDECAR, app_for, check_reads, library, output_turn, route, workspace
 
 from gunther.artifact_manifest import artifact_manifest_hash
@@ -44,12 +38,8 @@ def deck_replies():
     return output_replies(SLIDES_OUTLINE, SLIDES)
 
 
-def report_replies():
-    return output_replies(OUTLINE, REPORT)
-
-
 def a_library(tmp_path: Path):
-    """An app whose model builds decks and reports by their skills, and a library."""
+    """An app with a stand-in model for decks."""
 
     fake = FakeProvider(deck_replies())
     client = app_for(tmp_path, fake)
