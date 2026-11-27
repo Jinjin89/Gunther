@@ -357,7 +357,7 @@ def _outline_body(unit: OutputUnit) -> str:
 
 def project_saved_outline(
     kind: str, source_id: str, content: str, saved: Sequence[OutlineItem], *,
-    previous: str | None = None,
+    previous: str | None = None, assign_ids: bool = False,
 ) -> list[OutlineItem]:
     """Project rows in Markdown order, retaining metadata only for matched sections."""
 
@@ -402,8 +402,8 @@ def project_saved_outline(
     version_key = inputs_key([source_id, content]) if previous is not None else source_id
     for position, unit in enumerate(units):
         row = saved[matched[position]] if position in matched else None
-        identity = row.id if row is not None else ""
-        if row is None or identity in used:
+        identity = (row.id or "").strip() if row is not None else ""
+        if row is None or (assign_ids and not identity) or (identity and identity in used):
             nonce = 0
             while True:
                 identity = "p_" + inputs_key([version_key, position, nonce])[:62]

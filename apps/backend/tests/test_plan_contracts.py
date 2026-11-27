@@ -475,9 +475,18 @@ def test_saved_rows_have_version_scoped_source_ids_and_keep_their_layout():
             OutlineItem(id="row_saved", heading="Body", layout="takeaways", notes="A note"),
         ],
     )
-    rows = project_saved_outline(version)
-    assert rows == project_saved_outline(version)
-    assert rows[0].id != project_saved_outline(version.model_copy(update={"id": "version_2"}))[0].id
+    rows = project_saved_outline(
+        version.kind, version.id, version.content, version.outline, assign_ids=True,
+    )
+    assert rows == project_saved_outline(
+        version.kind, version.id, version.content, version.outline, assign_ids=True,
+    )
+    other = project_saved_outline(
+        version.kind, "version_2", version.content, version.outline, assign_ids=True,
+    )
+    assert rows[0].id != other[0].id
+    lean = project_saved_outline(version.kind, version.id, version.content, version.outline)
+    assert lean[0].id == "" and lean[1].id == "row_saved"
     assert rows[1].id == "row_saved" and rows[1].notes == "A note"
     work = ready_work("slides")
     work.version_id = version.id
