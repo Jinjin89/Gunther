@@ -27,11 +27,11 @@ Choose tokens from the CSS when adding surfaces. Use `--gx-hover` and `--gx-acti
 
 The Library workspace uses `--gx-sidebar` for Library, `--gx-canvas` for the middle, and `--gx-surface-2` with `--gx-surface` cards for Inspector. Their 44px headers share a hairline. Chat uses neutral ink and focus treatments.
 
-Studio rows use a 16 px catalog icon, a 14 px semibold title and 12 px details. Titles and details wrap as the Inspector resizes. The current row has a 2 px ink rule. Row menus appear on hover or keyboard focus and stay visible on touch. [Studio outputs](OUTPUTS.md#conversations-and-versions)
+Studio rows use a 16 px catalog icon, a 14 px semibold title and 12 px details. Titles and details wrap as the Inspector resizes. The current row has a 2 px ink rule. Row menus appear on hover or keyboard focus and stay visible on touch. Empty Studio shows all ten creation tiles. From the first work card, **New output** opens the picker and choosing a type closes it. [Studio outputs](OUTPUTS.md#conversations-and-versions)
 
 The Inspector uses underlined tabs and tabular Evidence counts. Evidence opens with context and status, followed by cited sources, key results, or a passage. Supporting provenance uses foldable rows. The Brief uses serif for the goal, selectable text for reading, and inline fields in edit mode. [Conversation Brief](ASK.md#conversation-brief)
 
-Source cards and citation details share the same compact kind mark. Coverage bars and conclusion accents use the existing status colours. The citation header puts the number, source kind, title and locator together. Use passage chips for two to five passages and a select menu for larger lists.
+Source cards and citation details share the same compact kind mark. Coverage bars and conclusion accents use the existing status colours. The citation header puts the number, source kind, title and locator together. Use passage chips for two to five passages and a select menu for larger lists. Evidence detail leads with a shorter saved quote when it occurs exactly once in the passage. **Show context** reveals the full passage with the quote marked in place. A long passage without a distinct quote starts with a verbatim preview and **Show full passage**.
 
 Lucide icons use a neutral stroke and the shared icon sizing. Use a library glyph with its colour and initial to label a library in lists, scope choices and results. Use the brand mark to indicate search or answer activity.
 
@@ -66,12 +66,14 @@ Studio centers its sections at up to `45rem`. The tile grid uses `repeat(auto-fi
 | `prose` | Up to `min(66ch, 760px)` for narrative and conversation controls. |
 | `structured` | Up to 960px for flashcard and quiz surfaces, audio transport and voices. Prompts, explanations and transcript text use up to `66ch`. |
 | `report` | Up to 1280px for the report and exhibits. Headings, navigation and body text align to a nested prose column. Markdown wrappers in the preamble and sections, including the summary section, span the full grid. Their `.rp-table` children and structured `.rp-exhibit` blocks can use that width. Dense tables and display math scroll locally. |
-| `deck` | Up to `max(480px, (100vh - 240px) × 16/9)` for the 16:9 stage, toolbar, thumbnail strip and notes shell. Reveal uses 1280×720 internally. Notes text and fit notices cap at `66ch`. Present opens in a full-window layer. |
+| `deck` | Saved readers cap the 16:9 stage at `max(480px, (100vh - var(--stage-overhead)) × 16/9)` within the available width, using `364px` as the initial fallback and measuring the mounted heading, toolbar, active notices and thumbnail strip on resize and font load. The height budget leaves room for the toolbar and one full thumbnail row with numbers even when a long title wraps. Short windows and expanded findings can scroll. Reveal uses 1280×720 internally. Notes text and fit notices cap at `66ch`. Present opens in a full-window layer. |
 | `review` | Up to 1320px with 20px inline insets. Full-size slide renders scroll inside the preview. |
-| `plan` | Up to 1200px. Above `64em` of reader width the review and settings use `2fr` and `1fr` tracks with a 24px gap. The layout is one column at `64em` and below. |
+| `plan` | Initial Setup uses one centered column up to `min(66ch, 760px)`. Proposal and question review use up to 1200px. At `64em` of reader width the review and settings split into `2fr` and `1fr` tracks with a 24px gap. |
 | `full` | Uses the available inner width for the mind map and Edit. All Edit readers use two equal columns with a 24px gap and stack at `@container library-reader (max-width: 50em)`. |
 
-While you review a plan, its action bar sticks to the bottom of the middle pane's scroller. Its buttons wrap, and scroll padding keeps the feedback form and history reachable. Existing preference rows use textareas that wrap and grow with their content as the settings column narrows. [Planning styles](../apps/desktop/src/outputs/planning.css)
+Initial Setup places the sticky **Plan** action and its blocker below the settings. The plan review action bar also sticks to the bottom of the middle pane's scroller. Its buttons wrap, and scroll padding keeps the fields, feedback form and history reachable. Existing preference rows use textareas that wrap and grow with their content as the settings column narrows. [Planning styles](../apps/desktop/src/outputs/planning.css)
+
+Saved Slides use the 28px base title token and place idle plan, preferences and rendered-review controls after thumbnails and notes. **Refine slide** targets the current slide, and its toolbar surfaces that slide's check findings and coverage flags. Keep verdicts and affected claims inline, with optional checker notes in a local **Check details** disclosure.
 
 Print uses a dedicated `#print-root`. A4 output prepares at 178mm with static numbered citations. Slide print uses the native 1280×720 stage. The screen tracks and container rules stay outside these print measurements. [Reader styles](../apps/desktop/src/outputs/outputs.css) · [Report styles](../apps/desktop/src/outputs/deck/report.css) · [Studio exports](STUDIO_FORMAT.md#6-exports-desktop)
 

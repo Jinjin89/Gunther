@@ -2,12 +2,12 @@ import type { Artifact, ConversationCitation } from "@gunther/contracts";
 import { Deck, Slide } from "@revealjs/react";
 import type { RevealApi } from "reveal.js";
 import { Check, Circle, type LucideIcon, Maximize2, MessageSquarePlus, Palette, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { citationNumbers } from "../pages/AnswerBody";
 import { CitationDetails } from "../components/evidence/CitationButton";
 import { ArtifactMenu } from "./ArtifactMenu";
-import { SectionStatus } from "./OutputParts";
+import { sectionCheckSummary, SectionStatus } from "./OutputParts";
 import { SlideFace } from "./SlideFace";
 import { SlideStylePicker } from "./SlideStylePicker";
 import { ACCENTS, THEMES, type DeckStyle, type DeckTheme, attrsOf, parseSlides, slideLayouts, splitDocument } from "./sections";
@@ -60,7 +60,7 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
   onCite: (citation: ConversationCitation, index: number) => void;
   /** The slide in view (counted from 0), told on every change: the part a message is about when nothing is chosen. */
   onSlide?: ((index: number) => void) | undefined;
-  /** "Ask about this slide": the slide in view is what the next message is about. Without it the bar has no such button. */
+  /** "Refine slide": the slide in view is what the next message is about. Without it the bar has no such button. */
   onAsk?: ((index: number) => void) | undefined;
   /** Move to this slide (counted from 0). A new `nonce` moves again to the same slide. */
   goTo?: { index: number; nonce: number } | null | undefined;
@@ -87,6 +87,8 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
   const deck = useRef<RevealApi | null>(null);
   const stage = useRef<HTMLDivElement>(null);
   const layer = useRef<HTMLDivElement>(null);
+  const checkStatus = useRef<HTMLElement>(null);
+  const checkId = useId();
   const [current, setCurrent] = useState(0);
   const [presenting, setPresenting] = useState(false);
   const [fitNotes, setFitNotes] = useState<Record<number, { fit: number; overflow: boolean }>>({});
@@ -175,12 +177,24 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
 
   const track = compact ? "full" : "deck";
   if (!hasSlides) return <p className="outputs-noslides reader-track" data-track={track}>This deck has no slides yet.</p>;
-  const here = slides[Math.min(current, slides.length - 1)];
+  const position = Math.min(current, slides.length - 1);
+  const here = slides[position];
+  const check = artifact.sections[position];
+  const checkSummary = sectionCheckSummary(check);
+  const sceneIssue = sceneIssues[position];
+  const fitNote = fitNotes[position];
   return <CitationDetails.Provider value={artifact.citations}><div className="outputs-slides reader-track" data-track={track}>
     <div className="outputs-slides-bar">
-      <span aria-live="polite">Slide {Math.min(current, slides.length - 1) + 1} of {slides.length}{changed?.includes(Math.min(current, slides.length - 1)) && <em className="outputs-changed"> · Changed</em>}</span>
+      <div className="outputs-slides-position">
+        <span aria-live="polite">Slide {position + 1} of {slides.length}{changed?.includes(position) && <em className="outputs-changed"> · Changed</em>}</span>
+        {checkSummary && <button type="button" className={checkSummary.severe ? "outputs-check-pill is-severe" : "outputs-check-pill"}
+          aria-controls={checkId} onClick={() => {
+          checkStatus.current?.focus({ preventScroll: true });
+          checkStatus.current?.scrollIntoView?.({ block: "nearest" });
+        }}>{checkSummary.label}</button>}
+      </div>
       <span className="outputs-slides-tools">
-        {onAsk && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => onAsk(Math.min(current, slides.length - 1))}><MessageSquarePlus size={13} />Ask about this slide</button>}
+        {onAsk && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" onClick={() => onAsk(position)}><MessageSquarePlus size={13} aria-hidden="true" />Refine slide</button>}
         {onTheme && canTheme && <SlideStylePicker value={theme} accent={accent} designVersion={designVersion} disabled={accentDisabled} onSelect={onTheme} numbers={numbers} sources={sources} samples={[0, slides.findIndex((_, index) => index > 0)].filter(index => index >= 0).map(index => ({ body: slides[index]!.body, title: index === 0, layout: layouts[index], composition: slides[index]!.composition, scene: slides[index]!.scene }))} />}
         {deckStyle && canAccent && onDeckStyle && onDeckTheme && <DeckStyleMenu style={deckStyle} pendingStyle={pendingDeckStyle} theme={deckTheme} disabled={deckStyleDisabled} templateDisabled={accentDisabled} onStyle={onDeckStyle} onTemplate={(on) => onDeckTheme(on ? "brand" : "paper")} onNotice={(text) => onNotice?.(text)} />}
         {!deckStyle && onDeckTheme && designVersion === 2 && canAccent && <DeckThemeMenu value={deckTheme} disabled={accentDisabled} onSelect={onDeckTheme} onNotice={(text) => onNotice?.(text)} />}
@@ -205,13 +219,13 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
         </Slide>)}
       </Deck>
     </div>
-    {sceneIssues[Math.min(current, slides.length - 1)] && <p className="outputs-scene-note" role="status">
-      {sceneIssues[Math.min(current, slides.length - 1)]!.startsWith("Graphic elements fell back")
-        ? `Some graphic elements use their complete source content: ${sceneIssues[Math.min(current, slides.length - 1)]}`
-        : `Composed layout unavailable: ${sceneIssues[Math.min(current, slides.length - 1)]} The complete slide text is shown.`}
+    {sceneIssue && <p className="outputs-scene-note" role="status">
+      {sceneIssue.startsWith("Graphic elements fell back")
+        ? `Some graphic elements use their complete source content: ${sceneIssue}`
+        : `Composed layout unavailable: ${sceneIssue} The complete slide text is shown.`}
     </p>}
-    {fitNotes[Math.min(current, slides.length - 1)] && (fitNotes[Math.min(current, slides.length - 1)]!.overflow || fitNotes[Math.min(current, slides.length - 1)]!.fit < 0.8) && <p className="outputs-fit-note" role="status">
-      {fitNotes[Math.min(current, slides.length - 1)]!.overflow
+    {fitNote && (fitNote.overflow || fitNote.fit < 0.8) && <p className="outputs-fit-note" role="status">
+      {fitNote.overflow
         ? "Some content still extends beyond this slide. Consider splitting it, shortening the text, or moving detail to speaker notes."
         : "This slide needed noticeably smaller text to fit. Consider splitting it, shortening the text, or moving detail to speaker notes."}
     </p>}
@@ -241,10 +255,12 @@ export function SlidesView({ artifact, onCite, onSlide, onAsk, goTo, changed, on
         </button>
       </li>)}
     </ol>
+    {checkSummary && <section ref={checkStatus} id={checkId} className="outputs-slide-check" aria-label="Slide source check" tabIndex={-1}>
+      <SectionStatus key={`${artifact.id}:${position}`} info={check} />
+    </section>}
     <section className="outputs-notes" aria-label="Speaker notes">
       <h3>Notes</h3>
       {here?.notes ? <p>{here.notes}</p> : <p className="is-empty">No notes for this slide.</p>}
     </section>
-    <SectionStatus info={artifact.sections[Math.min(current, slides.length - 1)]} />
   </div></CitationDetails.Provider>;
 }

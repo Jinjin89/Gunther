@@ -54,7 +54,9 @@
 .library-inspector .gx-evidence-body > section { inline-size: min(100%, 66ch); margin-inline: auto; }
 .gx-evidence-body.is-viewer { padding: 10px 0 0; overflow: hidden; display: flex; flex-direction: column; }
 .gx-evidence-body h3 { margin: 0 0 10px; color: var(--gx-faint); font-size: var(--gx-text-xs); font-weight: 600; letter-spacing: 0.01em; }
-.gx-evidence-quote { margin: 0; padding: 2px 0 2px 14px; border-left: 2px solid var(--gx-ink); color: var(--gx-ink); font-size: calc(15px * var(--gx-fs, 1)); line-height: 1.7; overflow-wrap: anywhere; }
+.gx-evidence-quote { margin: 0; padding: 2px 0 2px 14px; border-left: 2px solid var(--gx-ink); color: var(--gx-ink); font-size: calc(15px * var(--gx-fs, 1)); line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
+.gx-evidence-quote + .gx-evidence-more { margin-top: 4px; }
+.gx-evidence-passage-context { margin: 8px 0 0; padding: 8px 12px; border-inline-start: 2px solid var(--gx-line-2); border-radius: 0 var(--gx-radius-sm) var(--gx-radius-sm) 0; background: var(--gx-hover); color: var(--gx-muted); font-size: calc(14px * var(--gx-fs, 1)); line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
 .gx-evidence-note { margin: 12px 0 0; color: var(--gx-faint); font-size: var(--gx-text-xs); line-height: 1.55; }
 .gx-evidence-context { display: grid; gap: 12px; }
 .gx-evidence-context p { margin: 0; color: var(--gx-muted); font-size: calc(14px * var(--gx-fs, 1)); line-height: 1.7; overflow-wrap: anywhere; }
@@ -94,7 +96,9 @@
 .gx-evidence-resize:hover::after, .gx-evidence-resize:focus-visible::after, .gx-evidence-resize:active::after { background: var(--gx-line-3); }
 .gx-evidence-resize:focus-visible { outline: 0; }
 .gx-evidence-context h4 { margin: 6px 0 -4px; color: var(--gx-ink); font-size: calc(14px * var(--gx-fs, 1)); font-weight: 650; line-height: 1.4; }
-.gx-evidence-context p.is-cited mark { padding: 1px 0; border-radius: 3px; background: rgba(255, 214, 10, 0.4); color: inherit; }
+.gx-evidence-context p.is-cited mark, .gx-evidence-passage-context mark { padding: 1px 0; border-radius: 3px; background: rgba(255, 214, 10, 0.4); color: var(--gx-ink); }
+:root[data-theme="dark"] .gx-evidence-context p.is-cited mark,
+:root[data-theme="dark"] .gx-evidence-passage-context mark { background: rgba(255, 214, 10, 0.3); color: var(--gx-ink); }
 .gx-evidence-more { height: 28px; padding: 0 10px; justify-self: start; border: 0; border-radius: var(--gx-radius-pill); background: transparent; color: var(--gx-faint); font-size: var(--gx-text-xs); font-weight: 550; cursor: pointer; }
 .gx-evidence-more:hover { background: var(--gx-hover); color: var(--gx-ink); }
 .gx-evidence-more:focus-visible { outline: 0; box-shadow: var(--gx-ring); }

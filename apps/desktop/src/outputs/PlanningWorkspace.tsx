@@ -834,17 +834,18 @@ function PlanHistory({ detail, type }: { detail: ArtifactConversationDetail; typ
   </details>;
 }
 
-function PlanDisclosure({ type, options, proposal, outline, preferences }: {
+function PlanDisclosure({ type, options, proposal, outline, preferences, currentTitle }: {
   type: OutputType;
   options: PlanOptions;
   proposal: NonNullable<WorkPlan["proposal"]>;
   outline: PlanPart[] | null;
   preferences: PlanPreferences;
+  currentTitle?: string | undefined;
 }) {
   return <details className="output-history plan-disclosure">
     <summary>Approved plan</summary>
     <div className="plan-disclosure-body">
-      <h3>{proposal.title}</h3>
+      {proposal.title.trim() !== (currentTitle ?? "").trim() && <p><strong>Approved title:</strong> {proposal.title}</p>}
       <p>{proposal.summary}</p>
       {proposal.angle && <p>{proposal.angle}</p>}
       <p>Using {scopeLabel(options.scope)}</p>
@@ -863,8 +864,11 @@ function PlanDisclosure({ type, options, proposal, outline, preferences }: {
   </details>;
 }
 
-export function ApprovedPlan({ value, type }: { value: ApprovedCreationPlan; type: OutputType }) {
-  return <PlanDisclosure type={type} options={value.options} proposal={value.proposal} outline={value.outline} preferences={value.preferences} />;
+export function ApprovedPlanDisclosure({ value, type, currentTitle }: {
+  value: ApprovedCreationPlan; type: OutputType; currentTitle?: string | undefined;
+}) {
+  return <PlanDisclosure type={type} options={value.options} proposal={value.proposal} outline={value.outline}
+    preferences={value.preferences} currentTitle={currentTitle} />;
 }
 
 export function SavedPlanPreferences({ detail, work, controller, disabled, dirty, editFlush }: {
@@ -930,19 +934,21 @@ function Setup({ local, props, running, turn, problem }: {
       ...tidyOptions(reviewed), emphasize: cleanLines(reviewed.emphasize ?? []), avoid: cleanLines(reviewed.avoid ?? []),
     } });
   };
-  return <div className="reader-track" data-track="plan">
-    <header className="plan-heading"><h1>Set up {type.label}</h1><p>{type.description}</p></header>
-    <PlanSettings type={type} value={setup} preferences={{ emphasize: setup.emphasize ?? [], avoid: setup.avoid ?? [] }} entries={entries}
-      marks={EMPTY_MARKS} optionsChanged={update} preferencesChanged={editList}
-      currentScope={currentScope} currentSourceState={sourceState(currentScope)} modelMenu={modelMenu} webAvailable={webAvailable} disabled={running} />
-    <div className="plan-followup">
+  return <>
+    <div className="reader-track" data-track="plan" data-stage="setup">
+      <header className="plan-heading"><h1>Set up {type.label}</h1><p>{type.description}</p></header>
+      <PlanSettings type={type} value={setup} preferences={{ emphasize: setup.emphasize ?? [], avoid: setup.avoid ?? [] }} entries={entries}
+        marks={EMPTY_MARKS} optionsChanged={update} preferencesChanged={editList}
+        currentScope={currentScope} currentSourceState={sourceState(currentScope)} modelMenu={modelMenu} webAvailable={webAvailable} disabled={running} />
+    </div>
+    <footer className="plan-footer">
       {running ? <Progress stage={stage} generating={false} onStop={onStop} /> :
         <div className="plan-actions"><button type="button" className="gx-btn gx-btn-primary" disabled={Boolean(blocker)} onClick={plan}>Plan</button>
           {blocker && <span className="plan-hint">{blocker}</span>}
         </div>}
       {problem && <p className="plan-problem" role="alert">{problem}</p>}
-    </div>
-  </div>;
+    </footer>
+  </>;
 }
 
 function PersistedPlan({ props, detail, work, sending, turn, problem }: {
@@ -958,6 +964,7 @@ function PersistedPlan({ props, detail, work, sending, turn, problem }: {
   const options = fields.options ?? plan.options;
   const question = plan.pending;
   const proposal = plan.proposal;
+  const reviewing = Boolean(proposal || question);
   const activity = plan.attempt;
   const generating = plan.planStatus === "generating" || sending === "approve";
   const running = props.busy || Boolean(sending) || activity?.state === "running";
@@ -1040,7 +1047,8 @@ function PersistedPlan({ props, detail, work, sending, turn, problem }: {
   const recovery = activity && activity.state !== "running" ? activity : null;
   const retryPlanning = recovery?.phase === "plan";
   const needsFeedback = Boolean(proposal && !planAgain && !retryPlanning);
-  const canPlan = !disabled && !acting && !question && !availability && !invalid && !draft.problem
+  const planBlocker = availability || invalid;
+  const canPlan = !disabled && !acting && !question && !planBlocker && !draft.problem
     && (!needsFeedback || Boolean(feedback.trim()));
   const submitPlan = () => { if (canPlan) void act("plan", { text: feedback }); };
   const showFeedback = Boolean(proposal && !question && !generating);
@@ -1055,10 +1063,11 @@ function PersistedPlan({ props, detail, work, sending, turn, problem }: {
   const whyApproval = approvalAvailability || invalid || (changedMaterial ? "Plan with these sources before generating." : plan.blocker) ||
     (!proposal ? "Plan this output before generating." : "");
 
-  return <><div className="reader-track" data-track="plan">
+  return <><div className="reader-track" data-track="plan" data-stage={reviewing ? "review" : "setup"}>
     <div className="plan-review" ref={review} onBlur={edits.onBlur}>
       <header className="plan-heading">
-        <h1 ref={heading} tabIndex={-1}>{proposal ? title : `Plan ${type.label}`}</h1>
+        <h1 ref={heading} tabIndex={-1}>{proposal ? title : `${reviewing ? "Plan" : "Set up"} ${type.label}`}</h1>
+        {!reviewing && <p>{type.description}</p>}
         <div className="plan-badges"><span className="plan-badge" data-plan-status={plan.planStatus}>{status}</span>
           {count && <CountBadge count={count} unit={type.capabilities.unitLabel} />}
         </div>
@@ -1070,7 +1079,7 @@ function PersistedPlan({ props, detail, work, sending, turn, problem }: {
       </header>
       {running && <Progress stage={stage} generating={generating} onStop={onStop} />}
       {generating && proposal ? <PlanDisclosure type={type} options={plan.options} proposal={proposal}
-        outline={plan.outline} preferences={plan.preferences} /> : <>
+        outline={plan.outline} preferences={plan.preferences} currentTitle={title} /> : <>
         {proposal && <section className="plan-panel plan-summary" aria-label="Plan summary">
           <h2>{plan.basis === "user_edited" ? "Latest assistant summary" : "Proposal"}</h2>
           <p>{proposal.summary}</p>
@@ -1128,16 +1137,17 @@ function PersistedPlan({ props, detail, work, sending, turn, problem }: {
       <PlanHistory detail={base.detail} type={type} />
     </div>
   </div>
-    {!running && <footer className="plan-approval">
+    {!running && <footer className="plan-footer">
       <div className="plan-actions">
         {proposal && <button type="button" className="gx-btn gx-btn-primary" disabled={!canApprove || acting}
           onClick={() => void act("approve")}>{approveLabel}</button>}
         {!question && <button type={showFeedback ? "submit" : "button"} form={showFeedback ? feedbackId : undefined}
           className={canApprove || needsFeedback ? "gx-btn gx-btn-quiet" : "gx-btn gx-btn-primary"}
           disabled={!canPlan} onClick={showFeedback ? undefined : submitPlan}>{planLabel}</button>}
+        {!reviewing && planBlocker && <span className={availability ? "plan-hint" : "plan-field-error"}>{planBlocker}</span>}
       </div>
       <SaveStatus draft={draft} />
-      {whyApproval && <p className={invalid ? "plan-field-error" : "plan-hint"}>{whyApproval}</p>}
+      {reviewing && whyApproval && <p className={invalid ? "plan-field-error" : "plan-hint"}>{whyApproval}</p>}
     </footer>}
   </>;
 }

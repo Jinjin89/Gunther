@@ -1,6 +1,6 @@
 import type { ConversationCitation, ContentBlock, SourceDetail } from "@gunther/contracts";
 import { ArrowLeft, ArrowUpLeft, ArrowUpRight, ChevronLeft, ChevronRight, Globe2 } from "lucide-react";
-import { createContext, lazy, Suspense, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, lazy, Suspense, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { knowledgeApi, sourceAssetUrl } from "../../api";
 import { evidenceLocator, sourceKindMeta, SourceKindMark } from "../../pages/EvidencePrimitives";
 import { webFindOf, type WebFindImports } from "../../pages/useImportWebFind";
@@ -13,6 +13,8 @@ const CONTEXT_BEFORE = 3;
 const CONTEXT_AFTER = 4;
 const CONTEXT_STEP = 6;
 const PASSAGE_CHIP_LIMIT = 5;
+// Keep the preview to a short reading excerpt in the Inspector.
+const PASSAGE_PREVIEW_LIMIT = 320;
 
 export const AnswerCitationNavigation = createContext<{
   detailIndex: number | undefined;
@@ -28,12 +30,54 @@ export function ShowInAnswerButton({ index }: { index?: number }) {
   </button>;
 }
 
-/** The quote marked inside the block that holds it, when it is a piece of it. */
+function uniqueQuoteMatch(text: string, quote: string): number | null {
+  if (!quote.trim() || quote.length >= text.length) return null;
+  const at = text.indexOf(quote);
+  return at >= 0 && text.indexOf(quote, at + 1) === -1 ? at : null;
+}
+
+/** Mark a verbatim quote when its position can be determined from the text. */
 function Marked({ text, quote }: { text: string; quote: string }) {
-  const needle = quote.trim();
-  const at = needle ? text.indexOf(needle) : -1;
-  if (at < 0 || needle.length >= text.length) return <>{text}</>;
-  return <>{text.slice(0, at)}<mark>{needle}</mark>{text.slice(at + needle.length)}</>;
+  const at = uniqueQuoteMatch(text, quote);
+  if (at === null) return <>{text}</>;
+  return <>{text.slice(0, at)}<mark>{quote}</mark>{text.slice(at + quote.length)}</>;
+}
+
+function previewPassage(text: string) {
+  let boundary = PASSAGE_PREVIEW_LIMIT;
+  if (typeof Intl.Segmenter === "function") {
+    boundary = new Intl.Segmenter(undefined, { granularity: "word" }).segment(text).containing(boundary)?.index ?? boundary;
+  } else {
+    // Older desktop webviews can still stop at a whitespace boundary.
+    while (boundary > 0 && text.charAt(boundary).trim()) boundary -= 1;
+  }
+  if (boundary === 0) {
+    // An unbroken token still needs a preview. Keep surrogate pairs intact.
+    boundary = PASSAGE_PREVIEW_LIMIT;
+    if ((text.codePointAt(boundary - 1) ?? 0) > 0xffff) boundary -= 1;
+  }
+  return `${text.slice(0, boundary).trimEnd()}…`;
+}
+
+function SavedPassage({ citation }: { citation: ConversationCitation }) {
+  const [expanded, setExpanded] = useState(false);
+  const passageId = useId();
+  const { quote } = citation;
+  const passage = citation.supportText || quote;
+  const hasContext = uniqueQuoteMatch(passage, quote) !== null;
+  const isLong = passage.length > PASSAGE_PREVIEW_LIMIT;
+  const excerpt = hasContext ? quote : isLong && !expanded ? previewPassage(passage) : passage;
+
+  return <>
+    <blockquote className="gx-evidence-quote" id={hasContext ? undefined : passageId}>{excerpt}</blockquote>
+    {(hasContext || isLong) && <button type="button" className="gx-evidence-more"
+      aria-expanded={expanded} aria-controls={passageId} onClick={() => setExpanded((value) => !value)}>
+      {hasContext ? (expanded ? "Hide context" : "Show context") : (expanded ? "Show less" : "Show full passage")}
+    </button>}
+    {hasContext && <blockquote className="gx-evidence-passage-context" id={passageId} hidden={!expanded}>
+      <Marked text={passage} quote={quote} />
+    </blockquote>}
+  </>;
 }
 
 const locatorOf = (citation: ConversationCitation) => evidenceLocator(citation.locator, isWebCitation(citation) ? citation.url : null);
@@ -46,7 +90,7 @@ function WebEvidence({ citation, locator, imports }: { citation: ConversationCit
     <div className="gx-evidence-body">
       <section aria-label="Passage from the page">
         <h3>What the page says</h3>
-        <blockquote className="gx-evidence-quote">{citation.supportText || citation.quote}</blockquote>
+        <SavedPassage key={citation.id} citation={citation} />
         <p className="gx-evidence-note">The part of this page the search matched to your question. Open the page for the rest.</p>
       </section>
     </div>
@@ -64,6 +108,7 @@ function LibraryEvidence({ citation, locator, source, failed, onOpenSource }: {
   failed: boolean;
   onOpenSource?: ((sourceId: string) => void) | undefined;
 }) {
+  const hasPassage = Boolean(citation.supportText || citation.quote);
   const [blocks, setBlocks] = useState<ContentBlock[]>([]);
   const [tab, setTab] = useState<"passage" | "original">("passage");
   const [before, setBefore] = useState(CONTEXT_BEFORE);
@@ -74,14 +119,14 @@ function LibraryEvidence({ citation, locator, source, failed, onOpenSource }: {
     setBefore(CONTEXT_BEFORE);
     setAfter(CONTEXT_AFTER);
     setBlocks([]);
-    setTab(citation.quote ? "passage" : "original");
+    setTab(hasPassage ? "passage" : "original");
     if (citation.blockId) {
       void knowledgeApi.sourceStructure(citation.sourceId, 0, citation.sourceRevisionId, null, 500)
         .then((structure) => { if (active) setBlocks(structure.blocks); })
         .catch(() => undefined);
     }
     return () => { active = false; };
-  }, [citation.id, citation.sourceId, citation.blockId, citation.sourceRevisionId, citation.quote]);
+  }, [citation.id, citation.sourceId, citation.blockId, citation.sourceRevisionId, citation.quote, hasPassage]);
 
   const at = citation.blockId ? blocks.findIndex((block) => block.id === citation.blockId) : -1;
   const from = Math.max(0, at - before);
@@ -100,7 +145,7 @@ function LibraryEvidence({ citation, locator, source, failed, onOpenSource }: {
 
   return <>
     {viewable && <nav className="gx-evidence-tabs" aria-label="View">
-      <button type="button" className={tab === "passage" ? "is-active" : ""} onClick={() => setTab("passage")} disabled={!citation.quote}>Passage</button>
+      <button type="button" className={tab === "passage" ? "is-active" : ""} onClick={() => setTab("passage")} disabled={!hasPassage}>Passage</button>
       <button type="button" className={tab === "original" ? "is-active" : ""} onClick={() => setTab("original")}>Original{page && viewable === "pdf" ? ` · p. ${page}` : ""}</button>
     </nav>}
     <div className={`gx-evidence-body ${tab === "original" && viewable ? "is-viewer" : ""}`}>
@@ -110,9 +155,7 @@ function LibraryEvidence({ citation, locator, source, failed, onOpenSource }: {
           : <div className="gx-evidence-image"><img src={assetUrl} alt={citation.sourceTitle} /></div>
         : <section aria-label="Passage from the source">
           <h3>{[locator || "Passage", trail].filter(Boolean).join(" · ")}</h3>
-          {citation.supportText
-            ? <blockquote className="gx-evidence-quote">{citation.supportText}</blockquote>
-            : context.length > 1
+          {!citation.supportText && context.length > 1
             ? <div className="gx-evidence-context">
               {from > 0 && <button type="button" className="gx-evidence-more" onClick={() => setBefore((value) => value + CONTEXT_STEP)}>Show earlier</button>}
               {context.map((block) => block.id === citation.blockId
@@ -120,7 +163,7 @@ function LibraryEvidence({ citation, locator, source, failed, onOpenSource }: {
                 : block.kind === "heading" ? <h4 key={block.id}>{block.content}</h4> : <p key={block.id}>{block.content}</p>)}
               {to < blocks.length && <button type="button" className="gx-evidence-more" onClick={() => setAfter((value) => value + CONTEXT_STEP)}>Show later</button>}
             </div>
-            : citation.quote ? <blockquote className="gx-evidence-quote">{citation.quote}</blockquote> : <p className="gx-evidence-note">This source was opened without a specific passage.</p>}
+            : hasPassage ? <SavedPassage key={citation.id} citation={citation} /> : <p className="gx-evidence-note">This source was opened without a specific passage.</p>}
           {failed && <p className="gx-evidence-note" role="alert">The source itself could not be loaded, only the quote is shown.</p>}
         </section>}
     </div>

@@ -1,8 +1,12 @@
-import type { Artifact, ConversationCitation } from "@gunther/contracts";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import type { Artifact, ArtifactConversationDetail, ConversationCitation, KeyResultJob, OutputType } from "@gunther/contracts";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { knowledgeApi } from "../api";
+import { libraryScope } from "./artifactConversations";
+import { EMPTY_LIVE } from "./liveOutput";
+import { OpenOutput, type OpenOutputProps } from "./OpenOutput";
 import { SlideReviewPanel } from "./SlideReviewPanel";
 import { SlidesView } from "./SlidesView";
 import { fixture } from "./deck/fixtures";
@@ -39,11 +43,68 @@ async function show(artifact: Artifact, onCite = vi.fn(), more: Partial<Componen
   return { ...view, onCite };
 }
 
+const savedAt = "2026-11-27T08:00:00Z";
+
+const keyResultJob = (state: KeyResultJob["state"], changes: Partial<KeyResultJob> = {}): KeyResultJob => ({
+  id: "results", originKind: "output", originId: "art_1", state, error: null, keptCount: 0, keptIds: [], ...changes,
+});
+
+function openSavedDeck(overrides: Partial<Artifact> = {}) {
+  const scope = libraryScope();
+  const preferences = { emphasize: [], avoid: [] };
+  const slides: OutputType = {
+    id: "slides", shape: "slides", label: "Slides", icon: "Presentation", description: "Present the findings.", options: [],
+    capabilities: { unitLabel: "slide", outline: true, design: true, exports: [] },
+  };
+  const artifact = deck({
+    title: "Saved deck", outline: [], lineageId: "work", conversationId: "conversation", origin: "build", style: "slides", outputType: "Slides", scope,
+    provenance: {
+      schemaVersion: 2, generator: "studio", workspaceId: "workspace", knowledgeBaseId: "library",
+      knowledgeBaseQuestion: "", acceptedOnly: false, acceptedUnitIds: [], revisionIds: [],
+      creationPlan: {
+        planId: "plan", revision: "revision", approvedAt: savedAt, approvalMessageId: "approval", materialKey: "material", preferences,
+        options: { type: "slides", scope, focus: "", title: null, audience: "student", length: null, language: null, use: null,
+          theme: null, designVersion: null, voices: null, web: false, model: null, effort: null },
+        proposal: { title: "Saved deck", summary: "The saved approach.", angle: "", coverage: [], count: { mode: "exact", value: 3 }, targetMinutes: null },
+        outline: null,
+      },
+    },
+    ...overrides,
+  });
+  const detail: ArtifactConversationDetail = {
+    id: artifact.conversationId!, title: artifact.title, scope, shape: "slides", outputType: "Slides", lineageId: artifact.lineageId,
+    artifactCount: 1, waiting: false, lastTurn: null, messages: [], active: artifact.lineageId, pending: null, archived: false,
+    createdAt: savedAt, updatedAt: savedAt, brief: { goal: null, audience: null, constraints: [], open: [], ...preferences },
+    works: [{ key: artifact.lineageId, kind: "slides", title: artifact.title, versionId: artifact.id, parts: [],
+      spec: { kind: "slides", outputType: null, use: null, length: null }, approach: { state: "ok", why: "" }, outline: { state: "ok", why: "" } }],
+  };
+  const studio: OpenOutputProps["studio"] = {
+    types: [slides], artifacts: [artifact], artifactsLoaded: true, conversations: [detail], details: { [detail.id]: detail },
+    works: [], activities: [], jobs: new Map(), failures: {}, error: "",
+    planning: { locals: {}, targetFor: vi.fn(), setLocal: vi.fn(), discardLocal: vi.fn(), patch: vi.fn(), turn: vi.fn() },
+    read: vi.fn().mockResolvedValue(detail), follow: vi.fn(), reload: vi.fn(), ensure: vi.fn(), send: vi.fn(), direct: vi.fn(),
+    remember: vi.fn(), rememberVersion: vi.fn(), forgetTrashed: vi.fn(), savedForPlan: vi.fn(), owner: vi.fn(), stop: vi.fn(), turnStop: vi.fn(),
+  };
+  const props: OpenOutputProps = {
+    baseId: "library", workspaceId: "workspace", target: { conversationId: detail.id, lineageId: artifact.lineageId },
+    studio, scope, sourceState: () => "ready", modelMenu: null, webAvailable: false, dirty: { current: false }, editFlush: { current: null },
+    onNotify: vi.fn(), onCite: vi.fn(), onOpen: vi.fn(), onWideReader: vi.fn(), onAskChat: vi.fn(), onTrash: vi.fn(),
+    onArtifactChange: vi.fn(), onPartChange: vi.fn(),
+  };
+  const reader = (changes: Partial<typeof studio> = {}) => <div className="library-middle-page">
+    <OpenOutput {...props} studio={{ ...studio, ...changes }} />
+  </div>;
+  const readArtifact = vi.spyOn(knowledgeApi, "artifact").mockResolvedValue(artifact);
+  const view = render(reader());
+  return { artifact, readArtifact, conversationId: detail.id, updateStudio: (changes: Partial<typeof studio>) => view.rerender(reader(changes)) };
+}
+
 afterEach(async () => {
   cleanup();
   // Reveal's window-resize text fitting debounces for 100 ms. Let its deferred
   // destroy and trailing animation frame finish before jsdom closes the window.
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+  vi.unstubAllGlobals();
   delete (window as unknown as Record<string, unknown>)["__TAURI_INTERNALS__"];
   setFullscreen.mockClear();
 });
@@ -67,8 +128,8 @@ describe("the slide viewer", () => {
     expect(screen.getByText("Slide 2 of 3")).toBeVisible();
     expect(screen.getByRole("region", { name: "Speaker notes" })).toHaveTextContent("Say that CD3D is on every T cell [1].");
     expect(screen.getByRole("button", { name: "Go to slide 2" })).toHaveAttribute("aria-current", "true");
-    // What the Checker has not looked at is flagged under the deck, for the slide in view.
-    expect(screen.getByText("Not re-checked")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Not re-checked" })).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Slide source check" })).getByRole("status")).toHaveTextContent("Not re-checked");
     await user.click(screen.getByRole("button", { name: "Go to slide 3" }));
     expect(screen.queryByText("Not re-checked")).not.toBeInTheDocument();
   });
@@ -77,10 +138,179 @@ describe("the slide viewer", () => {
     const { container } = await show(deck(), vi.fn(), { onAsk: vi.fn(), onAccent: vi.fn(), onTheme: vi.fn() });
     const tools = screen.getByRole("button", { name: "Present" }).closest(".outputs-slides-tools");
     const bar = tools?.closest(".outputs-slides-bar");
-    expect(bar).toContainElement(screen.getByRole("button", { name: "Ask about this slide" }));
+    expect(bar).toContainElement(screen.getByRole("button", { name: "Refine slide" }));
     expect(bar?.closest(".reader-track")).toBe(container.querySelector('[data-track="deck"]'));
     // jsdom has no layout engine. Verify the wrap declaration used by both rows.
-    expect(outputStyles).toMatch(/\.outputs-slides-bar,\s*\.outputs-slides-tools\s*\{[^}]*flex-wrap:\s*wrap/);
+    expect(outputStyles).toMatch(/\.outputs-slides-bar,\s*\.outputs-slides-tools,\s*\.outputs-slides-position\s*\{[^}]*flex-wrap:\s*wrap/);
+  });
+
+  it("links to the current slide's check and folds only the optional notes", async () => {
+    const user = userEvent.setup();
+    const complete = deck();
+    const note = "The cited passage gives a range without an exact value.";
+    const finding = "The rate was exactly 18 percent.";
+    const contradicted = "The rate doubled.";
+    await show(deck({ sections: [complete.sections[0]!, {
+      index: 1, heading: "T cells", checked: false,
+      coverage: { status: "partial", considered: 3, checked: 2, unchecked: 1 },
+      issues: [{ claim: finding, verdict: "unsupported", note }, { claim: contradicted, verdict: "contradicted", note: "" }],
+    }, {
+      index: 2, heading: "Takeaways", checked: false,
+      issues: [{ claim: "All readings match.", verdict: "unchecked", note: "" }, { claim: "Every sample was included.", verdict: "unsourced", note: "" }],
+      coverage: { status: "stale", considered: 2, checked: 2, unchecked: 0 },
+    }] }));
+    const toolbar = within(screen.getByText("Slide 1 of 3").closest<HTMLElement>(".outputs-slides-bar")!);
+    expect(toolbar.getAllByRole("button")).toEqual([toolbar.getByRole("button", { name: "Present" })]);
+    await user.click(screen.getByRole("button", { name: "Go to slide 2" }));
+
+    const pill = toolbar.getByRole("button", { name: "1 contradicted · 1 unsupported · Partially checked · 1 unchecked" });
+    const check = screen.getByRole("region", { name: "Slide source check" });
+    expect(pill).toHaveClass("is-severe");
+    expect(pill).toHaveAttribute("aria-controls", check.id);
+    expect(within(check).getByRole("status")).toHaveTextContent("Partially checked · 1 unchecked");
+    const [unsupported, disagreement] = within(check).getAllByRole("listitem");
+    expect(within(unsupported!).getByText("Unsupported")).toBeVisible();
+    expect(within(unsupported!).getByText(finding, { selector: "q" })).toBeVisible();
+    expect(within(disagreement!).getByText("Contradicted")).toBeVisible();
+    expect(within(disagreement!).getByText(contradicted, { selector: "q" })).toBeVisible();
+    const details = within(check).getByText("Check details", { selector: "summary" });
+    expect(within(check).getByText(note)).not.toBeVisible();
+    await user.click(pill);
+    expect(check).toHaveFocus();
+    await user.click(details);
+    expect(within(check).getByText(note)).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Go to slide 3" }));
+    const stale = toolbar.getByRole("button", { name: "1 unsourced · 1 unchecked · Source check is out of date" });
+    expect(stale).toBeVisible();
+    expect(stale).not.toHaveClass("is-severe");
+    expect(within(check).getByRole("status")).toHaveTextContent("Source check is out of date");
+    expect(within(check).queryByText(finding)).toBeNull();
+  });
+
+  it("places idle deck disclosures after the notes and keeps running or failing reviews above the deck", async () => {
+    const { artifact, conversationId, readArtifact, updateStudio } = openSavedDeck({
+      keyResults: keyResultJob("done", { keptCount: 1, keptIds: ["result"] }),
+    });
+    const notes = await screen.findByRole("region", { name: "Speaker notes" });
+    const review = screen.getByRole("button", { name: "Review rendered slides" });
+    for (const item of [screen.getByText("Approved plan"), screen.getByText("Preferences for future changes"), screen.getByText(/1 key result kept/), review]) {
+      expect(notes.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+
+    const stage = "Reviewing rendered slides";
+    const jobs: OpenOutputProps["studio"]["jobs"] = new Map([[conversationId, {
+      kind: "version", artifactId: artifact.id, startedAt: savedAt, stopping: false, stop: vi.fn(),
+      live: { ...EMPTY_LIVE, running: [{ kind: "stage", id: "visual_review", label: stage }] },
+    }]]);
+    updateStudio({ jobs });
+    expect(review).toBeDisabled();
+    expect(notes.compareDocumentPosition(review) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(notes.compareDocumentPosition(screen.getByText(stage)) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+
+    readArtifact.mockResolvedValue({ ...artifact, provenance: { ...artifact.provenance, skill: {
+      name: "slides", version: 1, skipped: [], visualReview: {
+        version: 1, candidateHash: "reviewed", status: "needs_review", imageReview: "reviewed", calls: 1, repairCycles: 0,
+        repairedSlides: [], history: [], findings: [{ slideId: "slide-1", blockId: null, severity: "error", route: "layout",
+          problem: "The legend overlaps a label.", correction: "Move the legend below the chart." }],
+      },
+    } } });
+    updateStudio({ failures: { [conversationId]: { message: "A new review could not finish." } } });
+    const warning = await screen.findByRole("button", { name: "Slides need visual review" });
+    expect(notes.compareDocumentPosition(warning) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(notes.compareDocumentPosition(screen.getByRole("alert")) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    fireEvent.click(warning);
+    expect(screen.getByText(/The legend overlaps a label/)).toBeVisible();
+  });
+
+  it.each([
+    { state: "queued", label: "Checking key results…", action: null },
+    { state: "running", label: "Checking key results…", action: null },
+    { state: "failed", label: "Key results could not be checked.", action: "Retry" },
+    { state: "needs_model", label: "Key results need an Analysis model", action: "Open Models settings" },
+  ] as const)("keeps $state key results above the deck", async ({ state, label, action }) => {
+    const job = keyResultJob(state);
+    vi.spyOn(knowledgeApi, "keyResultOrigin").mockResolvedValue(job);
+    openSavedDeck({ keyResults: job });
+    const slides = (await screen.findByRole("region", { name: "Speaker notes" })).closest(".outputs-slides")!;
+    const status = screen.getByText(label).closest<HTMLElement>(".key-results-status")!;
+    expect(status.closest(".reader-track")).toHaveAttribute("data-track", "deck");
+    expect(status.compareDocumentPosition(slides) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    if (action) expect(within(status).getByRole("button", { name: action })).toBeEnabled();
+  });
+
+  it("moves the completed key-result count below the deck after one poll", async () => {
+    const running = keyResultJob("running");
+    const retry = vi.spyOn(knowledgeApi, "retryKeyResults").mockResolvedValue(running);
+    const poll = vi.spyOn(knowledgeApi, "keyResultOrigin")
+      .mockResolvedValue(keyResultJob("done", { keptCount: 2, keptIds: ["one", "two"] }));
+    openSavedDeck({ keyResults: keyResultJob("failed") });
+    const notes = await screen.findByRole("region", { name: "Speaker notes" });
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Retry" })); });
+      expect(retry).toHaveBeenCalledExactlyOnceWith("library", running.id);
+      expect(screen.getByText("Checking key results…").compareDocumentPosition(notes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(poll).not.toHaveBeenCalled();
+
+      await act(async () => vi.advanceTimersByTimeAsync(2_500));
+      const count = screen.getByText("✓ 2 key results kept");
+      expect(notes.compareDocumentPosition(count) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      await act(async () => vi.advanceTimersByTimeAsync(10_000));
+      expect(count).toBeVisible();
+      expect(poll).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("updates the stage allowance for a wrapped title and clears it in edit mode", async () => {
+    const watched = new Map<Element, () => void>();
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(private notify: () => void) {}
+      observe(element: Element) { watched.set(element, this.notify); }
+      unobserve(element: Element) { watched.delete(element); }
+      disconnect() {
+        for (const [element, notify] of watched) if (notify === this.notify) watched.delete(element);
+      }
+    });
+    vi.stubGlobal("innerHeight", 1000);
+    openSavedDeck();
+    const thumbs = await screen.findByRole("list", { name: "Slides" });
+    const reader = screen.getByRole("article", { name: "Open output" });
+    const page = reader.closest<HTMLElement>(".library-middle-page")!;
+    const heading = reader.querySelector(".output-reader-heading")!;
+    const stage = reader.querySelector<HTMLElement>(".outputs-stage")!;
+    const toolbar = reader.querySelector(".outputs-slides-bar")!;
+    await waitFor(() => expect(watched.has(heading)).toBe(true));
+    for (const box of [page, toolbar, thumbs]) expect(watched.has(box)).toBe(true);
+    expect(reader.style.getPropertyValue("--stage-overhead")).toBe("");
+
+    let titleHeight = 36;
+    const stageTop = () => 44 + 116 + titleHeight - page.scrollTop;
+    vi.spyOn(page, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 44, 1800, 956));
+    vi.spyOn(page, "clientHeight", "get").mockReturnValue(956);
+    vi.spyOn(stage, "getBoundingClientRect").mockImplementation(() => new DOMRect(0, stageTop(), 1100, 619));
+    vi.spyOn(thumbs, "getBoundingClientRect").mockImplementation(() => new DOMRect(0, stageTop() + 619 + 14, 1100, 140));
+    vi.spyOn(thumbs, "offsetHeight", "get").mockReturnValue(140);
+    const measure = () => act(async () => {
+      watched.get(heading)!();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+    await measure();
+    expect(reader.style.getPropertyValue("--stage-overhead")).toBe("362px");
+
+    titleHeight += 70;
+    page.scrollTop = 56;
+    await measure();
+    expect(reader.style.getPropertyValue("--stage-overhead")).toBe("432px");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Output actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+    expect(reader).toHaveAttribute("data-mode", "edit");
+    expect(reader.style.getPropertyValue("--stage-overhead")).toBe("");
+    expect(watched.has(heading)).toBe(false);
   });
 
   it("fills the local preview width when compact", async () => {
@@ -342,15 +572,15 @@ describe("pointing at a slide", () => {
     expect(onSlide).toHaveBeenLastCalledWith(0);
   });
 
-  it("offers Ask about this slide for the slide in view, only when it can be asked", async () => {
+  it("offers Refine slide for the slide in view when refinement is available", async () => {
     const user = userEvent.setup(); const onAsk = vi.fn();
     const first = await show(deck(), vi.fn(), { onAsk });
     await user.click(screen.getByRole("button", { name: "Go to slide 2" }));
-    await user.click(screen.getByRole("button", { name: "Ask about this slide" }));
+    await user.click(screen.getByRole("button", { name: "Refine slide" }));
     expect(onAsk).toHaveBeenCalledWith(1);
     first.unmount();
     await show(deck());
-    expect(screen.queryByRole("button", { name: "Ask about this slide" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Refine slide" })).not.toBeInTheDocument();
   });
 
   it("moves to a slide when asked to, and again to the same one with a new request", async () => {

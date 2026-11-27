@@ -1,6 +1,6 @@
 import type { ActivityItem, OutputScope, OutputType, PlanStatus } from "@gunther/contracts";
 import { LoaderCircle, Trash2 } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { knowledgeApi } from "../api";
 import type { MenuItem } from "../contents/SectionMenu";
 import { ArtifactMenu } from "./ArtifactMenu";
@@ -144,7 +144,7 @@ function cardsOf(studio: ReturnType<typeof useStudio>): Card[] {
 export function StudioColumn({ studio, scope, sourceState, sourceCount, disabled, activeOutput, onOpen, onTrash, onDiscard, onNotify }: {
   studio: ReturnType<typeof useStudio>; scope: OutputScope; sourceState: SourceState; sourceCount: number; disabled: boolean;
   activeOutput: OutputTarget | null;
-  onOpen: (target: OutputTarget, run?: StudioRun) => void;
+  onOpen: (target: OutputTarget | (() => OutputTarget), run?: StudioRun) => boolean;
   onTrash: (target: OutputTrashTarget, reopen: OutputTarget) => void;
   onDiscard: (address: PlanAddress) => void;
   onNotify: (message: string) => void;
@@ -152,16 +152,33 @@ export function StudioColumn({ studio, scope, sourceState, sourceCount, disabled
   const cards = cardsOf(studio);
   const activeKey = activeOutput && cardKey(activeOutput);
   const activePlan = activeOutput && planAddress(activeOutput);
-  const canFold = cards.length >= 4;
+  const canFold = cards.length > 0;
   const [expanded, setExpanded] = useState(false);
+  if (!canFold && expanded) setExpanded(false);
   const tilesId = useId();
+  const disclosure = useRef<HTMLButtonElement>(null);
+  const pendingDisclosureFocus = useRef(false);
+  useEffect(() => {
+    if (!pendingDisclosureFocus.current) return;
+    pendingDisclosureFocus.current = false;
+    const button = disclosure.current;
+    if (canFold && !expanded && button && !button.closest("[hidden]")) button.focus({ preventScroll: true });
+  }, [canFold, expanded]);
+
   const openTile = (type: OutputType, fresh = false) => {
-    setExpanded(true);
-    const preferred = activeOutput?.planId;
-    const address = studio.planning.targetFor(type.id, scope, {
-      fresh, ...(preferred ? { preferredPlanId: preferred } : {}),
-    });
-    onOpen({ ...address, typeId: type.id });
+    const preferred = activeOutput?.planId ?? undefined;
+    const existing = !fresh ? studio.planning.existingFor?.(type.id, preferred) ?? null : null;
+    const opened = onOpen(existing
+      ? { ...existing, typeId: type.id }
+      : () => ({
+        ...studio.planning.targetFor(type.id, scope, {
+          fresh: true, ...(preferred ? { preferredPlanId: preferred } : {}),
+        }),
+        typeId: type.id,
+      }));
+    if (!opened) return;
+    setExpanded(false);
+    pendingDisclosureFocus.current = !fresh;
   };
   const scopeLabel = sourceState === "error" ? "Source count unavailable"
     : sourceState === "loading" ? "Loading sources…"
@@ -172,8 +189,8 @@ export function StudioColumn({ studio, scope, sourceState, sourceCount, disabled
     {studio.error && <p role="alert">{studio.error}</p>}
     <p className="studio-scope">{scopeLabel}</p>
     {studio.types.length > 0 && <div className="studio-new">
-      {canFold && <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm studio-disclosure"
-        aria-expanded={expanded} aria-controls={tilesId} onClick={() => setExpanded(!expanded)}>New output</button>}
+      {canFold && <button ref={disclosure} type="button" className="gx-btn gx-btn-quiet gx-btn-sm studio-disclosure"
+        aria-expanded={expanded} aria-controls={tilesId} onClick={() => setExpanded((value) => !value)}>New output</button>}
       <div className="studio-tiles" id={tilesId} hidden={canFold && !expanded}>{studio.types.map((type) => {
         const Icon = outputIcon(type);
         return <div key={type.id} className="studio-tile">

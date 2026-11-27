@@ -44,26 +44,52 @@ export function OutputPartTools({ position, onAsk, changed, label = "Ask about t
   </div>;
 }
 
-const VERDICT: Record<OutputIssue["verdict"], string> = {
-  unsupported: "Its sources don’t state this",
-  unverified: "Not backed by a source",
-  unsourced: "No source is cited",
-  contradicted: "Left out: the sources disagree",
-  unchecked: "The source check is incomplete",
+const VERDICT: Record<OutputIssue["verdict"], { label: string; severe?: true }> = {
+  contradicted: { label: "Contradicted", severe: true },
+  unsupported: { label: "Unsupported", severe: true },
+  unverified: { label: "Unverified" },
+  unsourced: { label: "Unsourced" },
+  unchecked: { label: "Unchecked" },
 };
+
+function sectionCheckNotice(info: OutputSection | undefined): string | undefined {
+  if (!info) return undefined;
+  if (info.coverage?.status === "stale") return "Source check is out of date";
+  return verificationNotice(info.coverage) ?? (info.checked ? undefined : "Not re-checked");
+}
+
+export function sectionCheckSummary(info: OutputSection | undefined): { label: string; severe: boolean } | undefined {
+  if (!info) return undefined;
+  const labels: string[] = [];
+  let severe = false;
+  for (const [verdict, presentation] of Object.entries(VERDICT)) {
+    const count = info.issues.filter((issue) => issue.verdict === verdict).length;
+    if (!count) continue;
+    labels.push(`${count} ${presentation.label.toLowerCase()}`);
+    severe ||= presentation.severe === true;
+  }
+  const notice = sectionCheckNotice(info);
+  if (notice) labels.push(notice);
+  return labels.length ? { label: labels.join(" · "), severe } : undefined;
+}
 
 /** What the Checker found in one section, and whether it has looked at the text as it is now. */
 export function SectionStatus({ info }: { info: OutputSection | undefined }) {
-  if (!info || (info.checked && info.issues.length === 0)) return null;
-  const notice = verificationNotice(info.coverage);
+  const notice = sectionCheckNotice(info);
+  if (!info || (!notice && info.issues.length === 0)) return null;
   return <div className="outputs-status">
-    {!info.checked && <span className="outputs-flag" role="status">{notice ?? "Not re-checked"}</span>}
+    {notice && <span className="outputs-flag" role="status">{notice}</span>}
     {info.issues.length > 0 && <ul className="outputs-issues" aria-label="Found when checking">
-      {info.issues.map((issue, index) => <li key={index} className={`is-${issue.verdict}`}>
-        <strong>{VERDICT[issue.verdict]}</strong>
-        <q>{issue.claim}</q>
-        {issue.note && <small>{issue.note}</small>}
-      </li>)}
+      {info.issues.map((issue, index) => {
+        const verdict = VERDICT[issue.verdict];
+        return <li key={index} className={verdict.severe ? "is-severe" : undefined}>
+          <div><strong>{verdict.label}</strong> <q>{issue.claim}</q></div>
+          {issue.note && <details className="outputs-check-details">
+            <summary>Check details</summary>
+            <p>{issue.note}</p>
+          </details>}
+        </li>;
+      })}
     </ul>}
   </div>;
 }

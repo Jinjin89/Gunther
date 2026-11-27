@@ -15,6 +15,7 @@ export type SourceState = "loading" | "error" | "empty" | "ready";
 export type LocalSetup = PlanAddress & { setup: PlanSetup; firstRequestId: string; updatedAt: string; touched: boolean };
 export interface StudioPlanning {
   locals: Readonly<Record<string, LocalSetup | undefined>>;
+  existingFor?(type: OutputTypeId, preferredPlanId?: string): PlanAddress | null;
   targetFor(type: OutputTypeId, scope: OutputScope, options?: { preferredPlanId?: string; fresh?: boolean }): PlanAddress;
   setLocal(draft: LocalSetup): void;
   discardLocal(planId: string): void;
@@ -406,33 +407,38 @@ export function useStudio(baseId: string, workspaceId: string | null) {
         : undefined;
   };
 
+  const existingFor: NonNullable<StudioPlanning["existingFor"]> = (type, preferredPlanId) => {
+    const unfinished = new Map<string, PlanAddress & { updatedAt: string }>();
+    const add = (address: PlanAddress, updatedAt: string) => {
+      const key = planAddressKey(address);
+      if (!unfinished.has(key) || unfinished.get(key)!.updatedAt < updatedAt) unfinished.set(key, { ...address, updatedAt });
+    };
+    // Read the current local store so a second click can reuse a just-allocated address.
+    for (const draft of Object.values(drafts.locals)) if (draft?.setup.type === type) add(draft, draft.updatedAt);
+    for (const work of works) {
+      if (work.type === type && work.status !== "saved" && !work.versionId) {
+        const address = { conversationId: work.conversationId, planId: workPlanId(work) };
+        if (!savedForPlan(address)) add(address, work.updatedAt);
+      }
+    }
+    for (const item of activities) {
+      if (item.state !== "running" && item.state !== "waiting") continue;
+      const target = outputActivityTarget(item.open);
+      const address = target && planAddress(target);
+      if (target?.typeId === type && address && !target.lineageId && !target.artifactId && !savedForPlan(address)) {
+        add(address, item.startedAt);
+      }
+    }
+    const candidates = [...unfinished.values()];
+    const existing = candidates.find((item) => item.planId === preferredPlanId)
+      ?? candidates.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || planAddressKey(a).localeCompare(planAddressKey(b)))[0];
+    return existing ? { conversationId: existing.conversationId, planId: existing.planId } : null;
+  };
+
   const targetFor: StudioPlanning["targetFor"] = (type, scope, options) => {
     if (!options?.fresh) {
-      const unfinished = new Map<string, PlanAddress & { updatedAt: string }>();
-      const add = (address: PlanAddress, updatedAt: string) => {
-        const key = planAddressKey(address);
-        if (!unfinished.has(key) || unfinished.get(key)!.updatedAt < updatedAt) unfinished.set(key, { ...address, updatedAt });
-      };
-      // Read the current local store so a second click can reuse a just-allocated address.
-      for (const draft of Object.values(drafts.locals)) if (draft?.setup.type === type) add(draft, draft.updatedAt);
-      for (const work of works) {
-        if (work.type === type && work.status !== "saved" && !work.versionId) {
-          const address = { conversationId: work.conversationId, planId: workPlanId(work) };
-          if (!savedForPlan(address)) add(address, work.updatedAt);
-        }
-      }
-      for (const item of activities) {
-        if (item.state !== "running" && item.state !== "waiting") continue;
-        const target = outputActivityTarget(item.open);
-        const address = target && planAddress(target);
-        if (target?.typeId === type && address && !target.lineageId && !target.artifactId && !savedForPlan(address)) {
-          add(address, item.startedAt);
-        }
-      }
-      const candidates = [...unfinished.values()];
-      const existing = candidates.find((item) => item.planId === options?.preferredPlanId)
-        ?? candidates.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || planAddressKey(a).localeCompare(planAddressKey(b)))[0];
-      if (existing) return { conversationId: existing.conversationId, planId: existing.planId };
+      const existing = existingFor(type, options?.preferredPlanId);
+      if (existing) return existing;
     }
     const address = { conversationId: artifactRequestId(), planId: `draft_${artifactRequestId()}` };
     setLocal({ ...address, setup: { type, scope: {
@@ -440,7 +446,7 @@ export function useStudio(baseId: string, workspaceId: string | null) {
     } }, firstRequestId: artifactRequestId(), updatedAt: new Date().toISOString(), touched: false });
     return address;
   };
-  const planning: StudioPlanning = { locals: drafts.locals, targetFor, setLocal, discardLocal, patch, turn };
+  const planning: StudioPlanning = { locals: drafts.locals, existingFor, targetFor, setLocal, discardLocal, patch, turn };
 
   return { types, artifacts, artifactsLoaded, conversations, details, works, activities, jobs, failures, error: catalogError || error,
     planning, remember, rememberVersion, forgetTrashed, savedForPlan, read, reload, follow, ensure, send, direct, owner, stop, turnStop };

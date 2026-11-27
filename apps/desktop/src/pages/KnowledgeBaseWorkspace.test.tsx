@@ -30,7 +30,7 @@ vi.mock("../outputs/LazySlides", () => ({ LazySlidesView: ({ onSlide, onAsk }: {
   onSlide?: (index: number) => void; onAsk?: (index: number) => void;
 }) => <>
   <p>Slide reader</p>
-  <button type="button" onClick={() => { onSlide?.(0); onAsk?.(0); }}>Ask about this slide</button>
+  <button type="button" onClick={() => { onSlide?.(0); onAsk?.(0); }}>Refine slide</button>
   <button type="button" onClick={() => onSlide?.(1)}>Show second slide</button>
 </> }));
 
@@ -685,6 +685,7 @@ it("allocates one local Setup on a double-click and restores touched fields afte
   const studio = within(screen.getByRole("complementary", { name: "Studio" }));
   await studio.findByText("Using all 3 sources");
   await user.click(screen.getByRole("button", { name: "Only Lab notes" }));
+  await user.click(await studio.findByRole("button", { name: "New output" }));
   await user.dblClick(studio.getByRole("button", { name: "Report" }));
   expect(await screen.findByRole("heading", { name: "Set up Report" })).toBeVisible();
   expect(studio.getAllByRole("button", { name: /Report Setup · This device/ })).toHaveLength(1);
@@ -713,6 +714,7 @@ it("allocates one local Setup on a double-click and restores touched fields afte
   await user.type(planningPane().getByRole("textbox", { name: "New item for What to avoid" }), "Unverified claims");
   await user.click(screen.getByRole("button", { name: "Back to chat" }));
   await user.click(screen.getByRole("button", { name: "Clear source selection" }));
+  await user.click(studio.getByRole("button", { name: "New output" }));
   await user.click(studio.getByRole("button", { name: "Report" }));
   expect(planningPane().getByRole("textbox", { name: "Focus" })).toHaveValue("Compare the field observations");
   expect(planningPane().getByRole("textbox", { name: "What to avoid, item 1" })).toHaveValue("Unverified claims");
@@ -763,47 +765,116 @@ it.each([
   expect(turn.mock.calls[0]?.[2]).toMatchObject({ kind: "approve", planId: initial.plan.planId });
 });
 
-it("folds the tiles with four outputs and opens Setup for every catalog type", async () => {
+it("focuses New output after the first Studio tile opens Setup by keyboard and when chosen again", async () => {
+  const user = userEvent.setup();
+  setup();
+  const studio = within(screen.getByRole("complementary", { name: "Studio" }));
+  const tile = await studio.findByRole("button", { name: "Slides" });
+  expect(studio.queryByRole("button", { name: "New output" })).not.toBeInTheDocument();
+
+  tile.focus();
+  await user.keyboard("{Enter}");
+  expect(await planningPane().findByRole("heading", { name: "Set up Slides" })).toBeVisible();
+  const disclosure = studio.getByRole("button", { name: "New output" });
+  expect(document.activeElement).toBe(disclosure);
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
+
+  await user.keyboard("{Enter}");
+  expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  tile.focus();
+  await user.keyboard("{Enter}");
+  expect(document.activeElement).toBe(disclosure);
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  expect(studio.getAllByRole("button", { name: /Slides Setup · This device/ })).toHaveLength(1);
+});
+
+it("keeps edits, card count, picker state, and focus when canceling Studio tile navigation", async () => {
+  const user = userEvent.setup();
+  const confirmLeave = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+  setup({ artifacts: [version()] });
+
+  const studio = within(screen.getByRole("complementary", { name: "Studio" }));
+  const rows = within(studio.getByRole("list", { name: "Outputs" }));
+  await user.click(await studio.findByRole("button", { name: /Field findings Report Version 1/ }));
+  await user.click(await screen.findByRole("button", { name: "Output actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+  const editor = screen.getByRole("textbox", { name: "Report, as Markdown" });
+  await user.type(editor, " Unsaved note.");
+  expect(rows.getAllByRole("listitem")).toHaveLength(1);
+
+  const disclosure = studio.getByRole("button", { name: "New output" });
+  await user.click(disclosure);
+  expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  const slidesTile = studio.getByRole("button", { name: "Slides" });
+  slidesTile.focus();
+  await user.keyboard("{Enter}");
+
+  expect(confirmLeave).toHaveBeenCalledTimes(1);
+  expect(editor).toBeInTheDocument();
+  expect(rows.getAllByRole("listitem")).toHaveLength(1);
+  expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  expect(document.activeElement).toBe(slidesTile);
+
+  await user.keyboard("{Enter}");
+  expect(confirmLeave).toHaveBeenCalledTimes(2);
+  expect(await planningPane().findByRole("heading", { name: "Set up Slides" })).toBeVisible();
+  expect(rows.getAllByRole("listitem")).toHaveLength(2);
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  expect(document.activeElement).toBe(disclosure);
+});
+
+it("shows all tiles in an empty Studio, folds after the first Setup, and closes the picker after each selection", async () => {
   const user = userEvent.setup();
   const catalog: OutputType[] = [report, briefing, guide, { ...report, id: "faq", label: "FAQ" }, { ...report, id: "timeline", label: "Timeline" }, slides, flashcards, quiz, mindMap, audioOverview];
   vi.mocked(knowledgeApi.outputTypes).mockResolvedValue(catalog);
-  const artifacts = Array.from({ length: 4 }, (_, index) => version({ id: `version-${index}`, lineageId: `lineage-${index}`, title: `Saved output ${index}` }));
-  const { create, turn } = setup({ artifacts });
-  await screen.findByText("Saved output 0", { selector: "strong" });
+  const { create, turn } = setup();
   const studio = within(screen.getByRole("complementary", { name: "Studio" }));
+  const firstTile = await studio.findByRole("button", { name: "Report" });
+  const rows = within(studio.getByRole("list", { name: "Outputs" }));
+  expect(rows.queryAllByRole("listitem")).toHaveLength(0);
+  expect(studio.queryByRole("button", { name: "New output" })).not.toBeInTheDocument();
+  for (const type of catalog) expect(studio.getByRole("button", { name: type.label })).toBeVisible();
+
+  await user.click(firstTile);
+  expect(await screen.findByRole("heading", { name: "Set up Report" })).toBeVisible();
+  expect(rows.getAllByRole("listitem")).toHaveLength(1);
   const disclosure = studio.getByRole("button", { name: "New output" });
+  const tiles = document.getElementById(disclosure.getAttribute("aria-controls")!);
   expect(disclosure).toHaveAttribute("aria-expanded", "false");
-  expect(studio.queryByRole("button", { name: "Report" })).not.toBeInTheDocument();
-  disclosure.focus();
-  await user.keyboard("{Enter}");
-  expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  expect(tiles).not.toBeVisible();
   for (const type of catalog) {
-    await user.click(await studio.findByRole("button", { name: type.label }));
+    disclosure.focus();
+    await user.keyboard("{Enter}");
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(tiles).toBeVisible();
+    await user.click(studio.getByRole("button", { name: type.label }));
     expect(await screen.findByRole("heading", { name: `Set up ${type.label}` })).toBeVisible();
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(disclosure).toHaveFocus();
+    expect(tiles).not.toBeVisible();
   }
   expect(create).not.toHaveBeenCalled();
   expect(turn).not.toHaveBeenCalled();
-  await user.click(disclosure);
-  expect(disclosure).toHaveAttribute("aria-expanded", "false");
-  expect(studio.queryByRole("button", { name: "Report" })).not.toBeInTheDocument();
-  expect(studio.getByRole("button", { name: /^Saved output 0 Report/ })).toBeVisible();
 });
 
-it("keeps the middle-pane Setup draft when the fourth Studio card arrives", async () => {
+it("keeps the middle-pane Setup draft when another Studio card arrives", async () => {
   const user = userEvent.setup();
   const saved = (index: number) => version({ id: `version-${index}`, lineageId: `lineage-${index}`, title: `Saved output ${index}` });
-  const artifacts = [saved(1), saved(2)];
+  const artifacts = [saved(1)];
   setup({ artifacts });
   const studio = within(screen.getByRole("complementary", { name: "Studio" }));
-  await studio.findByText("Saved output 2");
+  await studio.findByText("Saved output 1");
+  const disclosure = studio.getByRole("button", { name: "New output" });
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await user.click(disclosure);
   await user.click(await studio.findByRole("button", { name: "Report" }));
   const focus = planningPane().getByRole("textbox", { name: "Focus" });
   await user.type(focus, "Compare the observations");
 
-  artifacts.push(saved(3));
+  artifacts.push(saved(2));
   act(() => window.dispatchEvent(new Event("gunther:trash-updated")));
-  expect(await studio.findByText("Saved output 3")).toBeVisible();
-  expect(studio.getByRole("button", { name: "New output" })).toHaveAttribute("aria-expanded", "true");
+  expect(await studio.findByText("Saved output 2")).toBeVisible();
+  expect(disclosure).toHaveAttribute("aria-expanded", "false");
   expect(planningPane().getByRole("textbox", { name: "Focus" })).toBe(focus);
   expect(focus).toHaveValue("Compare the observations");
   expect(focus).toHaveFocus();
@@ -2209,7 +2280,7 @@ it("uses the open slide after clearing an explicit Refine target", async () => {
   const { turn } = setup({ artifacts: [deck], conversations: [conversation("earlier")] });
   await user.click(await screen.findByRole("button", { name: /Field deck Slides Version 1/ }));
   const reader = within(await screen.findByRole("article", { name: "Open output" }));
-  await user.click(await reader.findByRole("button", { name: "Ask about this slide" }));
+  await user.click(await reader.findByRole("button", { name: "Refine slide" }));
   expect(reader.getByText("About slide 1")).toBeVisible();
   await user.click(reader.getByRole("button", { name: "Clear" }));
   await user.click(reader.getByRole("button", { name: "Show second slide" }));
@@ -2752,9 +2823,12 @@ it("opens Activity's exact plan and prefers the selected unfinished work over a 
   expect(readyRow.querySelector("svg")).not.toHaveClass("spin");
   expect(handled).toHaveBeenCalledWith(activity);
 
+  const newOutput = screen.getByRole("button", { name: "New output" });
+  await user.click(newOutput);
   await user.click(screen.getByRole("button", { name: "Report" }));
   expect(otherRow).toHaveAttribute("aria-current", "page");
   await user.click(screen.getByRole("button", { name: "Back to chat" }));
+  await user.click(newOutput);
   await user.click(screen.getByRole("button", { name: "Report" }));
   expect(await screen.findByRole("heading", { name: "Priority report" })).toBeVisible();
 
@@ -2765,9 +2839,13 @@ it("opens Activity's exact plan and prefers the selected unfinished work over a 
   expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/all 2 works[\s\S]*Priority report[\s\S]*Other report/));
   expect(trash).not.toHaveBeenCalled();
 
-  await user.click(screen.getByRole("button", { name: "Actions for “Other report”" }));
+  await user.click(newOutput);
+  const otherActions = screen.getByRole("button", { name: "Actions for “Other report”" });
+  await user.click(otherActions);
   await user.click(screen.getByRole("menuitem", { name: "New Report plan" }));
   expect(await screen.findByRole("heading", { name: "Set up Report" })).toBeVisible();
+  expect(otherActions).toHaveFocus();
+  expect(newOutput).toHaveAttribute("aria-expanded", "false");
   expect(screen.getByRole("button", { name: /Report Setup · This device/ })).toHaveAttribute("aria-current", "page");
   expect(otherRow).toBeInTheDocument();
   expect(turn).not.toHaveBeenCalled();
@@ -2872,6 +2950,7 @@ it("uses the shared Tavily availability and sends Web only for opted-in planning
   const search = vi.spyOn(knowledgeApi, "health").mockResolvedValue(health);
   const saved = version();
   const { turn } = setup({ artifacts: [saved], conversations: [conversation("earlier")] });
+  await user.click(await screen.findByRole("button", { name: "New output" }));
   await user.click(await screen.findByRole("button", { name: "Report" }));
   const buildWeb = planningPane().getByRole("switch", { name: "Search the web" });
   expect(buildWeb).toBeDisabled();

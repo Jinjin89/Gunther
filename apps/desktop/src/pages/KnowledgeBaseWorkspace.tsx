@@ -297,15 +297,17 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     setSourcesOpen(true);
     window.requestAnimationFrame(() => workspace.current?.querySelector<HTMLInputElement>(".contents-filter input")?.focus());
   };
-  const choose = useCallback((next: Middle) => {
-    if (middle.kind === "output" && next.kind === "output" && outputTargetKey(middle.target) === outputTargetKey(next.target)
-      && (!next.target.artifactId || next.target.artifactId === displayedVersionId)) {
-      if (middle.run !== next.run || (!middle.target.typeId && next.target.typeId)) setMiddle(next);
+  const choose = useCallback((next: Middle | (() => Middle)) => {
+    const resolved = typeof next === "function" ? null : next;
+    if (resolved && middle.kind === "output" && resolved.kind === "output" && outputTargetKey(middle.target) === outputTargetKey(resolved.target)
+      && (!resolved.target.artifactId || resolved.target.artifactId === displayedVersionId)) {
+      if (middle.run !== resolved.run || (!middle.target.typeId && resolved.target.typeId)) setMiddle(resolved);
       return true;
     }
     if (!discardOutputEdit(dirty)) return false;
-    if (next.kind === "output") setReaderRevision((revision) => revision + 1);
-    setMiddle(next);
+    const chosen = resolved ?? (next as () => Middle)();
+    if (chosen.kind === "output") setReaderRevision((revision) => revision + 1);
+    setMiddle(chosen);
     clearDetail();
     return true;
   }, [clearDetail, dirty, displayedVersionId, middle]);
@@ -315,10 +317,23 @@ export function KnowledgeBaseWorkspace({ base, workspaceId, onAdd, onNotify, onO
     else choose(chat);
   };
   const openOutput = (target: OutputTarget) => choose({ kind: "output", target });
-  const openStudioOutput = (target: OutputTarget, run?: StudioRun) => {
-    const result = target.conversationId ? directRuns.current.get(target.conversationId) : undefined;
-    if (choose({ kind: "output", target, run: target.artifactId && run ? { ...run, result } : undefined })
-      && target.planId && !target.artifactId && !target.lineageId && activeOverlay === "inspector") close("studio");
+  const openStudioOutput = (nextTarget: OutputTarget | (() => OutputTarget), run?: StudioRun) => {
+    const build = (target: OutputTarget): Extract<Middle, { kind: "output" }> => {
+      const result = target.conversationId ? directRuns.current.get(target.conversationId) : undefined;
+      return { kind: "output", target, run: target.artifactId && run ? { ...run, result } : undefined };
+    };
+    let resolvedTarget: OutputTarget | null = null;
+    const opened = typeof nextTarget === "function"
+      ? choose(() => {
+        const built = build(nextTarget());
+        resolvedTarget = built.target;
+        return built;
+      })
+      : choose(build((resolvedTarget = nextTarget)));
+    if (opened && resolvedTarget?.planId && !resolvedTarget.artifactId && !resolvedTarget.lineageId && activeOverlay === "inspector") {
+      close("studio");
+    }
+    return opened;
   };
   useEffect(() => {
     if (middle.kind !== "output" || !savedPlan || !editsAreClean) return;

@@ -817,13 +817,18 @@ async function run() {
     const planButton = `${planActions} button`;
     const planBlocked = (hint) => `document.querySelector('${planButton}')?.disabled === true
       && document.querySelector('${planActions} .plan-hint')?.textContent.trim() === ${JSON.stringify(hint)}`;
-    const openReportSetup = async () => {
+    const foldedPicker = `${studio} .studio-disclosure[aria-expanded="false"]`;
+    const openReportSetup = async ({ existingWork = false } = {}) => {
+      if (existingWork) {
+        await waitForEvaluation(cdp, clickExpression(foldedPicker, "New output"), "folded New output picker");
+      }
       await waitForEvaluation(cdp, clickExpression(`${studio} .studio-tile > button:only-of-type`, "Report"), "Report tile with one action");
       await waitForEvaluation(
         cdp,
         `document.querySelector('${planning} h1')?.textContent.trim() === 'Set up Report'
-          && [...document.querySelectorAll('${planButton}')].map((button) => button.textContent.trim()).join('|') === 'Plan'`,
-        "Report Setup with Plan as its action",
+          && [...document.querySelectorAll('${planButton}')].map((button) => button.textContent.trim()).join('|') === 'Plan'
+          && document.querySelector('${foldedPicker}') !== null`,
+        "Report Setup with Plan as its action and the Studio picker folded",
       );
     };
 
@@ -1057,7 +1062,7 @@ async function run() {
       "document.querySelector('.message-sources-button') !== null && document.querySelector('.message-actions .key-results-status')?.textContent.includes('Key results need an Analysis model')",
       "saved answer and sources remain visible after the model is removed",
     );
-    await openReportSetup();
+    await openReportSetup({ existingWork: true });
     await waitForEvaluation(
       cdp,
       planBlocked("Choose an available model in Settings."),

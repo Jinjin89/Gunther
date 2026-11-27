@@ -394,8 +394,10 @@ async function main() {
     });
 
     const studio = page.getByRole("complementary", { name: "Studio", exact: true });
+    const newOutput = studio.getByRole("button", { name: "New output", exact: true });
     const planning = page.getByRole("article", { name: "Output planning" });
-    const approve = planning.getByRole("button", { name: "Approve & Generate", exact: true });
+    const approvalButton = page.getByRole("button", { name: "Approve & Generate", exact: true });
+    const approve = planning.locator(approvalButton);
     const reader = page.getByRole("article", { name: "Open output" });
     const planButton = planning.getByRole("button", { name: "Plan", exact: true });
     const readPlan = async ({ pathname, body }) => {
@@ -409,6 +411,7 @@ async function main() {
     // Setup stays on the device. Planning reads the evidence and proposes the outline.
     await studio.getByRole("button", { name: "Slides", exact: true }).click();
     await planning.getByRole("heading", { name: "Set up Slides", exact: true }).waitFor();
+    assert.equal(await newOutput.getAttribute("aria-expanded"), "false", "The picker should fold after the first Setup.");
     await planning.getByRole("textbox", { name: "Focus", exact: true }).fill(FOCUS);
     const newPreference = planning.getByRole("textbox", { name: "New item for What to emphasize", exact: true });
     await newPreference.fill(PREFERENCE);
@@ -441,7 +444,7 @@ async function main() {
     });
     assert.ok(dimensions.lines > 2, "The preference field did not grow to fit the wrapped text.");
     assert.ok(dimensions.horizontalOverflow <= 1, "The preference field scrolls horizontally.");
-    const footer = await planning.locator(".plan-approval").evaluate((bar) => {
+    const footer = await planning.locator(".plan-footer", { has: approvalButton }).evaluate((bar) => {
       const scroller = bar.closest(".library-middle-page");
       const bottom = scroller.getBoundingClientRect().bottom;
       scroller.scrollTop = 0;
@@ -492,7 +495,7 @@ async function main() {
     // Refine the selected slide, then read back the new head of the same lineage.
     await reader.getByRole("button", { name: "Go to slide 2", exact: true }).click();
     await reader.getByText("Slide 2 of 3", { exact: true }).waitFor();
-    await reader.getByRole("button", { name: "Ask about this slide", exact: true }).click();
+    await reader.getByRole("button", { name: "Refine slide", exact: true }).click();
     await reader.getByRole("textbox", { name: "Refine", exact: true }).fill(REFINEMENT);
     await submitTurn(page, reader.getByRole("button", { name: "Refine", exact: true }), "message");
     await reader.locator(".outputs-stage").getByText(REVISED_HEADING, { exact: true }).waitFor();
@@ -551,8 +554,10 @@ async function main() {
       assert.equal(type?.firstPartRole, "Summary section");
       const before = (await versions()).length;
       const writesBefore = reportDrafts;
+      await newOutput.click();
       await studio.getByRole("button", { name: type.label, exact: true }).click();
       await planning.getByRole("heading", { name: `Set up ${type.label}`, exact: true }).waitFor();
+      assert.equal(await newOutput.getAttribute("aria-expanded"), "false");
       await submitTurn(page, planButton, "plan");
       await approve.waitFor({ timeout: 90_000 });
       await planning.getByText(type.firstPartRole, { exact: true }).waitFor();

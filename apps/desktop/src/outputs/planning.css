@@ -30,7 +30,7 @@
   font: 600 var(--gx-text-sm)/1.35 var(--outputs-sans, var(--gx-font-sans));
 }
 .plan-panel :is(p, ol), .plan-disclosure-body :is(p, ol, ul) { line-height: 1.55; }
-.plan-summary, .plan-question, .plan-source-scope, .plan-approval, .plan-progress { display: grid; gap: 10px; }
+.plan-summary, .plan-question, .plan-source-scope, .plan-footer, .plan-progress { display: grid; gap: 10px; }
 .plan-summary summary { cursor: pointer; }
 .plan-settings > :not(:first-child) { border-block-start: 1px solid var(--gx-line); padding-block-start: 18px; }
 .plan-actions {
@@ -66,8 +66,16 @@
 .plan-question .artifact-pill { white-space: normal; overflow-wrap: anywhere; }
 .output-reader[data-mode="plan"] { display: block; padding-block-end: 0; }
 .output-reader[data-mode="plan"] .reader-track[data-track="plan"] { padding-block-end: 24px; }
-.library-middle-page:has(.plan-approval) { scroll-padding-block-end: 7rem; }
-.plan-approval {
+.output-reader[data-mode="plan"] .reader-track[data-track="plan"]:not([data-stage="review"]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.reader-track[data-track="plan"]:not([data-stage="review"]),
+.reader-track[data-stage="setup"] + .plan-footer {
+  inline-size: min(100%, var(--reading, min(66ch, 760px)));
+}
+.reader-track[data-stage="setup"] > .plan-followup:empty { display: none; }
+.library-middle-page:has(.plan-footer) { scroll-padding-block-end: 7rem; }
+.plan-footer {
   position: sticky;
   bottom: 0;
   z-index: 1;
@@ -78,7 +86,7 @@
   background: var(--gx-canvas);
   overflow-wrap: anywhere;
 }
-.plan-approval p { margin: 0; }
+.plan-footer p { margin: 0; }
 .plan-history, .plan-disclosure, .saved-plan-preferences { margin-block: 0 10px; }
 .plan-disclosure-body { padding-block: 12px 4px; font: 400 var(--gx-text-sm)/1.5 var(--outputs-sans, var(--gx-font-sans)); }
 .plan-disclosure-body section > :is(ol, ul) { margin-block: 5px 0; padding-inline-start: 20px; }
@@ -172,9 +180,9 @@
 }
 
 @container library-reader (width > 64em) {
-  .output-reader[data-mode="plan"] .reader-track[data-track="plan"] { grid-template-rows: auto minmax(0, 1fr); }
-  .reader-track[data-track="plan"] > .plan-settings { grid-column: 2; grid-row: 1 / span 2; }
-  .reader-track[data-track="plan"] > .plan-followup { grid-column: 1; grid-row: 2; }
+  .reader-track[data-track="plan"][data-stage="review"] { grid-template-rows: auto minmax(0, 1fr); }
+  .reader-track[data-stage="review"] > .plan-settings { grid-column: 2; grid-row: 1 / span 2; }
+  .reader-track[data-stage="review"] > .plan-followup { grid-column: 1; grid-row: 2; }
 }
 @container library-reader (max-width: 32em) {
   .plan-heading h1 { font-size: var(--gx-text-2xl); }

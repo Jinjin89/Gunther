@@ -5,7 +5,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { ApiRequestError, isTurnResult, knowledgeApi } from "../api";
 import { CitationDetails } from "../components/evidence/CitationButton";
 import { isWebCitation } from "../components/evidence/citationKind";
-import { KeyResultsStatus } from "../keyResults/KeyResultsStatus";
+import { KeyResultsStatusView, useKeyResultsStatus } from "../keyResults/KeyResultsStatus";
 import { AnswerBody, verificationNotice } from "../pages/AnswerBody";
 import { ArtifactMenu } from "./ArtifactMenu";
 import { ArtifactMessageList } from "./ArtifactMessages";
@@ -18,7 +18,7 @@ import { normalizeSavedOutline, OutlineEditor, outlineIssue, partEdits } from ".
 import { outputIcon, resolveOutputType } from "./outputCatalog";
 import { outputCitations } from "./OutputParts";
 import { outputViews } from "./OutputViews";
-import { ApprovedPlan, PlanDetailReader, PlanningWorkspace, sameScope, SavedPlanPreferences, type EditFlush } from "./PlanningWorkspace";
+import { ApprovedPlanDisclosure, PlanDetailReader, PlanningWorkspace, sameScope, SavedPlanPreferences, type EditFlush } from "./PlanningWorkspace";
 import { prepareForPrint } from "./printReady";
 import { PrintRoot } from "./PrintRoot";
 import { parseSlides, withAccent, withTheme, type DeckStyle, type DeckTheme } from "./sections";
@@ -27,6 +27,77 @@ import { type OutputListener, type OutputTarget, type OutputTrashTarget, type So
 import "./outputs.css";
 
 const message = (reason: unknown) => reason instanceof Error ? reason.message : "The request could not be completed.";
+const REVIEW_SLIDES = "Review rendered slides";
+
+function earlierSiblings(element: Element) {
+  const siblings: Element[] = [];
+  for (let sibling = element.previousElementSibling; sibling; sibling = sibling.previousElementSibling) siblings.push(sibling);
+  return siblings;
+}
+
+function useSlideStageBudget(enabled: boolean) {
+  const reader = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const article = reader.current;
+    const page = article?.closest<HTMLElement>(".library-middle-page");
+    if (!enabled || !article || !page) return;
+
+    let frame: number | null = null;
+    let disposed = false;
+    let slides: HTMLElement | null = null;
+    let observed = new Set<Element>();
+    const schedule = () => {
+      if (disposed || frame !== null) return;
+      frame = requestAnimationFrame(() => { frame = null; measure(); });
+    };
+    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    const measure = () => {
+      slides = article.querySelector<HTMLElement>(":scope > .outputs-slides");
+      const stage = slides?.querySelector<HTMLElement>(".outputs-stage");
+      const thumbs = slides?.querySelector<HTMLElement>(".outputs-thumbs");
+      const next = new Set<Element>([page]);
+      if (slides && stage && thumbs) {
+        for (const element of earlierSiblings(slides)) next.add(element);
+        for (const element of earlierSiblings(thumbs)) if (element !== stage) next.add(element);
+        next.add(thumbs);
+      }
+      for (const element of observed) if (!next.has(element)) resize?.unobserve(element);
+      for (const element of next) if (!observed.has(element)) resize?.observe(element, { box: "border-box" });
+      observed = next;
+
+      if (!slides || !stage || !thumbs) {
+        article.style.removeProperty("--stage-overhead");
+        return;
+      }
+      if (!page.clientHeight || !thumbs.offsetHeight) return;
+      const stageBounds = stage.getBoundingClientRect();
+      const above = stageBounds.top - page.getBoundingClientRect().top + page.scrollTop;
+      // The gap can include a fit or layout notice between the stage and the thumbnails.
+      const gap = Math.max(Number.parseFloat(getComputedStyle(slides).rowGap) || 14,
+        thumbs.getBoundingClientRect().top - stageBounds.bottom);
+      const below = gap + thumbs.offsetHeight + 12;
+      const overhead = `${Math.max(240, Math.ceil(window.innerHeight - page.clientHeight + above + below))}px`;
+      if (article.style.getPropertyValue("--stage-overhead") !== overhead) article.style.setProperty("--stage-overhead", overhead);
+    };
+    // The lazy deck and status rows can appear after the reader mounts.
+    const changes = new MutationObserver((records) => {
+      if (records.some(({ target }) => target === article || target === slides)) schedule();
+    });
+    changes.observe(article, { childList: true, subtree: true });
+    window.addEventListener("resize", schedule);
+    void document.fonts?.ready.then(schedule);
+    measure();
+    return () => {
+      disposed = true;
+      if (frame !== null) cancelAnimationFrame(frame);
+      resize?.disconnect();
+      changes.disconnect();
+      window.removeEventListener("resize", schedule);
+      article.style.removeProperty("--stage-overhead");
+    };
+  }, [enabled]);
+  return reader;
+}
 
 export interface OpenOutputProps {
   baseId: string; workspaceId: string; target: OutputTarget; studio: ReturnType<typeof useStudio>;
@@ -145,6 +216,9 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, sourceS
   const unavailable = studio.artifactsLoaded && shownId
     && !studio.artifacts.some((item) => item.id === shownId) && planWork?.versionId !== shownId;
   const artifact = opened?.id === shownId && !unavailable ? opened : null;
+  const savedSlides = artifact?.kind === "slides" && !editing;
+  const reader = useSlideStageBudget(savedSlides);
+  const keyResults = useKeyResultsStatus(baseId, artifact?.keyResults, true);
   const cite = (_citation: ConversationCitation, index: number) => { if (artifact) onCite(artifact, index); };
   const job = conversationId ? studio.jobs.get(conversationId) : undefined;
   const activity = studio.activities.find((item) => item.open?.view === "library" && item.open.tab === "outputs"
@@ -286,7 +360,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, sourceS
   };
   const reviewSlides = async () => {
     if (!artifact || !conversationId) return;
-    const reviewed = await studio.direct(conversationId, artifact, "Review rendered slides", (hear, signal) =>
+    const reviewed = await studio.direct(conversationId, artifact, REVIEW_SLIDES, (hear, signal) =>
       knowledgeApi.reviewSlidesStream(baseId, artifact.id, { clientRequestId: artifactRequestId() }, workspaceId, hear, signal));
     if (reviewed && "id" in reviewed) pickVersion(reviewed.id);
   };
@@ -460,6 +534,26 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, sourceS
     <SavedPlanPreferences key={savedWork.key} detail={conversation} work={savedWork} controller={studio.planning}
       disabled={busy} dirty={readerEdits.preferences} editFlush={editFlush} />
   </PlanDetailReader.Provider>;
+  const keyResultsAboveDeck = savedSlides && keyResults.needsAttention;
+  const keyResultsInDisclosures = keyResults.visibleStatus && !keyResultsAboveDeck;
+  const approvedPlan = artifact?.provenance.creationPlan && controls && <ApprovedPlanDisclosure value={artifact.provenance.creationPlan}
+    type={controls} currentTitle={artifact.title} />;
+  const disclosures = (savedPreferences || approvedPlan || keyResultsInDisclosures) &&
+    <div className="reader-track output-reader-disclosures" data-track={kind === "slides" ? "deck" : "prose"}>
+      {refineInHeader && savedPreferences}
+      {approvedPlan}
+      {keyResultsInDisclosures && <div><KeyResultsStatusView status={keyResults} /></div>}
+      {!refineInHeader && savedPreferences}
+    </div>;
+  const visualReview = artifact?.provenance.skill?.visualReview;
+  const reviewNeedsAttention = visualReview && (visualReview.findings.length > 0
+    || (visualReview.status !== "clean" && visualReview.status !== "repaired"));
+  const reviewing = (!runVersion || workingOnVersion)
+    && (job?.title === REVIEW_SLIDES || job?.live.running.some((step) => step.kind === "stage" && step.id === "visual_review"));
+  const reviewAboveDeck = !savedSlides || reviewNeedsAttention || reviewing;
+  const review = artifact && Review && capabilities?.design && <Review key={artifact.id} artifact={artifact} baseId={baseId}
+    workspaceId={workspaceId} disabled={busy || Boolean(activity) || !latest || !changeable}
+    onReview={() => void reviewSlides()} onFollowUp={refineOutput} />;
   const openOutline = () => {
     if (panel === "outline" && !discardOutputEdit(readerEdits.content)) return;
     if (panel !== "outline" && artifact) pickVersion(artifact.id);
@@ -492,7 +586,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, sourceS
           onSelect: () => onTrash({ id: artifact.id, lineageId: artifact.lineageId }) },
       ]} />;
 
-  return <CitationDetails.Provider value={artifact?.citations ?? []}><article
+  return <CitationDetails.Provider value={artifact?.citations ?? []}><article ref={reader}
     className="output-reader" data-kind={kind} data-mode={editing ? "edit" : "read"} aria-label="Open output">
     <header className="output-reader-heading reader-track" data-track={editing ? "full" : headingTrack}>
       {refineInHeader && (artifact || targetType) && <div className="output-reader-meta">
@@ -513,17 +607,12 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, sourceS
       </div>
     </header>
     {problem && <p role="alert" className="output-error reader-track" data-track="prose">{problem}</p>}
-    {(savedPreferences || artifact?.provenance.creationPlan || artifact?.keyResults) &&
-      <div className="reader-track output-reader-disclosures" data-track={kind === "slides" ? "deck" : "prose"}>
-        {refineInHeader && savedPreferences}
-        {artifact?.provenance.creationPlan && controls && <ApprovedPlan value={artifact.provenance.creationPlan} type={controls} />}
-        {artifact?.keyResults && <div><KeyResultsStatus key={artifact.keyResults.id} baseId={baseId} initial={artifact.keyResults} /></div>}
-        {!refineInHeader && savedPreferences}
-      </div>}
+    {!savedSlides && disclosures}
     {(job || activity) && <div className="output-run reader-track" data-track="prose" role="status">
       <span>{job ? outputActivity(job.live) : activity?.detail || activity?.title}</span>
       <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm" disabled={job?.stopping} onClick={stop}>Stop</button>
     </div>}
+    {keyResultsAboveDeck && <div className="reader-track" data-track="deck"><KeyResultsStatusView status={keyResults} /></div>}
     {job?.live.reply && <div className="reader-track" data-track="prose"><AnswerBody content={job.live.reply} numbers={[]} /></div>}
     {!artifact && !job && !activity && !problem && <p className="reader-track" data-track="prose">
       {conversation?.lastTurn?.error || (shownId ? "Loading version…" : "Waiting for the output…")}
@@ -541,7 +630,7 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, sourceS
       {editing ? <EditPane key={artifact.id} artifact={artifact} type={type} saving={saving} onSave={(content) => void save(content)}
         onCancel={() => { if (discardOutputEdit(readerEdits.content)) { setEditing(false); pickVersion(null); } }} onCite={cite} onDirtyChange={onDirtyChange} />
         : <>
-          {Review && capabilities?.design && <Review artifact={artifact} baseId={baseId} workspaceId={workspaceId} disabled={busy || !latest || !changeable} onReview={() => void reviewSlides()} onFollowUp={refineOutput} />}
+          {reviewAboveDeck && review}
           <Reader artifact={artifact} onCite={cite} onPart={onPart} onAskChat={onAskChat}
             onAsk={allowPoint ? point : undefined} goTo={jump} changed={changed} onNotice={onNotify}
             type={type} presentation="read" work={{ working, disabled: busy || Boolean(activity), run: runReaderAction, voices: controls?.voices }}
@@ -552,6 +641,8 @@ export function OpenOutput({ baseId, workspaceId, target, studio, scope, sourceS
               onDeckStyle: (style) => void restyle(style),
               accentDisabled: busy || !latest, deckStyleDisabled: (!restyling && busy) || !latest, pendingDeckStyle: pendingStyle,
             } : undefined} />
+          {savedSlides && disclosures}
+          {!reviewAboveDeck && review}
         </>}
       {printAction && <PrintRoot artifact={artifact} type={type} />}
     </AudioDurationScope>}

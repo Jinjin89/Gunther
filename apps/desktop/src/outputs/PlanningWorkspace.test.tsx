@@ -7,7 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiRequestError } from "../api";
-import { ApprovedPlan, PlanDetailReader, PlanningWorkspace, SavedPlanPreferences, type PlanningWorkspaceProps } from "./PlanningWorkspace";
+import { ApprovedPlanDisclosure, PlanDetailReader, PlanningWorkspace, SavedPlanPreferences, type PlanningWorkspaceProps } from "./PlanningWorkspace";
 import type { LocalSetup, StudioPlanning } from "./useStudio";
 
 afterEach(cleanup);
@@ -185,9 +185,14 @@ describe("PlanningWorkspace", () => {
   it("keeps Setup usable during a blocker and starts planning only from the explicit button", async () => {
     const user = userEvent.setup();
     const app = mount({ initial: null, local: setupFor(slides), type: slides, modelMenu: null, currentScope: selection });
-    expect(screen.getByRole("heading", { name: "Set up Slides" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Plan" })).toBeDisabled();
-    expect(screen.getByText("Choose an available model in Settings.")).toBeVisible();
+    const setup = screen.getByRole("heading", { name: "Set up Slides" }).closest(".reader-track");
+    const planButton = screen.getByRole("button", { name: "Plan" });
+    const footer = planButton.closest("footer")!;
+    expect(setup).toHaveAttribute("data-stage", "setup");
+    expect(setup?.lastElementChild).toBe(screen.getByRole("region", { name: "Plan settings" }));
+    expect(setup?.nextElementSibling).toBe(footer);
+    expect(planButton).toBeDisabled();
+    expect(within(footer).getByText("Choose an available model in Settings.")).toBeVisible();
     expect(app.turn).not.toHaveBeenCalled();
 
     await user.type(text("Focus"), "Show the conclusion");
@@ -214,6 +219,23 @@ describe("PlanningWorkspace", () => {
       kind: "plan", planId: address.planId, clientRequestId: "initial_request", setup: app.getLocal().setup,
     });
     expect(app.patch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { region: "Plan summary", plan: planFor(flashcards) },
+    { region: "Planning question", plan: { ...useQuestion("first"), proposal: null } },
+  ])("switches Setup to review when planning returns $region", async ({ region, plan }) => {
+    const app = mount({ initial: null, local: setupFor(flashcards) });
+    const stage = () => screen.getByRole("region", { name: "Plan settings" }).closest(".reader-track");
+    app.turn.mockImplementationOnce(async () => {
+      app.setServer(detailFor(flashcards, plan));
+      return { ...finished, plan };
+    });
+
+    expect(stage()).toHaveAttribute("data-stage", "setup");
+    await userEvent.click(screen.getByRole("button", { name: "Plan" }));
+    expect(stage()).toHaveAttribute("data-stage", "review");
+    expect(stage()).toContainElement(screen.getByRole("region", { name: region }));
   });
 
   it("uses the preserved initial request ID after a lost response", async () => {
@@ -766,6 +788,7 @@ describe("PlanningWorkspace", () => {
       attempt: { requestId: "previous_request", phase: "plan", state: "stopped", detail: null },
     });
     const app = mount({ initial: detailFor(flashcards, stopped) });
+    expect(screen.getByRole("heading", { name: "Set up Flashcards" }).closest(".reader-track")).toHaveAttribute("data-stage", "setup");
     await userEvent.click(screen.getByRole("button", { name: "Retry planning" }));
     expect(app.turn.mock.calls[0]?.[1]).toMatchObject({ kind: "plan", planRevision: "p7" });
     expect(app.turn.mock.calls[0]?.[1]?.clientRequestId).not.toBe("previous_request");
@@ -773,16 +796,35 @@ describe("PlanningWorkspace", () => {
 });
 
 describe("saved planning controls", () => {
+  const plan = planFor(flashcards);
+  const approval = { planId: plan.planId, revision: plan.planRevision, approvedAt: now, approvalMessageId: "approved",
+    materialKey: "material", options: plan.options, preferences: plan.preferences, outline: plan.outline, proposal: plan.proposal! };
+
+  it("shows the approved title only when it differs from the displayed title", async () => {
+    const { title } = approval.proposal;
+    const value = { ...approval, proposal: { ...approval.proposal, title: ` ${title} ` } };
+    const { rerender } = render(<ApprovedPlanDisclosure type={flashcards} value={value} currentTitle={`${title}  `} />);
+    const summary = screen.getByText("Approved plan");
+    await userEvent.click(summary);
+    const disclosure = within(summary.closest("details")!);
+    expect(disclosure.getByText(approval.proposal.summary)).toBeVisible();
+    expect(disclosure.queryByText(title)).not.toBeInTheDocument();
+    expect(disclosure.queryByText("Approved title:")).not.toBeInTheDocument();
+
+    rerender(<ApprovedPlanDisclosure type={flashcards} value={value} currentTitle="Renamed output" />);
+    const label = disclosure.getByText("Approved title:");
+    expect(label).toBeVisible();
+    expect(label.parentElement).toHaveTextContent(`Approved title: ${title}`);
+  });
+
   it("keeps the approved snapshot read-only and patches preferences on the current saved work", async () => {
     const clean = detailFor(flashcards, null);
     const saved = { ...clean, works: [{ ...clean.works[0]!, key: "lineage", versionId: "version" }] };
-    const plan = planFor(flashcards);
     const patch = vi.fn(async (_id: string, _key: string, input: WorkPlanPatch) => applyPatch(saved, input));
     const controller: StudioPlanning = { locals: {}, setLocal: vi.fn(), discardLocal: vi.fn(), targetFor: () => address,
       patch, turn: vi.fn() };
     render(<>
-      <ApprovedPlan type={flashcards} value={{ planId: plan.planId, revision: plan.planRevision, approvedAt: now, approvalMessageId: "approved",
-        materialKey: "material", options: plan.options, preferences: plan.preferences, outline: plan.outline, proposal: plan.proposal! }} />
+      <ApprovedPlanDisclosure type={flashcards} value={approval} />
       <SavedPlanPreferences detail={saved} work={saved.works[0]!} controller={controller} disabled={false} />
     </>);
     await userEvent.click(screen.getByText("Approved plan"));
