@@ -27,6 +27,7 @@ For a phone build, run `npm run mobile:get`, then `cd apps/mobile && flutter run
 | Flutter analysis and tests | `npm run mobile:analyze` and `npm run mobile:test` |
 | Desktop production bundle | `npm run build:desktop:web` |
 | Browser journey | `npm run smoke:desktop-ui` |
+| Report layout, captions, scrolling and navigation | `node apps/desktop/evals/deck/report-layout.mjs` (add `--browser webkit` after `npx playwright install webkit` to check the macOS rendering engine) |
 | Combined desktop and backend gate | `npm run check` |
 | Build and parser script tests | `node --test scripts/build-step.test.mjs scripts/parser-inputs.test.mjs` |
 

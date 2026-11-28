@@ -275,7 +275,7 @@ export default function DictationWindowApp() {
   let placeholder = "正在启动…";
   if (outcome) {
     text = outcome.text ?? "";
-    placeholder = outcome.kind === "no_speech" ? "未识别到语音" : "";
+    placeholder = "";
   } else if (listening) {
     text = dictation.transcript;
     placeholder = "正在听…";

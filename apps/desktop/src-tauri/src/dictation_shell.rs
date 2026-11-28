@@ -478,7 +478,6 @@ pub enum DictationOutcome {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 enum VisibleOutcomeKind {
-    NoSpeech,
     Error,
     CopyFailed,
     CopiedPresentationFailed,
@@ -1014,19 +1013,6 @@ impl Requests {
                     CompletionStep::Write(text)
                 }
             }
-            DictationOutcome::NoSpeech => {
-                let outcome = VisibleOutcome {
-                    kind: VisibleOutcomeKind::NoSpeech,
-                    copied: false,
-                    text: None,
-                    message: None,
-                };
-                CompletionStep::Settled(self.outcome_result(
-                    take_id,
-                    CompleteStatus::Applied,
-                    outcome,
-                ))
-            }
             DictationOutcome::Error { text, message } => {
                 let outcome =
                     VisibleOutcome::failure(VisibleOutcomeKind::Error, Some(text), message);
@@ -1036,7 +1022,7 @@ impl Requests {
                     outcome,
                 ))
             }
-            DictationOutcome::Cancelled => {
+            DictationOutcome::NoSpeech | DictationOutcome::Cancelled => {
                 CompletionStep::Present(self.finish_take(take_id, queued_start, false))
             }
         };
@@ -2044,70 +2030,61 @@ mod tests {
     }
 
     #[test]
-    fn cancelled_takes_follow_the_final_queued_intent() {
+    fn empty_takes_close_or_follow_the_final_queued_intent() {
         for queued in [true, false] {
-            let shell = DictationShell::default();
-            let first = start(&shell);
-            stop(&shell, true);
-            assert!(shell.lock().unwrap().toggle().is_none());
-            if !queued {
+            for outcome in [DictationOutcome::NoSpeech, DictationOutcome::Cancelled] {
+                let shell = DictationShell::default();
+                let first = start(&shell);
+                stop(&shell, true);
                 assert!(shell.lock().unwrap().toggle().is_none());
-            }
-            let result = complete(
-                &shell,
-                first.take_id,
-                DictationOutcome::Cancelled,
-                no_write,
-                |revision| {
-                    assert!(queued);
-                    run_start(&shell, revision, || Ok(()), |_| Ok(()))
-                        .map(|work| assert!(work.is_none()))
-                },
-                |revision| {
-                    assert!(!queued);
-                    assert!(shell.lock().unwrap().finish_close(revision).is_some());
-                    Ok(())
-                },
-            );
-            assert_result(&result, CompleteStatus::Applied, false);
-            assert_eq!(
-                current(&shell).action,
-                if queued {
-                    DictationAction::Start
-                } else {
-                    DictationAction::Idle
+                if !queued {
+                    assert!(shell.lock().unwrap().toggle().is_none());
                 }
-            );
+                let result = complete(
+                    &shell,
+                    first.take_id,
+                    outcome,
+                    no_write,
+                    |revision| {
+                        assert!(queued);
+                        run_start(&shell, revision, || Ok(()), |_| Ok(()))
+                            .map(|work| assert!(work.is_none()))
+                    },
+                    |revision| {
+                        assert!(!queued);
+                        assert!(shell.lock().unwrap().finish_close(revision).is_some());
+                        Ok(())
+                    },
+                );
+                assert_result(&result, CompleteStatus::Applied, false);
+                assert_eq!(
+                    current(&shell).action,
+                    if queued {
+                        DictationAction::Start
+                    } else {
+                        DictationAction::Idle
+                    }
+                );
+            }
         }
     }
 
     #[test]
-    fn no_speech_and_errors_publish_visible_snapshots_until_dismissed() {
-        for (kind, outcome) in [
-            (VisibleOutcomeKind::NoSpeech, DictationOutcome::NoSpeech),
-            (VisibleOutcomeKind::Error, asr_error()),
-        ] {
-            let shell = DictationShell::default();
-            let first = start(&shell);
-            let stopped = stop(&shell, false);
-            assert!(shell.lock().unwrap().toggle().is_none());
-            let result = complete_without_effects(&shell, first.take_id, outcome);
-            assert_result(&result, CompleteStatus::Applied, false);
-            let request = current(&shell);
-            assert_eq!(result.request, Some(request.clone()));
-            assert!(request.revision > stopped.revision);
-            assert_eq!(request.take_id, first.take_id);
-            assert!(!visible(&request, kind).copied);
-            if kind == VisibleOutcomeKind::NoSpeech {
-                assert_eq!(
-                    serde_json::to_value(request).unwrap()["outcome"],
-                    serde_json::json!({ "kind": "no_speech", "copied": false })
-                );
-            }
-            let stale = complete_without_effects(&shell, first.take_id, completed("stale result"));
-            assert_result(&stale, CompleteStatus::Ignored, false);
-            dismiss(&shell);
-        }
+    fn errors_publish_visible_snapshots_until_dismissed() {
+        let shell = DictationShell::default();
+        let first = start(&shell);
+        let stopped = stop(&shell, false);
+        assert!(shell.lock().unwrap().toggle().is_none());
+        let result = complete_without_effects(&shell, first.take_id, asr_error());
+        assert_result(&result, CompleteStatus::Applied, false);
+        let request = current(&shell);
+        assert_eq!(result.request, Some(request.clone()));
+        assert!(request.revision > stopped.revision);
+        assert_eq!(request.take_id, first.take_id);
+        assert!(!visible(&request, VisibleOutcomeKind::Error).copied);
+        let stale = complete_without_effects(&shell, first.take_id, completed("stale result"));
+        assert_result(&stale, CompleteStatus::Ignored, false);
+        dismiss(&shell);
     }
 
     #[test]
@@ -2141,7 +2118,7 @@ mod tests {
     fn stale_panel_stop_leaves_the_new_take_and_its_queued_restart_untouched() {
         let shell = DictationShell::default();
         let first = start(&shell);
-        complete_without_effects(&shell, first.take_id, DictationOutcome::NoSpeech);
+        complete_without_effects(&shell, first.take_id, asr_error());
         let outcome = current(&shell);
         let revision = start_revision(&shell);
         assert!(shell

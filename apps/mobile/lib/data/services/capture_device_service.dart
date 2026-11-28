@@ -258,7 +258,7 @@ class FlutterCaptureDevice implements CaptureDevice, LivePcmCaptureDevice {
       _sourceSubscription = source.listen(
         (chunk) {
           _pcmWrites = _pcmWrites
-              .then((_) async {
+              .then<void>((_) async {
                 if (_streamError == null) {
                   final accepted = await writer.append(chunk);
                   if (accepted.isNotEmpty && !controller.isClosed) {

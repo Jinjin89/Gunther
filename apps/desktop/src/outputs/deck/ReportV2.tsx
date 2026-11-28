@@ -159,7 +159,7 @@ function Exhibit({ block, paper, references }: {
     <ReportMarkdown content={block.raw} paper={paper} {...references} />
   </div>;
   const table = <ExhibitGrid grid={block.grid} label={visible(block.caption) || "Exhibit data"} paper={paper} references={references} />;
-  return <figure className="rp-exhibit">
+  return <figure className="rp-exhibit" data-layout={block.table?.layout}>
     {block.caption && <figcaption><AnswerBody content={block.caption} {...references} /></figcaption>}
     {block.table?.layout === "chart" ? <ExhibitChart chart={block.table} paper={paper} table={table} /> : table}
     {block.source && <div className="rp-source"><AnswerBody content={`Source: ${block.source}`} {...references} /></div>}

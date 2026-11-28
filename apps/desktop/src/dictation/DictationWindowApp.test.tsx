@@ -61,7 +61,7 @@ function reported(request: ReturnType<typeof outcomeRequest>, status: CompleteRe
   return { status, copied: request.outcome.copied, request };
 }
 
-const noSpeech = outcomeRequest({ kind: "no_speech", copied: false });
+const idleRequest: DictationRequest = { revision: 3, takeId: 1, action: "idle" };
 const copyRefused = outcomeRequest({
   kind: "copy_failed", copied: false, text: "保留下来的文字。", message: "无法完成复制，文字已保留。",
 });
@@ -162,7 +162,7 @@ it("keeps the terminal presentation until native completion and clears on native
   expect(preview()).not.toHaveTextContent("完整的语音文字。");
 });
 
-it("waits for no-speech settlement and lets the user dismiss the outcome", async () => {
+it("settles a no-speech take through native closure without asking for dismissal", async () => {
   const panel = await openPanel();
   const terminal = deferred<CompleteResult>();
   mock.complete.mockReturnValueOnce(terminal.promise);
@@ -172,30 +172,33 @@ it("waits for no-speech settlement and lets the user dismiss the outcome", async
   act(() => { mock.options!.onComplete("", "no_speech"); });
   expect(mock.complete).toHaveBeenCalledExactlyOnceWith(1, { kind: "no_speech" });
   expect(screen.getByRole("status")).toHaveTextContent("正在整理…");
-  await act(async () => terminal.resolve(reported(noSpeech)));
+  await act(async () => terminal.resolve({ status: "applied", copied: false, request: idleRequest }));
 
   expect(screen.getByRole("status")).toHaveTextContent("语音输入");
-  expect(preview()).toHaveTextContent("未识别到语音");
+  expect(preview()).toHaveTextContent("正在启动…");
   expect(preview()).toHaveClass("is-empty");
-  fireEvent.click(dismissButton());
-  expect(mock.stopWindow).toHaveBeenCalledExactlyOnceWith(1, noSpeech.revision);
+  expect(screen.queryByRole("button", { name: "Dismiss voice input" })).not.toBeInTheDocument();
+  expect(mock.stopWindow).not.toHaveBeenCalled();
+  deliver(nextStart);
+  expect(mock.start).toHaveBeenCalledTimes(2);
 });
 
-it("keeps a no-speech outcome when the initial snapshot resolves after Start and Stop", async () => {
+it("keeps a settled empty take idle when an older initial snapshot arrives", async () => {
   const initial = deferred<DictationRequest>();
   mock.snapshot.mockReturnValueOnce(initial.promise);
-  mock.complete.mockResolvedValueOnce(reported(noSpeech));
+  mock.complete.mockResolvedValueOnce({ status: "applied", copied: false, request: idleRequest });
   render(<DictationWindowApp />);
   await waitFor(() => expect(mock.snapshot).toHaveBeenCalledTimes(1));
   deliver(startRequest);
   deliver(stopRequest);
   await act(async () => mock.options!.onComplete("", "no_speech"));
-  expect(preview()).toHaveTextContent("未识别到语音");
+  expect(preview()).toHaveTextContent("正在启动…");
 
-  await act(async () => initial.resolve(noSpeech));
-  expect(preview()).toHaveTextContent("未识别到语音");
+  await act(async () => initial.resolve(stopRequest));
+  expect(preview()).toHaveTextContent("正在启动…");
   expect(mock.start).toHaveBeenCalledTimes(1);
   expect(mock.stop).toHaveBeenCalledTimes(1);
+  expect(mock.complete).toHaveBeenCalledTimes(1);
 });
 
 it("reports cancellation before capture for the current take", async () => {
@@ -248,7 +251,8 @@ it("cancels on an outcome notice before fetching its details and ignores the sta
 
 it("sends the displayed take and revision when Dismiss races a new Start", async () => {
   await openPanel();
-  await deliverOutcome(noSpeech);
+  const failure = outcomeRequest({ kind: "error", copied: false, message: "Service disconnected" });
+  await deliverOutcome(failure);
   const dismiss = dismissButton();
 
   act(() => {
@@ -256,7 +260,7 @@ it("sends the displayed take and revision when Dismiss races a new Start", async
     fireEvent.click(dismiss);
   });
 
-  expect(mock.stopWindow).toHaveBeenCalledExactlyOnceWith(noSpeech.takeId, noSpeech.revision);
+  expect(mock.stopWindow).toHaveBeenCalledExactlyOnceWith(failure.takeId, failure.revision);
   expect(mock.start).toHaveBeenCalledTimes(2);
 });
 
@@ -646,7 +650,7 @@ it("keeps a failed outcome notice dismissible at its real revision and allows sn
   mock.snapshot.mockReturnValueOnce(lateRead.promise);
   deliver({ revision: 5, takeId: 1, action: "outcome" });
   deliver({ revision: 6, takeId: 2, action: "start" });
-  await act(async () => lateRead.resolve(outcomeRequest({ kind: "no_speech", copied: false }, 5)));
+  await act(async () => lateRead.resolve(outcomeRequest({ kind: "error", copied: false, message: "Service disconnected" }, 5)));
   expect(mock.start).toHaveBeenCalledTimes(2);
   expect(preview()).toHaveTextContent("正在启动…");
 });

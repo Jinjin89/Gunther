@@ -178,7 +178,7 @@ mod check {
                             println!("PASS: Stop leaves the same opaque non-key panel visible");
                             tauri::async_runtime::spawn(async move {
                                 let completed = dictation_shell::settle_take(
-                                    &app, first.take_id, DictationOutcome::Cancelled,
+                                    &app, first.take_id, DictationOutcome::NoSpeech,
                                 ).await.unwrap();
                                 assert_eq!(completed.status, CompleteStatus::Applied);
                                 assert!(!completed.copied);
@@ -188,7 +188,7 @@ mod check {
                                 }
                                 later(app, move |app| {
                                     assert_hidden(&app);
-                                    println!("PASS: completion hides the panel");
+                                    println!("PASS: no speech closes the panel without copying or requiring dismissal");
                                     move_offscreen(&app);
                                     let second_area = expected_visible_area();
                                     toggle(&app);

@@ -179,9 +179,15 @@ function Report({ artifact, type, presentation = "read", onCite, onAsk, onPart, 
         {faq ? <button type="button" className="gx-btn gx-btn-quiet gx-btn-sm"
           onClick={() => setExpanded(new Set(allExpanded ? [] : entries.map(({ position }) => position)))}>
           {allExpanded ? "Collapse all" : "Expand all"}
-        </button> : <details className="rp-contents">
+        </button> : <details className="rp-contents" onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.currentTarget.open = false;
+          event.currentTarget.querySelector("summary")?.focus();
+          event.stopPropagation();
+        }}>
           <summary>{study ? "Topics" : "Contents"}<ChevronDown size={16} aria-hidden="true" /></summary>
-          <ol>{entries.map(({ position, label }, index) => <li key={position}>
+          {/* Reserve all ordinal digits, the decimal point and its following space at the current font size. */}
+          <ol style={{ paddingInlineStart: `${String(entries.length).length + 2}ch` }}>{entries.map(({ position, label }, index) => <li key={position}>
             <a href={`#${anchor(position)}`} aria-current={index === currentEntry ? "location" : undefined} onClick={(event) => {
               event.preventDefault();
               const details = event.currentTarget.closest("details");

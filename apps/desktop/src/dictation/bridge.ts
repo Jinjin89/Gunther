@@ -14,7 +14,7 @@ export type DictationEvent = DictationControl | OutcomeNotification;
 export type DictationRequest = DictationControl | (OutcomeNotification & { outcome: VisibleOutcome });
 
 export interface VisibleOutcome {
-  kind: "no_speech" | "error" | "copy_failed" | "copied_presentation_failed" | "invalid_text";
+  kind: "error" | "copy_failed" | "copied_presentation_failed" | "invalid_text";
   copied: boolean;
   text?: string;
   message?: string;
