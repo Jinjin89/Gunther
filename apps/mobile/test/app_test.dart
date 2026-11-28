@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,12 +15,75 @@ import 'package:gunther_mobile/data/models/web_search.dart';
 import 'package:gunther_mobile/data/repositories/knowledge_repository.dart';
 import 'package:gunther_mobile/data/services/capture_device_service.dart';
 import 'package:gunther_mobile/data/services/capture_outbox_service.dart';
+import 'package:gunther_mobile/data/services/connection_profile_store.dart';
+import 'package:gunther_mobile/data/services/workspace_connection_service.dart';
 import 'package:gunther_mobile/data/services/live_transcription_service.dart';
 import 'package:gunther_mobile/data/services/recording_draft_store.dart';
 import 'package:gunther_mobile/data/services/system_share_ingress_service.dart';
 import 'package:gunther_mobile/features/capture/presentation/capture_view_model.dart';
+import 'package:gunther_mobile/features/connection/presentation/connection_controller.dart';
 
 void main() {
+  testWidgets(
+    'an unpaired phone offers pairing and saves captures without network reads',
+    (tester) async {
+      final controller = (await tester.runAsync<ConnectionController>(() async {
+        final temporary = await Directory.systemTemp.createTemp(
+          'gunther-unpaired-',
+        );
+        addTearDown(() => temporary.delete(recursive: true));
+        final controller = ConnectionController(
+          profileStore: FileConnectionProfileStore(
+            directoryProvider: () async =>
+                Directory('${temporary.path}/connections'),
+          ),
+          secretStore: MemoryConnectionSecretStore(),
+          probe: const WorkspaceConnectionProbe(),
+        );
+        await controller.initialize();
+        return controller;
+      }))!;
+      addTearDown(controller.dispose);
+      final repository = _UnpairedRepository();
+      final outbox = MemoryCaptureOutboxStore();
+      await _pumpApp(
+        tester,
+        repository,
+        connectionController: controller,
+        captureOutboxStore: outbox,
+      );
+
+      for (final destination in ['nav-home', 'nav-libraries', 'nav-inbox']) {
+        await tester.tap(find.byKey(Key(destination)));
+        await tester.pumpAndSettle();
+        expect(find.text('Connect your computer'), findsOneWidget);
+      }
+      expect(repository.reads, 0);
+      await tester.tap(find.byKey(const Key('connect-workspace-button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pairing-bundle')), findsOneWidget);
+      Navigator.of(
+        tester.element(find.byKey(const Key('connection-settings-sheet'))),
+      ).pop();
+      await tester.pumpAndSettle();
+
+      await _openCaptureLauncher(tester);
+      await tester.tap(find.byKey(const Key('capture-quickNote')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('quick-note-content')),
+        'Keep this before pairing.',
+      );
+      await tester.tap(find.byKey(const Key('save-quick-note')));
+      await tester.pumpAndSettle();
+      expect(outbox.entries, hasLength(1));
+      expect(outbox.entries.single.targetWorkspaceId, isNull);
+      expect(outbox.entries.single.connectionProfileId, isNull);
+      expect(repository.attemptedNotes, isEmpty);
+      expect(repository.reads, 0);
+    },
+  );
+
   testWidgets(
     'uses Home, Libraries, and Inbox as the only primary destinations',
     (tester) async {
@@ -1179,6 +1243,7 @@ Future<void> _pumpApp(
   CaptureOutboxStore? captureOutboxStore,
   LiveTranscriptionSessionFactory? liveTranscriptionFactory,
   SystemShareIngress? systemShareIngress,
+  ConnectionController? connectionController,
   bool settle = true,
 }) async {
   tester.view.physicalSize = const Size(390, 844);
@@ -1193,12 +1258,35 @@ Future<void> _pumpApp(
       captureOutboxStore: captureOutboxStore ?? MemoryCaptureOutboxStore(),
       liveTranscriptionFactory: liveTranscriptionFactory,
       systemShareIngress: systemShareIngress,
+      connectionController: connectionController,
     ),
   );
   if (settle) {
     await tester.pumpAndSettle();
   } else {
     await tester.pump();
+  }
+}
+
+class _UnpairedRepository extends FakeKnowledgeRepository {
+  int reads = 0;
+
+  @override
+  Future<Overview> getOverview() async {
+    reads++;
+    return super.getOverview();
+  }
+
+  @override
+  Future<List<KnowledgeBaseSummary>> getKnowledgeBases() async {
+    reads++;
+    return super.getKnowledgeBases();
+  }
+
+  @override
+  Future<List<InboxItem>> getInbox({String? state}) async {
+    reads++;
+    return super.getInbox(state: state);
   }
 }
 

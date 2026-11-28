@@ -5,12 +5,37 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gunther_mobile/data/models/capture.dart';
 import 'package:gunther_mobile/data/models/connection_profile.dart';
 import 'package:gunther_mobile/data/repositories/connection_aware_knowledge_repository.dart';
-import 'package:gunther_mobile/data/repositories/knowledge_repository.dart';
 import 'package:gunther_mobile/data/services/connection_profile_store.dart';
-import 'package:gunther_mobile/data/services/knowledge_api_service.dart';
 import 'package:gunther_mobile/features/connection/presentation/connection_controller.dart';
 
 void main() {
+  test('requires pairing before reading or writing a workspace', () async {
+    final controller = ConnectionController(
+      profileStore: _MemoryProfileStore(),
+      secretStore: MemoryConnectionSecretStore(),
+      probe: const _OnlineProbe(),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    final repository = ConnectionAwareKnowledgeRepository(
+      connections: controller,
+    );
+    addTearDown(repository.dispose);
+
+    expect(repository.getOverview, throwsStateError);
+    expect(repository.getKnowledgeBases, throwsStateError);
+    expect(repository.getInbox, throwsStateError);
+    expect(
+      () => repository.createQuickNote(
+        const QuickNoteDraft(
+          title: 'Unpaired capture',
+          content: 'Must stay local',
+        ),
+      ),
+      throwsStateError,
+    );
+  });
+
   test('routes repository calls to the paired bearer workspace', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final authorizations = <String?>[];
@@ -48,11 +73,8 @@ void main() {
       _profile(server.port),
       ConnectionSecrets(accessToken: 'paired-token'),
     );
-    final fallbackApi = KnowledgeApiService(baseUrl: 'http://127.0.0.1:1/api/');
-    addTearDown(fallbackApi.close);
     final repository = ConnectionAwareKnowledgeRepository(
       connections: controller,
-      fallback: RemoteKnowledgeRepository(apiService: fallbackApi),
     );
     addTearDown(repository.dispose);
 
@@ -74,11 +96,8 @@ void main() {
       _profile(8788),
       ConnectionSecrets(accessToken: 'paired-token'),
     );
-    final fallbackApi = KnowledgeApiService(baseUrl: 'http://127.0.0.1:1/api/');
-    addTearDown(fallbackApi.close);
     final repository = ConnectionAwareKnowledgeRepository(
       connections: controller,
-      fallback: RemoteKnowledgeRepository(apiService: fallbackApi),
     );
     addTearDown(repository.dispose);
 
@@ -140,13 +159,8 @@ void main() {
         profileA,
         ConnectionSecrets(accessToken: 'token-alpha'),
       );
-      final fallbackApi = KnowledgeApiService(
-        baseUrl: 'http://127.0.0.1:1/api/',
-      );
-      addTearDown(fallbackApi.close);
       final repository = ConnectionAwareKnowledgeRepository(
         connections: controller,
-        fallback: RemoteKnowledgeRepository(apiService: fallbackApi),
       );
       addTearDown(repository.dispose);
 

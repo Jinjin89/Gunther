@@ -64,13 +64,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   static const titles = ['Home', 'Libraries', 'Inbox'];
 
+  bool get _hasWorkspace =>
+      widget.connectionController == null ||
+      widget.connectionController!.activeProfile != null;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _homeViewModel = HomeViewModel(widget.repository)..load();
-    _librariesViewModel = LibrariesViewModel(widget.repository)..load();
-    _inboxViewModel = InboxViewModel(widget.repository)..load();
+    _homeViewModel = HomeViewModel(widget.repository);
+    _librariesViewModel = LibrariesViewModel(widget.repository);
+    _inboxViewModel = InboxViewModel(widget.repository);
+    unawaited(_refreshPrimaryViews());
     _captureOutboxStore = widget.captureOutboxStore ?? CaptureOutboxService();
     _ownsSystemShareIngress = widget.systemShareIngress == null;
     _systemShareIngress =
@@ -194,6 +199,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   Future<void> _refreshPrimaryViews() async {
+    if (!_hasWorkspace) return;
     await Future.wait([
       _homeViewModel.load(),
       _librariesViewModel.load(),
@@ -286,7 +292,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     ];
 
     return AnimatedBuilder(
-      animation: _captureViewModel,
+      animation: Listenable.merge([
+        _captureViewModel,
+        if (widget.connectionController case final controller?) controller,
+      ]),
       builder: (context, _) => Scaffold(
         appBar: AppBar(
           title: Text(
@@ -295,14 +304,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           ),
           actions: [
             if (widget.connectionController case final controller?)
-              AnimatedBuilder(
-                animation: controller,
-                builder: (context, _) => IconButton(
-                  key: const Key('workspace-connection-button'),
-                  tooltip: controller.statusMessage ?? 'Knowledge workspace',
-                  onPressed: _showConnectionSettings,
-                  icon: Icon(_connectionIcon(controller.status)),
-                ),
+              IconButton(
+                key: const Key('workspace-connection-button'),
+                tooltip: controller.statusMessage ?? 'Knowledge workspace',
+                onPressed: _showConnectionSettings,
+                icon: Icon(_connectionIcon(controller.status)),
               ),
             if (_captureViewModel.hasCaptureAttention)
               IconButton(
@@ -329,7 +335,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           top: false,
           child: Stack(
             children: [
-              IndexedStack(index: _selectedIndex, children: pages),
+              if (_hasWorkspace)
+                IndexedStack(index: _selectedIndex, children: pages)
+              else
+                _WorkspaceConnectionPrompt(onConnect: _showConnectionSettings),
               if (_captureViewModel.hasMinimizedRecording)
                 Positioned(
                   left: 12,
@@ -381,6 +390,42 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       ),
     );
   }
+}
+
+class _WorkspaceConnectionPrompt extends StatelessWidget {
+  const _WorkspaceConnectionPrompt({required this.onConnect});
+
+  final VoidCallback onConnect;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: SingleChildScrollView(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.devices_outlined, size: 40),
+          const SizedBox(height: 16),
+          Text(
+            'Connect your computer',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Open Gunther on your computer and use Settings → Devices to pair this phone. You can capture material before connecting; it stays saved on this device.',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            key: const Key('connect-workspace-button'),
+            onPressed: onConnect,
+            icon: const Icon(Icons.link),
+            label: const Text('Connect workspace'),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 IconData _connectionIcon(WorkspaceConnectionStatus status) => switch (status) {

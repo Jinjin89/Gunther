@@ -1,13 +1,13 @@
 # 本机构建与安装（2026-11-28）
 
-基于 main 的 `56aee4eb67092e9f1b91a76b2f54a61df8613007` 构建。构建包含此前本地桌面布局改动、长标题/来源行导致表格拉宽的修复、空听写自动收起，以及移动录音写入队列的 `Future<void>` 类型修复。
+macOS 构建源版本为 `a68f23a`，包含报表布局和空听写自动收起修复。Android 0.1.1 统一通过 workspace 配对连接，首次启动显示连接入口；配对前采集留在本机。已移除默认模拟器地址、编译时 endpoint/token 桥接，并统一连接信任检查。
 
 ## 当前安装包
 
 | 平台 | 文件 | 版本 | 大小 |
 | --- | --- | --- | ---: |
 | macOS Apple Silicon | `Gunther_0.1.3_aarch64.dmg` | 0.1.3 | 1,171,865,539 bytes |
-| Android | `Gunther_0.1.0_Android_debug.apk` | 0.1.0 (1) | 156,307,906 bytes |
+| Android | `Gunther_0.1.1_Android_debug.apk` | 0.1.1 (2) | 156,302,690 bytes |
 
 在本目录运行 `shasum -a 256 -c SHA256SUMS` 校验两份文件。
 
@@ -17,7 +17,7 @@ macOS 安装包采用本地 ad-hoc 签名。安装卷包含 Gunther 应用与 Ap
 
 ## Android 安装与配对
 
-1. 将 APK 传到手机，打开文件并允许所用文件管理器安装应用。
+1. 将 APK 传到手机，直接更新现有 Gunther 安装以保留本机采集；首次安装时允许所用文件管理器安装应用。
 2. Mac 与手机连接同一私有网络。在桌面 Settings → Devices 中生成配对码，并复制全部连接详情。
 3. 在手机的 workspace connection 中导入配对详情并完成连接。桌面应用需保持运行才能同步。
 
@@ -33,7 +33,7 @@ APK 为可侧载的 debug 构建，使用现有 Android Debug 证书签名；APK
 - 报告布局：Chromium 与 WebKit 各 31 个场景通过，覆盖窄栏、宽栏、双倍字号、长标题/来源、表格滚动、时间线与目录；真实保存报告已用 WebKit 验证。
 - 本次更新涉及的 Backend dictation / realtime / transcription：68 个测试通过。
 - Rust：59 个单元测试通过，1 个图标导出工具测试按声明忽略；release 构建通过。原生窗口测试验证空听写收起、不写剪贴板及下一次正常打开。
-- Flutter：analysis 无问题，117 个测试通过，Android APK 构建通过。
+- Flutter：analysis 无问题，119 个测试通过，Android 0.1.1 APK 构建通过。
 - 冻结 Helper：隔离 workspace 的启动、私有 token 与健康检查通过；Studio 打包检查通过。
 
 已删除旧应用备份与重复构建产物，当前安装包集中在本目录。原有 workspace 数据备份保留。安装前另创建并验证了一份 workspace 备份，位置为本次任务的私有临时目录。

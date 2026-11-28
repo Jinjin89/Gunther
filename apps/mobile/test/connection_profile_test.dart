@@ -113,6 +113,13 @@ void main() {
       );
       addTearDown(controller.dispose);
 
+      final snapshots = <({String? profileId, ConnectionSecrets? secrets})>[];
+      controller.addListener(() {
+        snapshots.add((
+          profileId: controller.activeProfile?.id,
+          secrets: controller.activeSecrets,
+        ));
+      });
       await controller.initialize();
       expect(controller.status, WorkspaceConnectionStatus.unconfigured);
       final first = _profile(
@@ -152,6 +159,10 @@ void main() {
 
       expect(controller.activeProfile?.id, 'second');
       expect(controller.status, WorkspaceConnectionStatus.online);
+      for (final snapshot in snapshots) {
+        if (snapshot.secrets == null) continue;
+        expect(snapshot.secrets, same(await secrets.read(snapshot.profileId!)));
+      }
     },
   );
 

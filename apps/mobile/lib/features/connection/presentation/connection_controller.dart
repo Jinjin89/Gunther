@@ -64,6 +64,19 @@ class ConnectionController extends ChangeNotifier {
   ConnectionProfile? get activeProfile => catalog.activeProfile;
   ConnectionSecrets? get activeSecrets => _activeSecrets;
 
+  bool get canUseWorkspace =>
+      activeProfile != null &&
+      _activeSecrets != null &&
+      switch (status) {
+        WorkspaceConnectionStatus.checking ||
+        WorkspaceConnectionStatus.online ||
+        WorkspaceConnectionStatus.offline => true,
+        WorkspaceConnectionStatus.unconfigured ||
+        WorkspaceConnectionStatus.authExpired ||
+        WorkspaceConnectionStatus.certificateChanged ||
+        WorkspaceConnectionStatus.incompatible => false,
+      };
+
   Future<void> initialize() async {
     final generation = ++_generation;
     try {
@@ -179,6 +192,7 @@ class ConnectionController extends ChangeNotifier {
       _safeNotify();
       return;
     }
+    _activeSecrets = null;
     status = WorkspaceConnectionStatus.checking;
     statusMessage = 'Checking ${profile.label}…';
     _safeNotify();

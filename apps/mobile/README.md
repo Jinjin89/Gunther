@@ -21,24 +21,15 @@ npm run mobile:test
 cd apps/mobile && flutter run
 ```
 
-最终回归：Flutter 108 passed，`flutter analyze` 0 issues。Android debug APK 构建通过；iOS 因缺少完整 Xcode 未构建，只完成 Swift parse 与 plist/entitlement/project 静态检查。
+最终回归：Flutter 119 passed，`flutter analyze` 0 issues。Android debug APK 构建通过；iOS 因缺少完整 Xcode 未构建，只完成 Swift parse 与 plist/entitlement/project 静态检查。
 
-## 开发 API
+## 连接 workspace
 
-默认：
+首次启动显示 **Connect your computer**。在桌面 Settings → Devices 生成一次性配对码，复制全部连接详情，再在手机 **Connect workspace** 中导入。手机和模拟器使用同一条配对路径；应用通过配对得到 HTTPS connection profile、device bearer 与 CA/fingerprint 信任材料。
 
-- Android emulator：`http://10.0.2.2:8787/api/`；
-- iOS simulator：`http://127.0.0.1:8787/api/`。
+配对前 Home、Libraries 和 Inbox 显示连接入口。Capture 仍可将内容保存到本机，首次同步时才绑定目标 workspace。取消配对后回到此状态。
 
-也可为独立开发环境传入：
-
-```bash
-flutter run \
-  --dart-define=GUNTHER_API_URL=https://YOUR-SECURE-BACKEND/api/ \
-  --dart-define=GUNTHER_API_TOKEN=YOUR-DEVICE-TOKEN
-```
-
-这些 compile-time 值只用于开发桥接。正式物理手机应在应用内通过一次性配对获得 HTTPS connection profile、device bearer 与 CA/fingerprint 信任材料。不要把桌面 loopback 8787 改成无认证 LAN 服务。
+应用没有默认服务地址，已移除编译时 endpoint/token 桥接和模拟器地址回退。桌面 loopback 8787 保持本机私有；移动同步使用配对提供的安全 gateway。
 
 ## Capture 与 durable outbox v3
 
@@ -169,14 +160,7 @@ OCR 在后端执行，不在手机端重复运行；完全离线时先保留原�
 
 源码声明网络与录音权限，并限制 cleartext 开发地址。当前 debug APK 已构建并校验，但不是 release keystore/AAB 或商店候选。
 
-当前工程候选已记录：
-
-- 文件：`artifacts/releases/Gunther_0.1.0_Android_debug.apk`；
-- package/version：`com.gunther.gunther_mobile` / `0.1.0 (1)`；
-- SDK：min 24、target/compile 36；
-- ABI：arm64-v8a、armeabi-v7a、x86_64；
-- 签名：APK Signature Scheme v2、Android Debug；证书 SHA-256 `5721c03bf2a2ec7acd33c0e27fc03bd0290395bcde1993a040d7fe039e7aeffb`；
-- 大小：178,653,480 bytes；文件 SHA-256 `e4325238000a8682e99f8f37d3dc51d5e9970d37682a5c327b46f207181434c1`。
+当前候选为 `artifacts/releases/Gunther_0.1.1_Android_debug.apk`，package/version 为 `com.gunther.gunther_mobile` / `0.1.1 (2)`。min SDK 24，target/compile SDK 36，包含 arm64-v8a、armeabi-v7a 与 x86_64。沿用原 Android Debug 证书签名，APK Signature Scheme v2 校验通过。安装包大小、证书指纹及文件校验值集中记录在 [构建说明](../../artifacts/releases/README_CN.md) 与 [SHA256SUMS](../../artifacts/releases/SHA256SUMS)。
 
 尚缺模拟器/真机安装、启动、Capture/Share/Recording/离线恢复日志；这些运行证据不能由 debug 构建替代。
 
@@ -184,7 +168,7 @@ OCR 在后端执行，不在手机端重复运行；完全离线时先保留原�
 
 ```text
 lib/
-  core/                         config/theme
+  core/                         theme
   data/models/                  Capture、Source、Connection DTO
   data/services/                outbox、share、recording、secure connection
   data/repositories/            API 与 profile-aware repository

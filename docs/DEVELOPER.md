@@ -14,7 +14,7 @@ npm run dev
 
 `npm run dev` starts the development API on port 8787 and the Tauri window. Use `npm run dev:backend` and `npm run dev:desktop:web` in separate terminals for browser work. Vite proxies the API during web development. Configure model keys in a private `.env` or in [Settings](SETTINGS.md). The local embeddings and pause detector are optional for work on lexical retrieval and fixed-duration speech segments.
 
-For a phone build, run `npm run mobile:get`, then `cd apps/mobile && flutter run`. The emulator defaults are `10.0.2.2:8787` on Android and `127.0.0.1:8787` on iOS. Physical devices use pairing. [Mobile app](../apps/mobile/README.md) · [Capture](CAPTURE.md#mobile-capture)
+For a phone build, run `npm run mobile:get`, then `cd apps/mobile && flutter run`. Phones and emulators use the same pairing flow: open Settings → Devices in the desktop app, generate a one-time code, then import the connection details on mobile. The mobile app starts unconfigured and reads the workspace after pairing. [Mobile app](../apps/mobile/README.md) · [Capture](CAPTURE.md#mobile-capture)
 
 ## Checks
 

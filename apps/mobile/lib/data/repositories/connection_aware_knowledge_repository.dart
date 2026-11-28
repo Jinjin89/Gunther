@@ -9,19 +9,15 @@ import 'package:gunther_mobile/data/services/connection_http_client.dart';
 import 'package:gunther_mobile/data/services/knowledge_api_service.dart';
 import 'package:gunther_mobile/features/connection/presentation/connection_controller.dart';
 
-/// Routes every operation to the currently paired workspace while keeping the
-/// compile-time endpoint as a development fallback. Credentials remain in the
-/// platform secret store/controller and are never copied into capture payloads.
+/// Routes every operation to the currently paired workspace. Credentials remain
+/// in the platform secret store/controller, outside capture payloads.
 class ConnectionAwareKnowledgeRepository
     implements KnowledgeRepository, CaptureTargetRepository {
   ConnectionAwareKnowledgeRepository({
     required ConnectionController connections,
-    required KnowledgeRepository fallback,
-  }) : _connections = connections,
-       _fallback = fallback;
+  }) : _connections = connections;
 
   final ConnectionController _connections;
-  final KnowledgeRepository _fallback;
   String? _activeKey;
   KnowledgeApiService? _activeApi;
   RemoteKnowledgeRepository? _activeRepository;
@@ -29,17 +25,10 @@ class ConnectionAwareKnowledgeRepository
   KnowledgeRepository get _delegate {
     final profile = _connections.activeProfile;
     final secrets = _connections.activeSecrets;
-    final unsafeStatus = switch (_connections.status) {
-      WorkspaceConnectionStatus.unconfigured ||
-      WorkspaceConnectionStatus.authExpired ||
-      WorkspaceConnectionStatus.certificateChanged ||
-      WorkspaceConnectionStatus.incompatible => true,
-      WorkspaceConnectionStatus.checking ||
-      WorkspaceConnectionStatus.online ||
-      WorkspaceConnectionStatus.offline => false,
-    };
-    if (profile == null) return _fallback;
-    if (secrets == null || unsafeStatus) {
+    if (profile == null) {
+      throw StateError('Connect a knowledge workspace before syncing.');
+    }
+    if (secrets == null || !_connections.canUseWorkspace) {
       throw StateError(
         'The selected knowledge workspace is not trusted for sync right now.',
       );
@@ -75,15 +64,6 @@ class ConnectionAwareKnowledgeRepository
   }) {
     final profile = _connections.activeProfile;
     final secrets = _connections.activeSecrets;
-    final unsafeStatus = switch (_connections.status) {
-      WorkspaceConnectionStatus.unconfigured ||
-      WorkspaceConnectionStatus.authExpired ||
-      WorkspaceConnectionStatus.certificateChanged ||
-      WorkspaceConnectionStatus.incompatible => true,
-      WorkspaceConnectionStatus.checking ||
-      WorkspaceConnectionStatus.online ||
-      WorkspaceConnectionStatus.offline => false,
-    };
     if (profile == null ||
         profile.id != profileId ||
         profile.workspaceId != workspaceId) {
@@ -91,7 +71,7 @@ class ConnectionAwareKnowledgeRepository
         'The saved capture target is no longer the active knowledge workspace.',
       );
     }
-    if (secrets == null || unsafeStatus) {
+    if (secrets == null || !_connections.canUseWorkspace) {
       throw StateError(
         'The selected knowledge workspace is not trusted for sync right now.',
       );
